@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BRD Time Tracker</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>BRD Time Tracker</h1>
+            <p class="subtitle">Automatic time tracking for Jira</p>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+            <button class="tab-btn" data-tab="settings">Settings</button>
+            <button class="tab-btn" data-tab="screenshots">Screenshots</button>
+        </nav>
+
+        <!-- Dashboard Tab -->
+        <div id="dashboard" class="tab-content active">
+            <div class="status-card">
+                <h2>Tracking Status</h2>
+                <div id="tracking-status" class="status-indicator">
+                    <span class="status-dot"></span>
+                    <span id="status-text">Not tracking</span>
+                </div>
+
+                <div class="controls">
+                    <button id="start-btn" class="btn btn-primary">Start Tracking</button>
+                    <button id="pause-btn" class="btn btn-secondary" disabled>Pause Tracking</button>
+                </div>
+            </div>
+
+            <div class="auth-card" id="auth-card">
+                <h2>Authentication Required</h2>
+                <p>Please sign in with your Atlassian account to start tracking time.</p>
+                <button id="auth-btn" class="btn btn-primary">Sign In with Atlassian</button>
+            </div>
+
+            <div class="stats-grid" id="stats-grid" style="display:none;">
+                <div class="stat-card">
+                    <h3>Today</h3>
+                    <div class="stat-value" id="today-time">0h 0m</div>
+                </div>
+                <div class="stat-card">
+                    <h3>This Week</h3>
+                    <div class="stat-value" id="week-time">0h 0m</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Screenshots</h3>
+                    <div class="stat-value" id="screenshot-count">0</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Tab -->
+        <div id="settings" class="tab-content">
+            <div class="settings-card">
+                <h2>Supabase Configuration</h2>
+
+                <div class="form-group">
+                    <label for="supabase-url">Supabase URL</label>
+                    <input type="text" id="supabase-url" placeholder="https://your-project.supabase.co">
+                </div>
+
+                <div class="form-group">
+                    <label for="supabase-key">Supabase Anon Key</label>
+                    <input type="password" id="supabase-key" placeholder="Your anon/public key">
+                </div>
+
+                <h2>Time Tracking Settings</h2>
+
+                <div class="form-group">
+                    <label for="screenshot-interval">Screenshot Interval (seconds)</label>
+                    <input type="number" id="screenshot-interval" min="60" max="3600" value="300">
+                    <small>How often to capture screenshots (60-3600 seconds)</small>
+                </div>
+
+                <button id="save-settings-btn" class="btn btn-primary">Save Settings</button>
+                <div id="settings-message" class="message"></div>
+            </div>
+
+            <div class="settings-card">
+                <h2>Account</h2>
+                <div id="user-info">
+                    <p>Not signed in</p>
+                </div>
+                <button id="logout-btn" class="btn btn-danger">Logout</button>
+            </div>
+        </div>
+
+        <!-- Screenshots Tab -->
+        <div id="screenshots" class="tab-content">
+            <div class="screenshots-header">
+                <h2>Recent Screenshots</h2>
+                <button id="refresh-screenshots-btn" class="btn btn-secondary">Refresh</button>
+            </div>
+
+            <div id="screenshots-grid" class="screenshots-grid">
+                <p class="empty-state">No screenshots captured yet. Start tracking to begin!</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>

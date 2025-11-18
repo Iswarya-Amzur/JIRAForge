@@ -1,0 +1,100 @@
+That is completely understandable. When working with Claude or other LLMs for code generation, a detailed, clear outline without complex nested tables often works best.
+
+I will restructure the comprehensive development plan into a detailed, hierarchical outline format using only headings, bolding, and bullet points. This format is easily digestible by an AI and simple for you to copy-paste.
+
+## 🎯 **Project Plan: BRD Automate & Time Tracker for Jira (Outline for Code Generation)**
+
+**Goal:** Launch a production-ready, dual-feature Forge application on the Atlassian Marketplace within 9 months.
+**Architecture:** Forge (Custom UI) $\leftrightarrow$ Supabase (Data Hub) $\leftrightarrow$ AI Analysis Server $\leftrightarrow$ Desktop App.
+
+---
+
+### Phase 1: Foundation & Core Infrastructure (Months 1–2)
+
+**Objective:** Establish all development environments, define data schemas, and validate cross-system authentication/data flow.
+
+#### 1.1 Forge Environment & Manifest Setup
+* **P1.1.1:** Initialize Forge project (`forge create` w/ Custom UI) and configure local environment.
+* **P1.1.2:** Draft `manifest.yml` with required modules (`jira:projectPage`, `jira:issuePanel`) and initial scopes (`read:me`, `read:jira-work`, `write:jira-work`, `write:jira-user`).
+* **P1.1.3:** Implement basic settings page UI in Forge Custom UI for admin setup and display.
+
+#### 1.2 Supabase Architecture & Schema
+* **P1.2.1:** Provision Supabase project (PostgreSQL, Auth, Storage, Edge Functions).
+* **P1.2.2:** Define and implement **Database Schema V1** for core tables:
+    * `users` (Atlassian ID, Supabase JWT)
+    * `screenshots` (user\_id, timestamp, storage\_url, window\_title, status)
+    * `analysis_results` (screenshot\_id, time\_spent\_seconds, active\_task\_key)
+    * `documents` (BRD metadata, storage\_url, processing\_status)
+* **P1.2.3:** Implement **Row-Level Security (RLS)** policies on all tables based on the user ID.
+* **P1.2.4:** Configure Supabase Storage buckets for raw screenshots and BRD documents with security rules.
+
+#### 1.3 Desktop App & Auth Proof of Concept (POC)
+* **P1.3.1:** Setup cross-platform desktop framework (Electron/Tauri) and basic UI skeleton.
+* **P1.3.2:** Implement **OAuth 3LO Custom Protocol Handler** logic for frictionless Atlassian login.
+* **P1.3.3:** Implement secure local storage mechanism for the long-lived Supabase JWT/Refresh Token.
+* **P1.3.4:** Validate the full auth flow: Atlassian Login $\rightarrow$ Custom Protocol Redirect $\rightarrow$ Supabase Link $\rightarrow$ Local Supabase JWT storage.
+
+#### 1.4 AI Server & Data Bridge POC
+* **P1.4.1:** Provision and secure the external AI Analysis Server environment (Node.js/Python backend).
+* **P1.4.2:** Implement a secure Supabase Edge Function endpoint to handle incoming screenshot notifications (Webhooks).
+* **P1.4.3:** Implement a basic AI function POC: receive test image $\rightarrow$ dummy process $\rightarrow$ write mock result to Supabase.
+
+---
+
+### Phase 2: Core Feature Implementation (Months 3–5)
+
+**Objective:** Build the MVP functionality for Screenshot Tracking and the initial Time Analytics Dashboard.
+
+#### 2.1 Screenshot Tracking (Desktop App)
+* **P2.1.1:** Implement reliable cross-platform screenshot capture logic (adjustable interval).
+* **P2.1.2:** Implement active window title and application name detection for metadata capture.
+* **P2.1.3:** Implement secure, batched file upload logic directly to Supabase Storage using the user's Supabase JWT.
+* **P2.1.4:** Implement user controls (Pause Tracking, Resume, Delete) and a lightweight system tray/icon interface.
+
+#### 2.2 Time Analytics AI Server
+* **P2.2.1:** Integrate and configure OCR/Vision API (e.g., Tesseract or Google Vision) to extract text from screenshots.
+* **P2.2.2:** Implement **Jira Issue Correlation Logic**: Use the window title text and fetched Jira issue data (`read:jira-work`) to find the most accurate task key.
+* **P2.2.3:** Implement **Time Attribution Logic** (calculating active time, handling context switches, identifying idle time).
+* **P2.2.4:** Implement **Worklog Creation Logic**: Use a Forge backend function (via resolver) to call the Jira REST API with **`write:jira-work`** to create automated work log entries based on the final analysis.
+
+#### 2.3 Forge Custom UI: Time Analytics Dashboard
+* **P2.3.1:** Implement data fetching resolvers in Forge to securely retrieve analyzed data from Supabase (using the Service Role Key).
+* **P2.3.2:** Develop the main Time Analytics Dashboard: Displaying Daily/Weekly summary, Time by Project, and Time by Issue.
+* **P2.3.3:** Implement a basic **Screenshot Gallery View** allowing the user to review thumbnails and manually delete or flag data for privacy.
+* **P2.3.4:** Ensure all data displayed adheres to the user's RLS permissions in Supabase.
+
+---
+
+### Phase 3: BRD Automation & Polish (Months 6–7)
+
+**Objective:** Implement the second core feature (BRD Automation) and complete required production-ready features.
+
+#### 3.1 BRD Automation Implementation
+* **P3.1.1:** Implement the Forge Custom UI for document upload (PDF/DOCX) and secure upload to Supabase Storage.
+* **P3.1.2:** Implement AI Server logic for document text extraction and preparation for the large language model.
+* **P3.1.3:** Integrate and tune **Gemini/GPT-4 API** with structured prompt engineering to parse requirements into a predictable JSON object (Epics, Stories, Task details).
+* **P3.1.4:** Implement **Jira Bulk Issue Creation Logic**: Forge function calls the Jira REST API using **`write:jira-work`** and **`write:jira-user`** to create and assign the entire hierarchy.
+* **P3.1.5:** Implement confirmation UI, displaying links to the newly created Jira issues.
+
+#### 3.2 Production Readiness & Testing
+* **P3.2.1:** **End-to-End Testing (E2E):** Full cycle testing of both features across all supported platforms (Windows/macOS/Browser).
+* **P3.2.2:** Performance Optimization of all data pipelines and Forge resolvers.
+* **P3.2.3:** Implement Jira Service Desk integration for support and knowledge base setup.
+* **P3.2.4:** Final security review and dependency scanning to proactively resolve critical/high vulnerabilities.
+
+---
+
+### Phase 4: Launch & Marketplace Submission (Months 8–9)
+
+**Objective:** Engage beta testers, finalize documentation, pass the Atlassian review, and launch.
+
+#### 4.1 Pre-Launch Documentation & Assets
+* **P4.1.1:** Draft and publish all mandatory legal documents (Privacy Policy must specifically detail screenshot capture/storage/deletion).
+* **P4.1.2:** Create comprehensive Knowledge Base articles and video tutorials (especially for desktop app installation).
+* **P4.1.3:** Finalize all marketplace assets (screenshots, video demo, logo, description).
+
+#### 4.2 Beta Testing & Final Submission
+* **P4.2.1:** Execute Private Beta with 30-50 testers; track and resolve all P1 and P2 bugs.
+* **P4.2.2:** Finalize the Atlassian submission form with detailed scope justifications and legal links.
+* **P4.2.3:** Submit application and manage the review process through the Atlassian Partner Portal.
+* **P4.2.4:** Prepare small-scale launch marketing plan (blog post, community engagement).

@@ -1,0 +1,30 @@
+{
+  "name": "brd-automate-time-tracker",
+  "version": "1.0.0",
+  "description": "BRD Automation & Time Tracker for Jira",
+  "main": "src/index.js",
+  "scripts": {
+    "build": "npm run build:main && npm run build:settings",
+    "build:main": "cd static/main && npm run build",
+    "build:settings": "cd static/settings && npm run build",
+    "deploy": "forge deploy",
+    "install": "forge install",
+    "tunnel": "forge tunnel"
+  },
+  "keywords": [
+    "jira",
+    "forge",
+    "time-tracking",
+    "brd",
+    "automation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@forge/api": "^3.0.0",
+    "@forge/resolver": "^1.5.0"
+  },
+  "devDependencies": {
+    "@forge/cli": "^12.0.0"
+  }
+}

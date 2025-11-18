@@ -1,0 +1,220 @@
+.App {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.App-header {
+  margin-bottom: 30px;
+}
+
+.App-header h1 {
+  font-size: 24px;
+  margin-bottom: 15px;
+  color: #172B4D;
+}
+
+.tabs {
+  display: flex;
+  gap: 10px;
+  border-bottom: 2px solid #DFE1E6;
+  margin-bottom: 20px;
+}
+
+.tabs button {
+  padding: 10px 20px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: #42526E;
+  border-bottom: 3px solid transparent;
+  transition: all 0.2s;
+}
+
+.tabs button:hover {
+  color: #0052CC;
+}
+
+.tabs button.active {
+  color: #0052CC;
+  border-bottom-color: #0052CC;
+}
+
+.App-content {
+  min-height: 400px;
+}
+
+/* Time Analytics */
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.analytics-card {
+  background: #FFFFFF;
+  border: 1px solid #DFE1E6;
+  border-radius: 3px;
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.analytics-card h3 {
+  font-size: 16px;
+  color: #172B4D;
+  margin-bottom: 10px;
+}
+
+.analytics-card p {
+  color: #6B778C;
+  font-size: 14px;
+}
+
+/* Screenshot Gallery */
+.screenshot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 15px;
+  margin-top: 20px;
+}
+
+.screenshot-item {
+  background: #FFFFFF;
+  border: 1px solid #DFE1E6;
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.screenshot-item img {
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+}
+
+.screenshot-info {
+  padding: 10px;
+}
+
+.screenshot-info p {
+  margin: 5px 0;
+  font-size: 12px;
+  color: #172B4D;
+}
+
+.screenshot-info .timestamp {
+  color: #6B778C;
+  font-size: 11px;
+}
+
+.screenshot-info button {
+  margin-top: 8px;
+  padding: 5px 10px;
+  background: #DE350B;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.screenshot-info button:hover {
+  background: #BF2600;
+}
+
+/* BRD Upload */
+.upload-container {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 30px;
+  background: #FFFFFF;
+  border: 1px solid #DFE1E6;
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.upload-container p {
+  color: #42526E;
+  margin-bottom: 15px;
+  line-height: 1.5;
+}
+
+.file-input-container {
+  margin: 30px 0;
+}
+
+#file-input {
+  display: none;
+}
+
+.file-input-label {
+  display: inline-block;
+  padding: 12px 24px;
+  background: #0052CC;
+  color: white;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s;
+}
+
+.file-input-label:hover {
+  background: #0065FF;
+}
+
+.upload-button {
+  width: 100%;
+  padding: 12px 24px;
+  background: #00875A;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+
+.upload-button:hover {
+  background: #00A86B;
+}
+
+.processing-status {
+  margin-top: 20px;
+  padding: 15px;
+  background: #DEEBFF;
+  border-radius: 3px;
+}
+
+.processing-status p {
+  color: #0052CC;
+  margin: 0;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background: #DFE1E6;
+  border-radius: 4px;
+  margin-top: 10px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #0052CC;
+  transition: width 0.3s ease;
+}
+
+.error {
+  color: #DE350B;
+  padding: 15px;
+  background: #FFEBE6;
+  border-radius: 3px;
+  margin-top: 10px;
+}

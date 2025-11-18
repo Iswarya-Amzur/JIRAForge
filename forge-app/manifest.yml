@@ -1,0 +1,40 @@
+modules:
+  jira:projectPage:
+    - key: brd-time-tracker-project-page
+      resource: main
+      resolver:
+        function: resolver
+      title: BRD & Time Tracker
+  jira:issuePanel:
+    - key: brd-time-tracker-issue-panel
+      resource: main
+      resolver:
+        function: resolver
+      title: Time Analytics
+  jira:adminPage:
+    - key: brd-time-tracker-settings
+      title: BRD & Time Tracker Settings
+      resource: settings
+      resolver:
+        function: resolver
+resources:
+  - key: main
+    path: static/main/build
+  - key: settings
+    path: static/settings/build
+function:
+  - key: resolver
+    handler: index.handler
+app:
+  id: ari:cloud:ecosystem::app/YOUR_APP_ID
+permissions:
+  scopes:
+    - read:me
+    - read:jira-work
+    - write:jira-work
+    - read:jira-user
+    - write:jira-user
+  external:
+    fetch:
+      backend:
+        - '*.supabase.co'
