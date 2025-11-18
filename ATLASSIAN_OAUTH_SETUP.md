@@ -30,10 +30,22 @@ After creating the app, you'll see the app details page. Look for **"OAuth 2.0 (
 ### Authorization Settings
 
 1. **Authorization callback URL:**
+   
+   **For Electron Desktop App:**
    ```
    brd-time-tracker://oauth/callback
    ```
-   ⚠️ **IMPORTANT:** This must match exactly! This is a custom protocol handler for the desktop app.
+   
+   **For Python Desktop App:**
+   ```
+   http://localhost:7777/auth/callback
+   ```
+   
+   ⚠️ **IMPORTANT:** 
+   - You can add **both** callback URLs if you want to use both apps
+   - For Electron app: Use `brd-time-tracker://oauth/callback` (custom protocol)
+   - For Python app: Use `http://localhost:7777/auth/callback` (HTTP localhost)
+   - The URLs must match exactly (no trailing slashes, exact case)
 
 2. **Scopes:** Enable the following scopes:
    - ✅ `read:me` - Read your user information

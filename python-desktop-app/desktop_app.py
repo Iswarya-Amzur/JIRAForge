@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 
 # Core dependencies
-from PIL import Image, ImageGrab
+from PIL import Image, ImageGrab, ImageDraw
 import psutil
 import requests
 from flask import Flask, render_template_string, jsonify, request, session, redirect, url_for
@@ -206,8 +206,10 @@ class BRDTimeTracker:
         
         if supabase_service_key:
             self.supabase_service: Client = create_client(supabase_url, supabase_service_key)
+            print("[OK] Supabase service role client initialized")
         else:
             self.supabase_service = None
+            print("[WARN] SUPABASE_SERVICE_ROLE_KEY not set - storage operations may fail due to RLS")
         
         # Initialize Atlassian Auth
         self.auth_manager = AtlassianAuthManager(web_port=self.web_port)
@@ -299,6 +301,9 @@ class BRDTimeTracker:
                 
                 print(f"[OK] Authenticated user: {user_info.get('email', 'unknown')}")
                 
+                # Update tray icon to blue (logged in, tracking not started yet)
+                self.update_tray_icon()
+                
                 # Start tracking if not already running
                 if not self.running:
                     self.start_tracking()
@@ -334,7 +339,9 @@ class BRDTimeTracker:
                 return jsonify({'error': 'Not authenticated'}), 401
             
             try:
-                result = self.supabase.table('screenshots').select('*').eq(
+                # Use service client to bypass RLS for querying
+                client = self.supabase_service if self.supabase_service else self.supabase
+                result = client.table('screenshots').select('*').eq(
                     'user_id', self.current_user_id
                 ).order('timestamp', desc=True).limit(50).execute()
                 
@@ -419,6 +426,10 @@ class BRDTimeTracker:
         if not self.current_user_id:
             return
         
+        # Use service role client for storage operations (bypasses RLS)
+        # Since we're using Atlassian OAuth, not Supabase Auth, we need service role
+        storage_client = self.supabase_service if self.supabase_service else self.supabase
+        
         try:
             # Convert screenshot to bytes
             img_buffer = BytesIO()
@@ -440,25 +451,25 @@ class BRDTimeTracker:
             storage_path = f"{self.current_user_id}/{filename}"
             thumb_path = f"{self.current_user_id}/{thumb_filename}"
             
-            # Upload to Supabase Storage
-            screenshot_result = self.supabase.storage.from_('screenshots').upload(
+            # Upload to Supabase Storage using service role client
+            screenshot_result = storage_client.storage.from_('screenshots').upload(
                 storage_path, img_bytes, file_options={'content-type': 'image/png'}
             )
             
             if screenshot_result:
                 # Get public URL
-                screenshot_url = self.supabase.storage.from_('screenshots').get_public_url(storage_path)
+                screenshot_url = storage_client.storage.from_('screenshots').get_public_url(storage_path)
                 
                 # Upload thumbnail
-                thumb_result = self.supabase.storage.from_('screenshots').upload(
+                thumb_result = storage_client.storage.from_('screenshots').upload(
                     thumb_path, thumb_bytes, file_options={'content-type': 'image/jpeg'}
                 )
                 
                 thumb_url = None
                 if thumb_result:
-                    thumb_url = self.supabase.storage.from_('screenshots').get_public_url(thumb_path)
+                    thumb_url = storage_client.storage.from_('screenshots').get_public_url(thumb_path)
                 
-                # Save metadata to database
+                # Save metadata to database (use service client to bypass RLS)
                 screenshot_data = {
                     'user_id': self.current_user_id,
                     'timestamp': timestamp.isoformat(),
@@ -471,7 +482,9 @@ class BRDTimeTracker:
                     'status': 'pending'
                 }
                 
-                result = self.supabase.table('screenshots').insert(screenshot_data).execute()
+                # Use service client for database insert to bypass RLS
+                db_client = self.supabase_service if self.supabase_service else self.supabase
+                result = db_client.table('screenshots').insert(screenshot_data).execute()
                 
                 if result.data:
                     print(f"[OK] Screenshot uploaded: {filename}")
@@ -525,31 +538,145 @@ class BRDTimeTracker:
         self._tracking_thread = threading.Thread(target=self.tracking_loop, daemon=True)
         self._tracking_thread.start()
         
+        # Update tray icon to green
+        self.update_tray_icon()
+        
         print("[OK] Tracking started")
     
     def stop_tracking(self):
         """Stop screenshot tracking"""
         self.running = False
         self.tracking_active = False
+        
+        # Update tray icon to blue
+        self.update_tray_icon()
+        
         print("[OK] Tracking stopped")
+    
+    def create_tray_icon(self, state='blue'):
+        """
+        Create a system tray icon image with color based on state
+        Args:
+            state: 'red' (not logged in), 'blue' (logged in, not tracking), 'green' (logged in, tracking)
+        """
+        # Create a 16x16 icon with a clock symbol
+        size = 16
+        icon = PILImage.new('RGBA', (size, size), (0, 0, 0, 0))  # Transparent background
+        
+        # Draw using PIL ImageDraw
+        draw = ImageDraw.Draw(icon)
+        
+        # Color mapping based on state
+        color_map = {
+            'red': (220, 53, 69, 255),      # Red - not logged in
+            'blue': (0, 82, 204, 255),      # Atlassian blue - logged in, not tracking
+            'green': (40, 167, 69, 255)     # Green - logged in and tracking
+        }
+        
+        icon_color = color_map.get(state, color_map['blue'])
+        
+        # Draw a circle (clock face) with state-based color
+        center = size // 2
+        radius = 6
+        draw.ellipse(
+            [center - radius, center - radius, center + radius, center + radius],
+            fill=icon_color,
+            outline=(255, 255, 255, 255),
+            width=1
+        )
+        
+        # Draw clock hands (simple lines)
+        # Hour hand
+        draw.line(
+            [center, center, center, center - 3],
+            fill=(255, 255, 255, 255),
+            width=1
+        )
+        # Minute hand
+        draw.line(
+            [center, center, center + 2, center],
+            fill=(255, 255, 255, 255),
+            width=1
+        )
+        
+        return icon
+    
+    def get_tray_icon_state(self):
+        """Determine the current state for tray icon color"""
+        if not self.current_user:
+            return 'red'  # Not logged in
+        elif self.tracking_active:
+            return 'green'  # Logged in and tracking
+        else:
+            return 'blue'  # Logged in but not tracking
+    
+    def update_tray_icon(self):
+        """Update the tray icon based on current state"""
+        if self.tray:
+            try:
+                state = self.get_tray_icon_state()
+                new_icon = self.create_tray_icon(state)
+                self.tray.icon = new_icon
+            except Exception as e:
+                print(f"[WARN] Failed to update tray icon: {e}")
     
     def setup_system_tray(self):
         """Setup system tray icon"""
         try:
-            # Create a simple icon (16x16 pixel image)
-            icon_image = PILImage.new('RGB', (16, 16), color='blue')
+            # Create initial icon based on current state
+            initial_state = self.get_tray_icon_state()
+            icon_image = self.create_tray_icon(initial_state)
             
-            menu = pystray.Menu(
-                item('Dashboard', lambda: webbrowser.open(f'http://localhost:{self.web_port}/dashboard')),
-                item('Start Tracking', lambda: self.start_tracking() if not self.tracking_active else None),
-                item('Stop Tracking', lambda: self.stop_tracking() if self.tracking_active else None),
-                item('Quit', lambda: self.quit_app())
-            )
+            # Create dynamic menu that updates based on tracking state
+            def create_menu():
+                if not self.current_user:
+                    return pystray.Menu(
+                        item('Login', lambda: webbrowser.open(f'http://localhost:{self.web_port}/login')),
+                        item('Quit', lambda: self.quit_app())
+                    )
+                else:
+                    tracking_status = "Stop Tracking" if self.tracking_active else "Start Tracking"
+                    return pystray.Menu(
+                        item('Dashboard', lambda: webbrowser.open(f'http://localhost:{self.web_port}/dashboard')),
+                        item(tracking_status, 
+                             lambda: self.stop_tracking() if self.tracking_active else self.start_tracking()),
+                        item('Quit', lambda: self.quit_app())
+                    )
             
-            self.tray = pystray.Icon("BRD Time Tracker", icon_image, menu=menu)
+            self.tray = pystray.Icon("BRD Time Tracker", icon_image, menu=create_menu())
+            
+            # Start a thread to periodically update the icon
+            def update_icon_periodically():
+                while self.tray and self.tray.visible:
+                    try:
+                        self.update_tray_icon()
+                        time.sleep(2)  # Update every 2 seconds
+                    except Exception as e:
+                        break
+            
+            update_thread = threading.Thread(target=update_icon_periodically, daemon=True)
+            update_thread.start()
+            
             self.tray.run()
         except Exception as e:
             print(f"[WARN] System tray setup failed: {e}")
+            # Fallback to simple colored icon
+            try:
+                state = self.get_tray_icon_state()
+                color_map = {
+                    'red': '#DC3545',
+                    'blue': '#0052CC',
+                    'green': '#28A745'
+                }
+                icon_image = PILImage.new('RGB', (16, 16), color=color_map.get(state, '#0052CC'))
+                menu = pystray.Menu(
+                    item('Dashboard', lambda: webbrowser.open(f'http://localhost:{self.web_port}/dashboard')),
+                    item('Quit', lambda: self.quit_app())
+                )
+                self.tray = pystray.Icon("BRD Time Tracker", icon_image, menu=menu)
+                self.tray.run()
+            except Exception as e2:
+                print(f"[ERROR] System tray fallback also failed: {e2}")
     
     def quit_app(self):
         """Quit application"""
