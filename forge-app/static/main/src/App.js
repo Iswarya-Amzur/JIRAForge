@@ -324,9 +324,9 @@ function App() {
                 <div className="screenshot-grid">
                   {screenshots.map(screenshot => (
                     <div key={screenshot.id} className="screenshot-item">
-                      {screenshot.thumbnail_url ? (
+                      {(screenshot.signed_thumbnail_url || screenshot.thumbnail_url) ? (
                         <img 
-                          src={screenshot.thumbnail_url} 
+                          src={screenshot.signed_thumbnail_url || screenshot.thumbnail_url} 
                           alt={screenshot.window_title || 'Screenshot'} 
                           onError={(e) => {
                             e.target.style.display = 'none';
@@ -334,7 +334,7 @@ function App() {
                           }}
                         />
                       ) : null}
-                      <div className="screenshot-placeholder" style={{ display: screenshot.thumbnail_url ? 'none' : 'block' }}>
+                      <div className="screenshot-placeholder" style={{ display: (screenshot.signed_thumbnail_url || screenshot.thumbnail_url) ? 'none' : 'block' }}>
                         No Preview
                       </div>
                       <div className="screenshot-info">

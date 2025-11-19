@@ -69,7 +69,7 @@ function createTray() {
       // Create a simple 16x16 transparent icon as fallback
       tray = new Tray(path.join(__dirname, '../assets/icon.png') || app.getAppPath());
     } else {
-      tray = new Tray(iconPath);
+  tray = new Tray(iconPath);
     }
   } catch (error) {
     console.warn('Could not create tray icon:', error.message);
@@ -260,7 +260,7 @@ app.whenReady().then(() => {
   
   // Create tray with error handling
   try {
-    createTray();
+  createTray();
   } catch (error) {
     console.warn('Could not create system tray:', error.message);
     // App will still work without tray

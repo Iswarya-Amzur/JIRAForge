@@ -5,36 +5,45 @@ modules:
       resolver:
         function: resolver
       title: BRD & Time Tracker
+
   jira:issuePanel:
     - key: brd-time-tracker-issue-panel
       resource: main
       resolver:
         function: resolver
       title: Time Analytics
+      icon: https://developer.atlassian.com/platform/forge/images/issue-panel-icon.svg
+
   jira:adminPage:
     - key: brd-time-tracker-settings
       title: BRD & Time Tracker Settings
       resource: settings
       resolver:
         function: resolver
+
 resources:
   - key: main
     path: static/main/build
   - key: settings
     path: static/settings/build
-function:
+
+functions:
   - key: resolver
     handler: index.handler
+
 app:
-  id: ari:cloud:ecosystem::app/YOUR_APP_ID
+  id: ari:cloud:ecosystem::app/c8bab1dc-ae32-4e6f-9dbd-eb242cc6c14a
+  runtime:
+    name: nodejs20.x
+
 permissions:
   scopes:
     - read:me
     - read:jira-work
     - write:jira-work
     - read:jira-user
-    - write:jira-user
+    - storage:app
   external:
     fetch:
       backend:
-        - '*.supabase.co'
+        - address: "*.supabase.co"

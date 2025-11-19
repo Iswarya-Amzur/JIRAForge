@@ -8,7 +8,7 @@
     "build:main": "cd static/main && npm run build",
     "build:settings": "cd static/settings && npm run build",
     "deploy": "forge deploy",
-    "install": "forge install",
+    "install-app": "forge install",
     "tunnel": "forge tunnel"
   },
   "keywords": [

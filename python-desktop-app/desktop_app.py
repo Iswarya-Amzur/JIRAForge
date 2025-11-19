@@ -345,8 +345,75 @@ class BRDTimeTracker:
                     'user_id', self.current_user_id
                 ).order('timestamp', desc=True).limit(50).execute()
                 
-                return jsonify(result.data)
+                # Generate proxy URLs for private storage images
+                screenshots = []
+                for screenshot in result.data:
+                    # Use proxy endpoint for thumbnails and full images
+                    storage_path = screenshot.get('storage_path', '')
+                    if storage_path:
+                        # Get thumbnail path - extract directory and filename
+                        # Format: user_id/screenshot_timestamp.png -> user_id/thumb_timestamp.jpg
+                        if '/' in storage_path:
+                            dir_path, filename = storage_path.rsplit('/', 1)
+                            thumb_filename = filename.replace('screenshot_', 'thumb_').replace('.png', '.jpg')
+                            thumb_path = f'{dir_path}/{thumb_filename}'
+                        else:
+                            thumb_path = storage_path.replace('screenshot_', 'thumb_').replace('.png', '.jpg')
+                        
+                        # Use proxy endpoint for thumbnail
+                        screenshot['thumbnail_url'] = f'/api/screenshot/{thumb_path}'
+                        
+                        # Also provide proxy URL for full image
+                        screenshot['proxy_url'] = f'/api/screenshot/{storage_path}'
+                    
+                    screenshots.append(screenshot)
+                
+                return jsonify(screenshots)
             except Exception as e:
+                return jsonify({'error': str(e)}), 500
+        
+        @self.app.route('/api/screenshot/<path:file_path>')
+        def serve_screenshot(file_path):
+            """Proxy endpoint to serve screenshots from private storage"""
+            if not self.current_user_id:
+                return jsonify({'error': 'Not authenticated'}), 401
+            
+            try:
+                # Verify the file belongs to the current user
+                if not file_path.startswith(f"{self.current_user_id}/"):
+                    return jsonify({'error': 'Unauthorized'}), 403
+                
+                # Use service client to get file
+                client = self.supabase_service if self.supabase_service else self.supabase
+                
+                # Download file from storage
+                file_response = client.storage.from_('screenshots').download(file_path)
+                
+                if file_response:
+                    # Determine content type
+                    content_type = 'image/png'
+                    if file_path.endswith('.jpg') or file_path.endswith('.jpeg'):
+                        content_type = 'image/jpeg'
+                    
+                    # Handle different response types from Supabase
+                    file_data = file_response
+                    if hasattr(file_response, 'read'):
+                        file_data = file_response.read()
+                    elif isinstance(file_response, dict):
+                        # Supabase might return dict with 'data' key
+                        file_data = file_response.get('data', file_response)
+                    elif not isinstance(file_response, (bytes, bytearray)):
+                        try:
+                            file_data = bytes(file_response)
+                        except:
+                            file_data = str(file_response).encode()
+                    
+                    from flask import Response
+                    return Response(file_data, mimetype=content_type)
+                else:
+                    return jsonify({'error': 'File not found'}), 404
+            except Exception as e:
+                print(f"[ERROR] Error serving screenshot: {e}")
                 return jsonify({'error': str(e)}), 500
     
     def ensure_user_exists(self, atlassian_user):
@@ -487,8 +554,16 @@ class BRDTimeTracker:
                 result = db_client.table('screenshots').insert(screenshot_data).execute()
                 
                 if result.data:
-                    print(f"[OK] Screenshot uploaded: {filename}")
-                    return result.data[0]['id']
+                    screenshot_id = result.data[0]['id']
+                    print(f"[OK] Screenshot uploaded and saved to database:")
+                    print(f"     - File: {filename}")
+                    print(f"     - Database ID: {screenshot_id}")
+                    print(f"     - Storage: {storage_path}")
+                    print(f"     - Size: {len(img_bytes)} bytes")
+                    return screenshot_id
+                else:
+                    print(f"[WARN] Screenshot uploaded to storage but database insert returned no data")
+                    return None
             
         except Exception as e:
             print(f"[ERROR] Screenshot upload failed: {e}")
@@ -781,11 +856,104 @@ class BRDTimeTracker:
 <head>
     <title>BRD Time Tracker - Dashboard</title>
     <style>
-        body { font-family: Arial; max-width: 800px; margin: 50px auto; padding: 20px; background: #f5f5f5; }
-        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
-        .status.active { background: #d4edda; color: #155724; }
-        .status.inactive { background: #f8d7da; color: #721c24; }
+        * { box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            padding: 20px; 
+            background: #f5f5f5; 
+        }
+        .container { 
+            background: white; 
+            padding: 30px; 
+            border-radius: 10px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+        }
+        h1 { margin-top: 0; color: #172B4D; }
+        .status { 
+            padding: 12px 16px; 
+            margin: 20px 0; 
+            border-radius: 6px; 
+            font-weight: 500;
+        }
+        .status.active { 
+            background: #d4edda; 
+            color: #155724; 
+            border: 1px solid #c3e6cb;
+        }
+        .status.inactive { 
+            background: #f8d7da; 
+            color: #721c24; 
+            border: 1px solid #f5c6cb;
+        }
+        h2 { 
+            margin-top: 30px; 
+            margin-bottom: 20px; 
+            color: #172B4D; 
+        }
+        .screenshots-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .screenshot-item {
+            background: #f8f9fa;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .screenshot-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+        .screenshot-item img {
+            width: 100%;
+            height: 180px;
+            object-fit: cover;
+            display: block;
+            background: #e9ecef;
+        }
+        .screenshot-info {
+            padding: 12px;
+        }
+        .screenshot-info .app-name {
+            font-weight: 600;
+            color: #172B4D;
+            margin: 0 0 4px 0;
+            font-size: 14px;
+        }
+        .screenshot-info .window-title {
+            color: #6B778C;
+            font-size: 12px;
+            margin: 0 0 6px 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .screenshot-info .timestamp {
+            color: #8993A4;
+            font-size: 11px;
+            margin: 0;
+        }
+        .empty-state {
+            text-align: center;
+            color: #6B778C;
+            padding: 60px 20px;
+            grid-column: 1 / -1;
+        }
+        .empty-state p {
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #6B778C;
+        }
     </style>
 </head>
 <body>
@@ -793,22 +961,56 @@ class BRDTimeTracker:
         <h1>BRD Time Tracker Dashboard</h1>
         <div id="status" class="status">Loading...</div>
         <h2>Recent Screenshots</h2>
-        <div id="screenshots">Loading...</div>
+        <div id="screenshots" class="loading">Loading screenshots...</div>
     </div>
     <script>
-        fetch('/api/status').then(r => r.json()).then(data => {
-            const statusDiv = document.getElementById('status');
-            statusDiv.className = 'status ' + (data.tracking ? 'active' : 'inactive');
-            statusDiv.textContent = data.tracking ? 'Tracking Active' : 'Tracking Inactive';
-        });
-        fetch('/api/screenshots').then(r => r.json()).then(data => {
-            const div = document.getElementById('screenshots');
-            if (data.length === 0) {
-                div.textContent = 'No screenshots yet';
-            } else {
-                div.innerHTML = '<ul>' + data.map(s => '<li>' + new Date(s.timestamp).toLocaleString() + ' - ' + s.application_name + '</li>').join('') + '</ul>';
-            }
-        });
+        // Load status
+        fetch('/api/status')
+            .then(r => r.json())
+            .then(data => {
+                const statusDiv = document.getElementById('status');
+                statusDiv.className = 'status ' + (data.tracking ? 'active' : 'inactive');
+                statusDiv.textContent = data.tracking ? '✓ Tracking Active' : '○ Tracking Inactive';
+            })
+            .catch(err => {
+                console.error('Error loading status:', err);
+                document.getElementById('status').textContent = 'Error loading status';
+            });
+        
+        // Load screenshots
+        fetch('/api/screenshots')
+            .then(r => r.json())
+            .then(data => {
+                const div = document.getElementById('screenshots');
+                if (!data || data.length === 0) {
+                    div.className = 'empty-state';
+                    div.innerHTML = '<p>📷</p><p>No screenshots captured yet</p><p style="font-size: 12px; color: #8993A4;">Screenshots will appear here once tracking starts</p>';
+                } else {
+                    div.className = 'screenshots-grid';
+                    div.innerHTML = data.map(s => {
+                        const date = new Date(s.timestamp);
+                        const thumbnailUrl = s.thumbnail_url || s.storage_url || '';
+                        const windowTitle = s.window_title || 'Unknown window';
+                        const appName = s.application_name || 'Unknown app';
+                        
+                        const imageUrl = s.proxy_url || s.thumbnail_url || s.storage_url || '';
+                        return `
+                            <div class="screenshot-item" onclick="window.open('${imageUrl || '#'}', '_blank')">
+                                <img src="${thumbnailUrl || imageUrl || ''}" alt="Screenshot" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'250\\' height=\\'180\\'%3E%3Crect fill=\\'%23e9ecef\\' width=\\'250\\' height=\\'180\\'/%3E%3Ctext x=\\'50%25\\' y=\\'50%25\\' text-anchor=\\'middle\\' dy=\\'.3em\\' fill=\\'%23999\\' font-family=\\'Arial\\' font-size=\\'14\\'%3EImage not available%3C/text%3E%3C/svg%3E';">
+                                <div class="screenshot-info">
+                                    <p class="app-name">${appName}</p>
+                                    <p class="window-title" title="${windowTitle}">${windowTitle}</p>
+                                    <p class="timestamp">${date.toLocaleString()}</p>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+            })
+            .catch(err => {
+                console.error('Error loading screenshots:', err);
+                document.getElementById('screenshots').innerHTML = '<p style="color: #dc3545;">Error loading screenshots. Please refresh the page.</p>';
+            });
     </script>
 </body>
 </html>'''

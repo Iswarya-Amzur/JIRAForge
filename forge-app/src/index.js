@@ -207,6 +207,70 @@ resolver.define('getScreenshots', async (req) => {
       `screenshots?user_id=eq.${userId}&deleted_at=is.null&order=timestamp.desc&limit=${limit}&offset=${offset}`
     );
 
+    // Generate signed URLs for private storage images
+    // Since the screenshots bucket is private, we need signed URLs
+    const screenshotsWithUrls = await Promise.all(
+      (screenshots || []).map(async (screenshot) => {
+        const screenshotWithUrl = { ...screenshot };
+        
+        // Generate signed URL for thumbnail if it exists
+        if (screenshot.thumbnail_url || screenshot.storage_path) {
+          try {
+            // Extract thumbnail path from storage_path
+            let thumbPath = screenshot.thumbnail_url;
+            if (!thumbPath && screenshot.storage_path) {
+              // Format: user_id/screenshot_timestamp.png -> user_id/thumb_timestamp.jpg
+              if (screenshot.storage_path.includes('/')) {
+                const dirPath = screenshot.storage_path.substring(0, screenshot.storage_path.lastIndexOf('/'));
+                const filename = screenshot.storage_path.substring(screenshot.storage_path.lastIndexOf('/') + 1);
+                const thumbFilename = filename.replace('screenshot_', 'thumb_').replace('.png', '.jpg');
+                thumbPath = `${dirPath}/${thumbFilename}`;
+              } else {
+                thumbPath = screenshot.storage_path.replace('screenshot_', 'thumb_').replace('.png', '.jpg');
+              }
+            }
+            
+            // Create signed URL (valid for 1 hour)
+            // Supabase Storage signed URL endpoint format
+            const filePath = encodeURIComponent(thumbPath || screenshot.storage_path);
+            const signedUrlResponse = await fetch(
+              `${supabaseConfig.url}/storage/v1/object/sign/screenshots/${filePath}`,
+              {
+                method: 'POST',
+                headers: {
+                  'apikey': supabaseConfig.serviceRoleKey,
+                  'Authorization': `Bearer ${supabaseConfig.serviceRoleKey}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  expiresIn: 3600 // 1 hour
+                })
+              }
+            );
+            
+            if (signedUrlResponse.ok) {
+              const signedData = await signedUrlResponse.json();
+              // Supabase returns signedURL as a path, need to prepend the base URL
+              if (signedData.signedURL) {
+                screenshotWithUrl.signed_thumbnail_url = `${supabaseConfig.url}${signedData.signedURL}`;
+              } else if (signedData.url) {
+                screenshotWithUrl.signed_thumbnail_url = signedData.url;
+              }
+            } else {
+              // If signed URL fails, try to use the public URL (might not work for private buckets)
+              console.warn('Failed to generate signed URL, status:', signedUrlResponse.status);
+            }
+          } catch (err) {
+            console.error('Error generating signed URL:', err);
+            // Fallback to original URL
+            screenshotWithUrl.signed_thumbnail_url = screenshot.thumbnail_url;
+          }
+        }
+        
+        return screenshotWithUrl;
+      })
+    );
+
     // Get total count for pagination
     const countResponse = await fetch(
       `${supabaseConfig.url}/rest/v1/screenshots?user_id=eq.${userId}&deleted_at=is.null&select=id`,
@@ -225,7 +289,7 @@ resolver.define('getScreenshots', async (req) => {
     return {
       success: true,
       data: {
-        screenshots: screenshots || [],
+        screenshots: screenshotsWithUrls || [],
         totalCount,
         limit,
         offset
