@@ -1,4 +1,5 @@
 const { createClient } = require('@supabase/supabase-js');
+const axios = require('axios');
 const logger = require('../utils/logger');
 
 // Initialize Supabase client with service role key
@@ -150,13 +151,41 @@ exports.markWorklogCreated = async (screenshotId, worklogId) => {
 };
 
 /**
- * Get user's Jira issues for correlation
+ * Get user's Atlassian account ID from Supabase
  */
-exports.getUserJiraIssues = async (userId) => {
+exports.getUserAtlassianAccountId = async (userId) => {
   try {
-    // This would fetch the user's accessible Jira issues
-    // For now, return a placeholder
-    // In production, this would call the Forge app's API or Jira directly
+    const { data, error } = await supabase
+      .from('users')
+      .select('atlassian_account_id')
+      .eq('id', userId)
+      .single();
+
+    if (error || !data) {
+      logger.warn('User not found or no Atlassian account ID', { userId, error });
+      return null;
+    }
+
+    return data.atlassian_account_id;
+  } catch (error) {
+    logger.error('Error fetching user Atlassian account ID:', error);
+    return null;
+  }
+};
+
+/**
+ * Get user's Jira issues for correlation
+ * This function will be called by the controller which will fetch issues via Forge app
+ * For now, returns empty array - the controller will handle fetching
+ */
+exports.getUserJiraIssues = async (userId, atlassianAccountId = null) => {
+  try {
+    // If we have a Forge app URL configured, we could call it here
+    // But since Forge apps use resolvers, we'll handle this in the controller
+    // which can call the Forge app's resolver via the webhook payload
+    
+    // For now, return empty array - the controller will fetch via Forge
+    logger.debug('getUserJiraIssues called - will be fetched by controller', { userId });
     return [];
   } catch (error) {
     logger.error('Error fetching user Jira issues:', error);

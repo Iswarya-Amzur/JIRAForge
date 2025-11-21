@@ -1,16 +1,25 @@
+app:
+  id: ari:cloud:ecosystem::app/c8bab1dc-ae32-4e6f-9dbd-eb242cc6c14a
+  runtime:
+    name: nodejs20.x
+
 modules:
+  function:
+    - key: main
+      handler: index.handler
+
   jira:projectPage:
     - key: brd-time-tracker-project-page
       resource: main
       resolver:
-        function: resolver
+        function: main
       title: BRD & Time Tracker
 
   jira:issuePanel:
     - key: brd-time-tracker-issue-panel
       resource: main
       resolver:
-        function: resolver
+        function: main
       title: Time Analytics
       icon: https://developer.atlassian.com/platform/forge/images/issue-panel-icon.svg
 
@@ -19,22 +28,14 @@ modules:
       title: BRD & Time Tracker Settings
       resource: settings
       resolver:
-        function: resolver
+        function: main
+
 
 resources:
   - key: main
     path: static/main/build
   - key: settings
     path: static/settings/build
-
-functions:
-  - key: resolver
-    handler: index.handler
-
-app:
-  id: ari:cloud:ecosystem::app/c8bab1dc-ae32-4e6f-9dbd-eb242cc6c14a
-  runtime:
-    name: nodejs20.x
 
 permissions:
   scopes:

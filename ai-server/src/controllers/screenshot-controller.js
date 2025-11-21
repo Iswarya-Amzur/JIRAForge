@@ -15,7 +15,8 @@ exports.analyzeScreenshot = async (req, res) => {
       storage_path,
       window_title,
       application_name,
-      timestamp
+      timestamp,
+      user_assigned_issues // Optional: User's assigned Jira issues from Forge app
     } = req.body;
 
     // Validate required fields
@@ -29,7 +30,8 @@ exports.analyzeScreenshot = async (req, res) => {
     logger.info('Starting screenshot analysis', {
       screenshot_id,
       user_id,
-      application_name
+      application_name,
+      hasAssignedIssues: !!user_assigned_issues && user_assigned_issues.length > 0
     });
 
     // Download screenshot from Supabase Storage
@@ -39,12 +41,14 @@ exports.analyzeScreenshot = async (req, res) => {
     const extractedText = await screenshotService.extractText(imageBuffer);
 
     // Analyze the screenshot and determine Jira task
+    // Pass user's assigned issues if provided (from webhook payload)
     const analysis = await screenshotService.analyzeActivity({
       extractedText,
       windowTitle: window_title,
       applicationName: application_name,
       timestamp,
-      userId: user_id
+      userId: user_id,
+      userAssignedIssues: user_assigned_issues || [] // Pass assigned issues to analysis
     });
 
     // Save analysis results to Supabase

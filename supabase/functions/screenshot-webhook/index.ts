@@ -64,9 +64,40 @@ serve(async (req) => {
         console.error('Error updating screenshot status:', updateError);
       }
 
+      // Fetch user's assigned Jira issues from cache
+      // Cache is updated periodically by Forge app's updateUserAssignedIssuesCache resolver
+      const { data: cachedIssues, error: cacheError } = await supabaseClient
+        .from('user_jira_issues_cache')
+        .select('issue_key, summary, status, project_key, issue_type')
+        .eq('user_id', payload.record.user_id)
+        .order('updated_at', { ascending: false })
+        .limit(50);
+
+      let userAssignedIssues: any[] = [];
+      
+      if (cachedIssues && cachedIssues.length > 0) {
+        // Format cached issues for AI server
+        userAssignedIssues = cachedIssues.map(issue => ({
+          key: issue.issue_key,
+          summary: issue.summary,
+          status: issue.status,
+          project: issue.project_key,
+          issueType: issue.issue_type
+        }));
+        
+        console.log(`Fetched ${userAssignedIssues.length} cached issues for user ${payload.record.user_id}`);
+      } else {
+        if (cacheError) {
+          console.warn('Error fetching cached issues:', cacheError);
+        } else {
+          console.log('No cached issues found for user - cache may need to be updated');
+        }
+        // Continue with empty array - AI server will work without it but with lower accuracy
+      }
+
       // Notify AI Analysis Server
       try {
-        const aiResponse = await fetch(`${AI_SERVER_URL}/analyze-screenshot`, {
+        const aiResponse = await fetch(`${AI_SERVER_URL}/api/analyze-screenshot`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -80,6 +111,7 @@ serve(async (req) => {
             window_title: payload.record.window_title,
             application_name: payload.record.application_name,
             timestamp: payload.record.timestamp,
+            user_assigned_issues: userAssignedIssues, // Pass assigned issues to AI server
           }),
         });
 

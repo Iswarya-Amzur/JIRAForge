@@ -2,6 +2,7 @@
   "name": "brd-time-tracker-settings-ui",
   "version": "1.0.0",
   "private": true,
+  "homepage": ".",
   "dependencies": {
     "@forge/bridge": "^3.0.0",
     "@forge/react": "^7.0.0",
