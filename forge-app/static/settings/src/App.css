@@ -280,3 +280,95 @@
 .note strong {
   color: var(--ds-text-brand);
 }
+
+/* Admin Badge */
+.admin-badge {
+  display: inline-block;
+  margin-top: var(--ds-space-150);
+  padding: 6px 12px;
+  background: #E3FCEF;
+  color: var(--ds-background-success-bold);
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-left: 4px solid var(--ds-background-success-bold);
+}
+
+/* Access Denied */
+.access-denied {
+  text-align: center;
+  padding: var(--ds-space-300) var(--ds-space-300) 60px;
+  background: var(--ds-background-default);
+  border: 1px solid var(--ds-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 8px -2px rgba(9, 30, 66, 0.15);
+  margin-top: 60px;
+  border-top: 4px solid var(--ds-background-danger-bold);
+}
+
+.access-denied h1 {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--ds-text-danger);
+  margin-bottom: var(--ds-space-200);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.access-denied h1::before {
+  content: '🔒';
+  font-size: 32px;
+}
+
+.access-denied p {
+  color: var(--ds-text);
+  font-size: 16px;
+  margin-bottom: var(--ds-space-150);
+  line-height: 1.6;
+}
+
+.access-denied .help-text {
+  color: var(--ds-text-subtle);
+  font-size: 14px;
+  font-style: italic;
+}
+
+/* Loading Container */
+.loading-container {
+  text-align: center;
+  padding: 60px var(--ds-space-300);
+  background: var(--ds-background-neutral);
+  border: 2px dashed var(--ds-border);
+  border-radius: 4px;
+  margin-top: 40px;
+}
+
+.loading-container p {
+  color: var(--ds-text-subtle);
+  font-size: 16px;
+  font-weight: 500;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.loading-container p::before {
+  content: '⏳';
+  font-size: 24px;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}

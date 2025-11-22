@@ -3,7 +3,7 @@
  * Resolver definitions for Jira issue operations endpoints
  */
 
-import { getAssignedIssues, updateAssignedIssuesCache } from '../services/issueService.js';
+import { getAssignedIssues, updateAssignedIssuesCache, getActiveIssuesWithTime } from '../services/issueService.js';
 
 /**
  * Register issue resolvers
@@ -13,7 +13,7 @@ export function registerIssueResolvers(resolver) {
   /**
    * Resolver for getting user's assigned Jira issues
    * Used by AI server to match screenshots to correct issues
-   * Only returns issues with status "In Progress" or "In Review"
+   * Only returns issues with status "In Progress"
    */
   resolver.define('getUserAssignedIssues', async (req) => {
     const { context } = req;
@@ -56,6 +56,32 @@ export function registerIssueResolvers(resolver) {
       return {
         success: false,
         error: error.message
+      };
+    }
+  });
+
+  /**
+   * Resolver for getting user's active issues with time tracking data
+   * Returns assigned issues enriched with time tracking from Supabase
+   */
+  resolver.define('getActiveIssuesWithTime', async (req) => {
+    const { context } = req;
+    const accountId = context.accountId;
+
+    try {
+      const result = await getActiveIssuesWithTime(accountId);
+      return {
+        success: true,
+        issues: result.issues,
+        total: result.total
+      };
+    } catch (error) {
+      console.error('Error fetching active issues with time:', error);
+      return {
+        success: false,
+        error: error.message,
+        issues: [],
+        total: 0
       };
     }
   });

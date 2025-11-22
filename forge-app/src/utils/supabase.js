@@ -12,7 +12,7 @@ import { fetch, storage } from '@forge/api';
  */
 export async function getSupabaseConfig(accountId) {
   try {
-    const settings = await storage.get(`${accountId}:settings`);
+    const settings = await storage.get('global:app-settings');
     if (!settings) {
       return null;
     }

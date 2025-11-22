@@ -8,7 +8,7 @@ import { JQL_ACTIVE_STATUSES, MAX_JIRA_SEARCH_RESULTS } from '../config/constant
 
 /**
  * Get user's assigned issues from Jira
- * @param {Array<string>} statuses - Issue statuses to filter (default: In Progress, In Review)
+ * @param {Array<string>} statuses - Issue statuses to filter (default: In Progress)
  * @param {number} maxResults - Maximum number of results
  * @returns {Promise<Object>} Jira search response
  */
@@ -16,16 +16,54 @@ export async function getUserAssignedIssues(statuses = JQL_ACTIVE_STATUSES, maxR
   const jql = `assignee = currentUser() AND (status = "${statuses.join('" OR status = "')}")ORDER BY updated DESC`;
 
   const response = await api.asUser().requestJira(
-    route`/rest/api/3/search?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}&fields=summary,status,project,issuetype,updated`,
+    route`/rest/api/3/search/jql`,
     {
-      method: 'GET',
+      method: 'POST',
       headers: {
-        'Accept': 'application/json'
-      }
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        jql: jql,
+        maxResults: maxResults,
+        fields: ['summary', 'status', 'project', 'issuetype', 'updated']
+      })
     }
   );
 
   return response.json();
+}
+
+/**
+ * Get ALL user's assigned issues from Jira (regardless of status)
+ * @param {number} maxResults - Maximum number of results
+ * @returns {Promise<Object>} Jira search response
+ */
+export async function getAllUserAssignedIssues(maxResults = MAX_JIRA_SEARCH_RESULTS) {
+  const jql = 'assignee = currentUser() ORDER BY updated DESC';
+
+  console.log('[JIRA API] Fetching issues with JQL:', jql);
+  const response = await api.asUser().requestJira(
+    route`/rest/api/3/search/jql`,
+    {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        jql: jql,
+        maxResults: maxResults,
+        fields: ['summary', 'status', 'project', 'issuetype', 'priority', 'updated']
+      })
+    }
+  );
+
+  const result = await response.json();
+  console.log('[JIRA API] Response status:', response.status);
+  console.log('[JIRA API] Issues returned:', result.issues?.length || 0);
+  console.log('[JIRA API] Full result:', JSON.stringify(result, null, 2));
+  return result;
 }
 
 /**
@@ -117,8 +155,45 @@ export async function isJiraAdmin() {
   }
 }
 
+/**
+ * Get list of projects where current user is a Project Administrator
+ * @returns {Promise<Array<string>>} Array of project keys
+ */
+export async function getProjectsUserAdmins() {
+  try {
+    // Get all projects accessible to the user
+    const response = await api.asUser().requestJira(
+      route`/rest/api/3/project`,
+      {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json'
+        }
+      }
+    );
 
+    const projects = await response.json();
+    const adminProjects = [];
 
+    // Check ADMINISTER_PROJECTS permission for each project
+    for (const project of projects) {
+      try {
+        const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS'], project.key);
+        if (permissions.permissions?.ADMINISTER_PROJECTS?.havePermission) {
+          adminProjects.push(project.key);
+        }
+      } catch (error) {
+        // If permission check fails for a project, skip it
+        console.warn(`Could not check permissions for project ${project.key}:`, error.message);
+      }
+    }
+
+    return adminProjects;
+  } catch (error) {
+    console.error('Error getting user admin projects:', error);
+    return [];
+  }
+}
 
 /**
  * Format issue data for consistent output

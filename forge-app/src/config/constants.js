@@ -20,9 +20,15 @@ export const ALLOWED_BRD_FILE_TYPES = [
 export const MAX_BRD_FILE_SIZE = 50 * 1024 * 1024; // 50MB in bytes
 
 // Jira Configuration
-export const JQL_ACTIVE_STATUSES = ['In Progress', 'In Review'];
+export const JQL_ACTIVE_STATUSES = ['In Progress'];
 export const MAX_JIRA_SEARCH_RESULTS = 50;
 export const ISSUE_BATCH_SIZE = 20;
+
+// Permission Configuration
+export const REQUIRED_ADMIN_PERMISSION = 'ADMINISTER';
+export const REQUIRED_PROJECT_ADMIN_PERMISSION = 'ADMINISTER_PROJECTS';
+export const REQUIRED_CREATE_PERMISSION = 'CREATE_ISSUES';
+export const REQUIRED_EDIT_PERMISSION = 'EDIT_ISSUES';
 
 // Cache Configuration
 export const ISSUE_CACHE_TTL = 120000; // 2 minutes in milliseconds
@@ -36,9 +42,10 @@ export const DEFAULT_SETTINGS = {
   supabaseUrl: '',
   supabaseAnonKey: '',
   supabaseServiceRoleKey: '',
+  aiServerUrl: '',
+  aiServerApiKey: '',
   screenshotInterval: DEFAULT_SCREENSHOT_INTERVAL,
-  autoWorklogEnabled: true,
-  aiServerUrl: ''
+  autoWorklogEnabled: true
 };
 
 // Pagination

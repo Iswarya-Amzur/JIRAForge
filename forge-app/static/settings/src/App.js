@@ -9,15 +9,36 @@ function App() {
     supabaseServiceRoleKey: '',
     screenshotInterval: 300,
     autoWorklogEnabled: true,
-    aiServerUrl: ''
+    aiServerUrl: '',
+    aiServerApiKey: ''
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [permissionLoading, setPermissionLoading] = useState(true);
 
   useEffect(() => {
-    loadSettings();
+    checkPermissions();
   }, []);
+
+  const checkPermissions = async () => {
+    setPermissionLoading(true);
+    try {
+      const result = await invoke('getUserPermissions');
+      if (result.success && result.permissions.isJiraAdmin) {
+        setIsAdmin(true);
+        loadSettings();
+      } else {
+        setIsAdmin(false);
+        setPermissionLoading(false);
+      }
+    } catch (err) {
+      console.error('Failed to check permissions:', err);
+      setIsAdmin(false);
+      setPermissionLoading(false);
+    }
+  };
 
   const loadSettings = async () => {
     setLoading(true);
@@ -35,6 +56,7 @@ function App() {
       setMessage({ type: 'error', text: 'Failed to load settings: ' + err.message });
     } finally {
       setLoading(false);
+      setPermissionLoading(false);
     }
   };
 
@@ -64,10 +86,34 @@ function App() {
     }
   };
 
+  if (permissionLoading) {
+    return (
+      <div className="App">
+        <div className="loading-container">
+          <p>Checking permissions...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="App">
+        <div className="access-denied">
+          <h1>Access Denied</h1>
+          <p>Only Jira Administrators can access global settings.</p>
+          <p className="help-text">If you need to configure settings, please contact your Jira Administrator.</p>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="App">
-        <p>Loading settings...</p>
+        <div className="loading-container">
+          <p>Loading settings...</p>
+        </div>
       </div>
     );
   }
@@ -76,7 +122,8 @@ function App() {
     <div className="App">
       <header className="App-header">
         <h1>BRD Automate & Time Tracker - Settings</h1>
-        <p className="subtitle">Configure your application settings</p>
+        <p className="subtitle">Configure global application settings (Administrator Only)</p>
+        <div className="admin-badge">Jira Administrator</div>
       </header>
 
       <main className="settings-content">
@@ -174,9 +221,22 @@ function App() {
               name="aiServerUrl"
               value={settings.aiServerUrl}
               onChange={handleChange}
-              placeholder="https://your-ai-server.com"
+              placeholder="https://your-ai-server.com or http://localhost:5000"
             />
             <small>URL of your AI analysis server</small>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="aiServerApiKey">AI Server API Key</label>
+            <input
+              type="password"
+              id="aiServerApiKey"
+              name="aiServerApiKey"
+              value={settings.aiServerApiKey}
+              onChange={handleChange}
+              placeholder="Enter your AI server API key (optional)"
+            />
+            <small>API key for authenticating with the AI server (if required)</small>
           </div>
         </section>
 

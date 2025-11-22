@@ -224,6 +224,12 @@ class BRDTimeTracker:
         self._tracking_thread = None
         self.screenshot_hash = None
         
+        # Jira issue caching
+        self.user_issues = []  # Cache of user's In Progress Jira issues
+        self.issues_cache_time = None  # Last time issues were fetched
+        self.issues_cache_ttl = 300  # 5 minutes cache TTL
+        self.jira_cloud_id = None  # Cached Jira cloud ID
+        
         # OpenAI (optional)
         openai_key = get_env_var('OPENAI_API_KEY')
         use_ai = get_env_var('USE_AI_FOR_SCREENSHOTS', 'false').lower() == 'true'
@@ -452,6 +458,94 @@ class BRDTimeTracker:
         
         return user_id
     
+    def get_jira_cloud_id(self):
+        """Get Jira cloud ID for API calls"""
+        if self.jira_cloud_id:
+            return self.jira_cloud_id
+        
+        access_token = self.auth_manager.tokens.get('access_token')
+        if not access_token:
+            print("[WARN] No access token found for Jira Cloud ID fetch")
+            return None
+        
+        try:
+            print("[INFO] Fetching Jira Cloud ID...")
+            response = requests.get(
+                'https://api.atlassian.com/oauth/token/accessible-resources',
+                headers={'Authorization': f'Bearer {access_token}'}
+            )
+            
+            if response.status_code == 200:
+                resources = response.json()
+                print(f"[INFO] Found {len(resources)} accessible resources")
+                if resources:
+                    self.jira_cloud_id = resources[0]['id']
+                    print(f"[OK] Using Jira Cloud ID: {self.jira_cloud_id}")
+                    return self.jira_cloud_id
+            else:
+                print(f"[ERROR] Failed to get resources: {response.status_code} - {response.text}")
+        except Exception as e:
+            print(f"[ERROR] Failed to get Jira cloud ID: {e}")
+        
+        return None
+
+    def fetch_jira_issues(self):
+        """Fetch user's In Progress Jira issues"""
+        print("[INFO] Attempting to fetch Jira issues...")
+        cloud_id = self.get_jira_cloud_id()
+        if not cloud_id:
+            print("[WARN] Cannot fetch issues: No Cloud ID")
+            return []
+        
+        access_token = self.auth_manager.tokens.get('access_token')
+        if not access_token:
+            print("[WARN] Cannot fetch issues: No access token")
+            return []
+        
+        try:
+            jql = 'assignee = currentUser() AND status = "In Progress"'
+            print(f"[INFO] Querying Jira with JQL (POST): {jql}")
+            
+            # Use /search/jql endpoint as requested by the 410 error message
+            # Note: The error explicitly said "Please migrate to the /rest/api/3/search/jql API"
+            response = requests.post(
+                f'https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/search/jql',
+                json={
+                    'jql': jql, 
+                    'maxResults': 50,
+                    'fields': ['summary', 'status', 'project']
+                },
+                headers={
+                    'Authorization': f'Bearer {access_token}',
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                issues = data.get('issues', [])
+                print(f"[OK] Jira API returned {len(issues)} issues")
+                return [{
+                    'key': issue['key'],
+                    'summary': issue['fields']['summary'],
+                    'status': issue['fields']['status']['name'],
+                    'project': issue['fields']['project']['key']
+                } for issue in issues]
+            else:
+                print(f"[ERROR] Jira API failed: {response.status_code} - {response.text}")
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch Jira issues: {e}")
+        
+        return []
+
+    def should_refresh_issues_cache(self):
+        """Check if issues cache needs to be refreshed"""
+        if not self.issues_cache_time:
+            return True
+        
+        return (time.time() - self.issues_cache_time) > self.issues_cache_ttl
+    
     def capture_screenshot(self):
         """Capture screenshot and return PIL Image"""
         try:
@@ -536,6 +630,13 @@ class BRDTimeTracker:
                 if thumb_result:
                     thumb_url = storage_client.storage.from_('screenshots').get_public_url(thumb_path)
                 
+                # Refresh issues cache if needed
+                if self.should_refresh_issues_cache():
+                    self.user_issues = self.fetch_jira_issues()
+                    self.issues_cache_time = time.time()
+                    if self.user_issues:
+                        print(f"[OK] Fetched {len(self.user_issues)} In Progress issues")
+
                 # Save metadata to database (use service client to bypass RLS)
                 screenshot_data = {
                     'user_id': self.current_user_id,
@@ -546,7 +647,8 @@ class BRDTimeTracker:
                     'window_title': window_info['title'],
                     'application_name': window_info['app'],
                     'file_size_bytes': len(img_bytes),
-                    'status': 'pending'
+                    'status': 'pending',
+                    'user_assigned_issues': self.user_issues
                 }
                 
                 # Use service client for database insert to bypass RLS

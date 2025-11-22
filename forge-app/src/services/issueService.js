@@ -3,7 +3,7 @@
  * Business logic for Jira issue operations and caching
  */
 
-import { getUserAssignedIssues, formatIssuesData } from '../utils/jira.js';
+import { getUserAssignedIssues, getAllUserAssignedIssues, formatIssuesData } from '../utils/jira.js';
 import { getSupabaseConfig, getOrCreateUser, supabaseRequest } from '../utils/supabase.js';
 import { JQL_ACTIVE_STATUSES, ISSUE_BATCH_SIZE } from '../config/constants.js';
 
@@ -21,6 +21,108 @@ export async function getAssignedIssues(accountId) {
   return {
     issues,
     total: data.total || 0
+  };
+}
+
+/**
+ * Get user's active issues with time tracking data
+ * Fetches assigned issues from Jira and enriches with time tracking from Supabase
+ * @param {string} accountId - Atlassian account ID
+ * @returns {Promise<Object>} Issues with time tracking data
+ */
+export async function getActiveIssuesWithTime(accountId) {
+  // Fetch ALL assigned issues from Jira (regardless of status)
+  const jiraData = await getAllUserAssignedIssues();
+  console.log('[BACKEND] Jira returned issues:', jiraData.issues?.length || 0);
+  const issues = jiraData.issues || [];
+
+  // Get Supabase config to fetch time tracking data
+  const supabaseConfig = await getSupabaseConfig(accountId);
+  if (!supabaseConfig) {
+    // If Supabase not configured, return issues without time tracking
+    return {
+      issues: issues.map(issue => ({
+        key: issue.key,
+        summary: issue.fields.summary || '',
+        status: issue.fields.status?.name || 'Unknown',
+        statusCategory: issue.fields.status?.statusCategory?.key || 'new',
+        priority: issue.fields.priority?.name || 'Medium',
+        priorityIconUrl: issue.fields.priority?.iconUrl || '',
+        issueType: issue.fields.issuetype?.name || 'Task',
+        issueTypeIconUrl: issue.fields.issuetype?.iconUrl || '',
+        projectKey: issue.fields.project?.key || '',
+        timeTracked: 0,
+        lastWorkedOn: null
+      })),
+      total: issues.length
+    };
+  }
+
+  // Get or create user record
+  const userId = await getOrCreateUser(accountId, supabaseConfig);
+  if (!userId) {
+    // Return issues without time tracking if user not found
+    return {
+      issues: issues.map(issue => ({
+        key: issue.key,
+        summary: issue.fields.summary || '',
+        status: issue.fields.status?.name || 'Unknown',
+        statusCategory: issue.fields.status?.statusCategory?.key || 'new',
+        priority: issue.fields.priority?.name || 'Medium',
+        priorityIconUrl: issue.fields.priority?.iconUrl || '',
+        issueType: issue.fields.issuetype?.name || 'Task',
+        issueTypeIconUrl: issue.fields.issuetype?.iconUrl || '',
+        projectKey: issue.fields.project?.key || '',
+        timeTracked: 0,
+        lastWorkedOn: null
+      })),
+      total: issues.length
+    };
+  }
+
+  // Fetch time tracking data for all issues
+  const timeTrackingData = await supabaseRequest(
+    supabaseConfig,
+    `analysis_results?user_id=eq.${userId}&is_active_work=eq.true&is_idle=eq.false&active_task_key=not.is.null&select=active_task_key,time_spent_seconds,created_at&order=created_at.desc&limit=1000`
+  );
+
+  // Aggregate time by issue key
+  const timeByIssue = {};
+  const lastWorkedByIssue = {};
+
+  if (timeTrackingData && Array.isArray(timeTrackingData)) {
+    timeTrackingData.forEach(entry => {
+      const issueKey = entry.active_task_key;
+      if (!timeByIssue[issueKey]) {
+        timeByIssue[issueKey] = 0;
+        lastWorkedByIssue[issueKey] = entry.created_at;
+      }
+      timeByIssue[issueKey] += entry.time_spent_seconds || 0;
+      // Keep the most recent timestamp
+      if (entry.created_at > lastWorkedByIssue[issueKey]) {
+        lastWorkedByIssue[issueKey] = entry.created_at;
+      }
+    });
+  }
+
+  // Enrich issues with time tracking data
+  const enrichedIssues = issues.map(issue => ({
+    key: issue.key,
+    summary: issue.fields.summary || '',
+    status: issue.fields.status?.name || 'Unknown',
+    statusCategory: issue.fields.status?.statusCategory?.key || 'new',
+    priority: issue.fields.priority?.name || 'Medium',
+    priorityIconUrl: issue.fields.priority?.iconUrl || '',
+    issueType: issue.fields.issuetype?.name || 'Task',
+    issueTypeIconUrl: issue.fields.issuetype?.iconUrl || '',
+    projectKey: issue.fields.project?.key || '',
+    timeTracked: timeByIssue[issue.key] || 0,
+    lastWorkedOn: lastWorkedByIssue[issue.key] || null
+  }));
+
+  return {
+    issues: enrichedIssues,
+    total: enrichedIssues.length
   };
 }
 

@@ -114,20 +114,25 @@ exports.analyzeActivity = async ({ extractedText, windowTitle, applicationName, 
     let confidenceScore = 0;
     let modelVersion = 'v1.0-tesseract';
 
+    // IMPORTANT: Only set taskKey and projectKey if we can match to user's assigned issues
+    // Do NOT create random project keys from OCR text
     if (validDetectedKeys.length > 0) {
       // If we found Jira keys in the screenshot (and they're in assigned issues), use the first one
       taskKey = validDetectedKeys[0];
       projectKey = taskKey.split('-')[0];
       confidenceScore = 0.9; // High confidence when we find explicit Jira keys
       modelVersion = aiAnalysis ? 'v2.0-ai-enhanced' : 'v1.0-tesseract';
+      logger.info('Using detected Jira key from assigned issues', { taskKey, projectKey });
     } else if (aiAnalysis && aiAnalysis.taskKey) {
       // Use AI-inferred task (AI already validated it's in assigned issues)
       taskKey = aiAnalysis.taskKey;
       projectKey = aiAnalysis.projectKey;
       confidenceScore = aiAnalysis.confidenceScore;
       modelVersion = 'v2.0-ai-enhanced';
-    } else if (isActiveWork) {
+      logger.info('Using AI-inferred task key from assigned issues', { taskKey, projectKey });
+    } else if (isActiveWork && userAssignedIssues && userAssignedIssues.length > 0) {
       // Try to infer task from window title or application context using heuristics
+      // ONLY if we have assigned issues to match against
       const inferredTask = await inferTaskFromContext({
         windowTitle,
         applicationName,
@@ -136,11 +141,31 @@ exports.analyzeActivity = async ({ extractedText, windowTitle, applicationName, 
         userAssignedIssues // Pass assigned issues for better matching
       });
 
-      if (inferredTask) {
-        taskKey = inferredTask.key;
-        projectKey = inferredTask.project;
-        confidenceScore = inferredTask.confidence;
+      if (inferredTask && inferredTask.key) {
+        // Double-check that inferred key is in assigned issues
+        const assignedIssueKeys = userAssignedIssues.map(issue => issue.key);
+        if (assignedIssueKeys.includes(inferredTask.key)) {
+          taskKey = inferredTask.key;
+          projectKey = inferredTask.project;
+          confidenceScore = inferredTask.confidence;
+          logger.info('Using heuristic-inferred task key from assigned issues', { taskKey, projectKey });
+        } else {
+          logger.warn('Heuristic inference returned key not in assigned issues, ignoring', {
+            inferredKey: inferredTask.key,
+            assignedKeys: assignedIssueKeys
+          });
+        }
+      } else {
+        logger.debug('No task key could be inferred from context', {
+          hasAssignedIssues: userAssignedIssues.length > 0,
+          windowTitle
+        });
       }
+    } else {
+      logger.debug('Cannot infer task: either not active work or no assigned issues available', {
+        isActiveWork,
+        hasAssignedIssues: userAssignedIssues && userAssignedIssues.length > 0
+      });
     }
 
     return {

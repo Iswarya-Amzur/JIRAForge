@@ -3,7 +3,7 @@
  * Resolver definitions for time analytics endpoints
  */
 
-import { fetchTimeAnalytics } from '../services/analyticsService.js';
+import { fetchTimeAnalytics, fetchAllAnalytics, fetchProjectAnalytics, fetchProjectTeamAnalytics } from '../services/analyticsService.js';
 
 /**
  * Register analytics resolvers
@@ -25,6 +25,75 @@ export function registerAnalyticsResolvers(resolver) {
       };
     } catch (error) {
       console.error('Error fetching time analytics:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  });
+
+  /**
+   * Resolver for fetching all analytics (Admin only)
+   */
+  resolver.define('getAllAnalytics', async (req) => {
+    const { context } = req;
+    const accountId = context.accountId;
+
+    try {
+      const data = await fetchAllAnalytics(accountId);
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      console.error('Error fetching all analytics:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  });
+
+  /**
+   * Resolver for fetching project analytics (Project Manager only)
+   */
+  resolver.define('getProjectAnalytics', async (req) => {
+    const { payload, context } = req;
+    const { projectKey } = payload;
+    const accountId = context.accountId;
+
+    try {
+      const data = await fetchProjectAnalytics(accountId, projectKey);
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      console.error('Error fetching project analytics:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  });
+
+  /**
+   * Resolver for fetching team analytics for a project (Project Admin only)
+   * Returns aggregated team time tracking WITHOUT individual screenshots
+   */
+  resolver.define('getProjectTeamAnalytics', async (req) => {
+    const { payload, context } = req;
+    const { projectKey } = payload;
+    const accountId = context.accountId;
+
+    try {
+      const data = await fetchProjectTeamAnalytics(accountId, projectKey);
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      console.error('Error fetching team analytics:', error);
       return {
         success: false,
         error: error.message

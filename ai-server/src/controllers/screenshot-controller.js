@@ -8,8 +8,11 @@ const logger = require('../utils/logger');
  */
 exports.analyzeScreenshot = async (req, res) => {
   try {
+    // Supabase webhooks send data in req.body.record
+    const webhookData = req.body.record || req.body;
+
     const {
-      screenshot_id,
+      id: screenshot_id,
       user_id,
       storage_url,
       storage_path,
@@ -17,13 +20,25 @@ exports.analyzeScreenshot = async (req, res) => {
       application_name,
       timestamp,
       user_assigned_issues // Optional: User's assigned Jira issues from Forge app
-    } = req.body;
+    } = webhookData;
+
+    // Parse user_assigned_issues if it's a string (defensive coding)
+    let parsedAssignedIssues = user_assigned_issues;
+    if (typeof parsedAssignedIssues === 'string') {
+      try {
+        parsedAssignedIssues = JSON.parse(parsedAssignedIssues);
+      } catch (e) {
+        logger.warn('Failed to parse user_assigned_issues string', { user_assigned_issues });
+        parsedAssignedIssues = [];
+      }
+    }
 
     // Validate required fields
     if (!screenshot_id || !user_id || !storage_url) {
+      logger.error('Missing required fields in webhook payload', { body: req.body });
       return res.status(400).json({
         success: false,
-        error: 'Missing required fields: screenshot_id, user_id, storage_url'
+        error: 'Missing required fields: screenshot_id (id), user_id, storage_url'
       });
     }
 
@@ -31,7 +46,7 @@ exports.analyzeScreenshot = async (req, res) => {
       screenshot_id,
       user_id,
       application_name,
-      hasAssignedIssues: !!user_assigned_issues && user_assigned_issues.length > 0
+      hasAssignedIssues: !!parsedAssignedIssues && parsedAssignedIssues.length > 0
     });
 
     // Download screenshot from Supabase Storage
@@ -48,7 +63,7 @@ exports.analyzeScreenshot = async (req, res) => {
       applicationName: application_name,
       timestamp,
       userId: user_id,
-      userAssignedIssues: user_assigned_issues || [] // Pass assigned issues to analysis
+      userAssignedIssues: parsedAssignedIssues || [] // Pass assigned issues to analysis
     });
 
     // Save analysis results to Supabase

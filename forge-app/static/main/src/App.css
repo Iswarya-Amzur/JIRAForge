@@ -117,7 +117,9 @@
 /* Section Headers */
 .time-analytics h2,
 .screenshot-gallery h2,
-.brd-upload h2 {
+.brd-upload h2,
+.team-analytics h2,
+.org-analytics h2 {
   font-size: 18px;
   font-weight: 700;
   color: var(--ds-text);
@@ -141,6 +143,16 @@
 
 .brd-upload h2::before {
   content: '📄';
+  font-size: 18px;
+}
+
+.team-analytics h2::before {
+  content: '👥';
+  font-size: 18px;
+}
+
+.org-analytics h2::before {
+  content: '🏢';
   font-size: 18px;
 }
 
@@ -664,4 +676,297 @@
 .screenshot-grid::-webkit-scrollbar-thumb:hover,
 .analytics-grid::-webkit-scrollbar-thumb:hover {
   background: #A5ADBA;
+}
+
+/* Project Selector for Team Analytics */
+.project-selector {
+  margin-bottom: var(--ds-space-300);
+  padding: var(--ds-space-200);
+  background: var(--ds-background-neutral);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-150);
+  border: 1px solid var(--ds-border);
+}
+
+.project-selector label {
+  font-weight: 600;
+  color: var(--ds-text);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.project-selector select {
+  flex: 1;
+  max-width: 300px;
+  padding: 8px 12px;
+  border: 2px solid var(--ds-border);
+  border-radius: 3px;
+  background: var(--ds-background-default);
+  color: var(--ds-text);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.project-selector select:focus {
+  outline: none;
+  border-color: var(--ds-border-focused);
+  box-shadow: 0 0 0 2px rgba(76, 154, 255, 0.2);
+}
+
+.project-selector select:hover {
+  border-color: var(--ds-border-focused);
+}
+
+/* Admin Notice */
+.admin-notice {
+  display: inline-block;
+  padding: 8px 16px;
+  background: #E3FCEF;
+  color: var(--ds-background-success-bold);
+  border-radius: 3px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: var(--ds-space-300);
+  border-left: 4px solid var(--ds-background-success-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Contributors Badge */
+.contributors {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--ds-text-subtle);
+  font-weight: 500;
+  margin-left: 6px;
+  padding: 2px 6px;
+  background: var(--ds-background-neutral);
+  border-radius: 10px;
+}
+
+/* My Focus Widget */
+.my-focus-widget {
+  margin-top: var(--ds-space-400);
+  padding: var(--ds-space-300);
+  background: var(--ds-background-default);
+  border: 1px solid var(--ds-border);
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(9, 30, 66, 0.1);
+  border-top: 4px solid var(--ds-background-accent-teal);
+}
+
+.my-focus-widget h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ds-text);
+  margin-bottom: var(--ds-space-100);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.my-focus-widget h2::before {
+  content: '🎯';
+  font-size: 18px;
+}
+
+.widget-subtitle {
+  color: var(--ds-text-subtle);
+  font-size: 14px;
+  margin-bottom: var(--ds-space-300);
+  font-style: italic;
+}
+
+/* Focus Tabs */
+.focus-tabs {
+  display: flex;
+  gap: var(--ds-space-100);
+  margin-bottom: var(--ds-space-300);
+  border-bottom: 2px solid var(--ds-border);
+  padding-bottom: var(--ds-space-100);
+}
+
+.focus-tabs button {
+  padding: 6px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ds-text-subtle);
+  border-radius: 3px;
+  transition: all 0.2s ease;
+}
+
+.focus-tabs button:hover {
+  background: var(--ds-background-neutral);
+  color: var(--ds-text);
+}
+
+.focus-tabs button.active {
+  background: var(--ds-background-accent-teal);
+  color: var(--ds-text-inverse);
+  box-shadow: 0 2px 4px rgba(0, 184, 217, 0.3);
+}
+
+/* Issues Table */
+.issues-table-container {
+  overflow-x: auto;
+  margin-top: var(--ds-space-200);
+  border: 1px solid var(--ds-border);
+  border-radius: 4px;
+}
+
+.issues-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--ds-background-default);
+}
+
+.issues-table thead {
+  background: var(--ds-background-neutral);
+  border-bottom: 2px solid var(--ds-border);
+}
+
+.issues-table th {
+  padding: var(--ds-space-150) var(--ds-space-200);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ds-text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.issues-table tbody tr {
+  border-bottom: 1px solid var(--ds-background-neutral);
+  transition: background-color 0.2s ease;
+}
+
+.issues-table tbody tr:hover {
+  background: var(--ds-background-neutral);
+}
+
+.issues-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.issues-table td {
+  padding: var(--ds-space-150) var(--ds-space-200);
+  font-size: 14px;
+  color: var(--ds-text);
+}
+
+.issue-key {
+  font-weight: 600;
+  min-width: 120px;
+}
+
+.issue-key a {
+  color: var(--ds-text-brand);
+  text-decoration: none;
+  font-weight: 600;
+  transition: color 0.2s;
+}
+
+.issue-key a:hover {
+  color: var(--ds-background-brand-bold-hover);
+  text-decoration: underline;
+}
+
+.issue-title {
+  max-width: 400px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.issue-status,
+.issue-priority {
+  text-align: center;
+  min-width: 100px;
+}
+
+.issue-time {
+  text-align: right;
+  font-weight: 600;
+  color: var(--ds-text-brand);
+  min-width: 100px;
+}
+
+/* Status Badge */
+.status-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.status-new {
+  background: #DFE1E6;
+  color: #42526E;
+}
+
+.status-indeterminate {
+  background: #DEEBFF;
+  color: #0052CC;
+}
+
+.status-done {
+  background: #E3FCEF;
+  color: #006644;
+}
+
+/* Priority Badge */
+.priority-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.priority-highest,
+.priority-high {
+  background: #FFEBE6;
+  color: #DE350B;
+}
+
+.priority-medium {
+  background: #FFF0B3;
+  color: #FF991F;
+}
+
+.priority-low,
+.priority-lowest {
+  background: #E3FCEF;
+  color: #00875A;
+}
+
+/* Loading and Empty States for My Focus */
+.loading-text {
+  text-align: center;
+  padding: var(--ds-space-400);
+  color: var(--ds-text-subtle);
+  font-size: 14px;
+}
+
+.empty-state {
+  text-align: center;
+  padding: var(--ds-space-400);
+  color: var(--ds-text-subtle);
+  font-size: 14px;
+  background: var(--ds-background-neutral);
+  border-radius: 4px;
+  border: 2px dashed var(--ds-border);
+  margin-top: var(--ds-space-200);
 }

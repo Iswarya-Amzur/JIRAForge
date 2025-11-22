@@ -10,6 +10,8 @@ import { registerBRDResolvers } from './resolvers/brdResolvers.js';
 import { registerWorklogResolvers } from './resolvers/worklogResolvers.js';
 import { registerSettingsResolvers } from './resolvers/settingsResolvers.js';
 import { registerIssueResolvers } from './resolvers/issueResolvers.js';
+import { registerPermissionsResolvers } from './resolvers/permissionsResolvers.js';
+import { registerUserResolvers } from './resolvers/userResolvers.js';
 
 // Create resolver instance
 const resolver = new Resolver();
@@ -21,6 +23,8 @@ registerBRDResolvers(resolver);
 registerWorklogResolvers(resolver);
 registerSettingsResolvers(resolver);
 registerIssueResolvers(resolver);
+registerPermissionsResolvers(resolver);
+registerUserResolvers(resolver);
 
 // Export handler for Forge
 export const handler = resolver.getDefinitions();

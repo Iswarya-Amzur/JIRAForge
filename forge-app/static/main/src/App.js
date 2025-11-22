@@ -9,6 +9,26 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // User Permissions State
+  const [userPermissions, setUserPermissions] = useState({
+    isJiraAdmin: false,
+    projectAdminProjects: [],
+    canCreateIssues: false,
+    canEditIssues: false
+  });
+
+  // Team Analytics State (for Project Admins)
+  const [selectedProjectKey, setSelectedProjectKey] = useState('');
+  const [teamAnalytics, setTeamAnalytics] = useState(null);
+
+  // Organization Analytics State (for Jira Admins)
+  const [orgAnalytics, setOrgAnalytics] = useState(null);
+
+  // Active Issues State (for My Focus widget)
+  const [activeIssues, setActiveIssues] = useState([]);
+  const [issuesLoading, setIssuesLoading] = useState(false);
+  const [issueFilter, setIssueFilter] = useState('all'); // all, in-progress, done
+
   // BRD Upload State
   const [selectedFile, setSelectedFile] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -16,13 +36,38 @@ function App() {
   const [currentDocument, setCurrentDocument] = useState(null);
   const [projectKey, setProjectKey] = useState('');
 
+  // Load user permissions on mount
+  useEffect(() => {
+    loadUserPermissions();
+  }, []);
+
   useEffect(() => {
     if (activeTab === 'time-analytics') {
       loadTimeAnalytics();
+      loadActiveIssues();
     } else if (activeTab === 'screenshots') {
       loadScreenshots();
+    } else if (activeTab === 'team-analytics' && selectedProjectKey) {
+      loadTeamAnalytics();
+    } else if (activeTab === 'org-analytics') {
+      loadOrgAnalytics();
     }
-  }, [activeTab]);
+  }, [activeTab, selectedProjectKey]);
+
+  const loadUserPermissions = async () => {
+    try {
+      const result = await invoke('getUserPermissions');
+      if (result.success) {
+        setUserPermissions(result.permissions);
+        // Set default project for team analytics if user is project admin
+        if (result.permissions.projectAdminProjects?.length > 0) {
+          setSelectedProjectKey(result.permissions.projectAdminProjects[0]);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load permissions:', err);
+    }
+  };
 
   const loadTimeAnalytics = async () => {
     setLoading(true);
@@ -38,6 +83,63 @@ function App() {
       setError('Failed to load time analytics: ' + err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadTeamAnalytics = async () => {
+    if (!selectedProjectKey) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await invoke('getProjectTeamAnalytics', { projectKey: selectedProjectKey });
+      if (result.success) {
+        setTeamAnalytics(result.data);
+      } else {
+        setError(result.error);
+      }
+    } catch (err) {
+      setError('Failed to load team analytics: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadOrgAnalytics = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await invoke('getAllAnalytics');
+      if (result.success) {
+        setOrgAnalytics(result.data);
+      } else {
+        setError(result.error);
+      }
+    } catch (err) {
+      setError('Failed to load organization analytics: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadActiveIssues = async () => {
+    setIssuesLoading(true);
+    try {
+      console.log('[MY FOCUS] Calling getActiveIssuesWithTime...');
+      const result = await invoke('getActiveIssuesWithTime');
+      console.log('[MY FOCUS] Result:', result);
+      console.log('[MY FOCUS] Issues count:', result.issues?.length || 0);
+      if (result.success) {
+        setActiveIssues(result.issues || []);
+        console.log('[MY FOCUS] Active issues set:', result.issues);
+      } else {
+        console.error('[MY FOCUS] Failed to load active issues:', result.error);
+        setActiveIssues([]);
+      }
+    } catch (err) {
+      console.error('[MY FOCUS] Exception while loading active issues:', err);
+      setActiveIssues([]);
+    } finally {
+      setIssuesLoading(false);
     }
   };
 
@@ -208,14 +310,30 @@ function App() {
             className={activeTab === 'time-analytics' ? 'active' : ''}
             onClick={() => setActiveTab('time-analytics')}
           >
-            Time Analytics
+            My Time Analytics
           </button>
           <button
             className={activeTab === 'screenshots' ? 'active' : ''}
             onClick={() => setActiveTab('screenshots')}
           >
-            Screenshot Gallery
+            My Screenshots
           </button>
+          {userPermissions.projectAdminProjects?.length > 0 && (
+            <button
+              className={activeTab === 'team-analytics' ? 'active' : ''}
+              onClick={() => setActiveTab('team-analytics')}
+            >
+              Team Analytics
+            </button>
+          )}
+          {userPermissions.isJiraAdmin && (
+            <button
+              className={activeTab === 'org-analytics' ? 'active' : ''}
+              onClick={() => setActiveTab('org-analytics')}
+            >
+              Organization Analytics
+            </button>
+          )}
           <button
             className={activeTab === 'brd-upload' ? 'active' : ''}
             onClick={() => setActiveTab('brd-upload')}
@@ -306,6 +424,94 @@ function App() {
                 </div>
               </div>
             )}
+
+            {/* My Focus Widget - Active Issues with Time Tracking */}
+            <div className="my-focus-widget">
+              <h2>My Focus</h2>
+              <p className="widget-subtitle">Your personalized development workflow hub</p>
+
+              <div className="focus-tabs">
+                <button
+                  className={issueFilter === 'all' ? 'active' : ''}
+                  onClick={() => setIssueFilter('all')}
+                >
+                  All Issues
+                </button>
+                <button
+                  className={issueFilter === 'in-progress' ? 'active' : ''}
+                  onClick={() => setIssueFilter('in-progress')}
+                >
+                  In Progress
+                </button>
+                <button
+                  className={issueFilter === 'done' ? 'active' : ''}
+                  onClick={() => setIssueFilter('done')}
+                >
+                  Done
+                </button>
+              </div>
+
+              {issuesLoading ? (
+                <p className="loading-text">Loading issues...</p>
+              ) : (
+                <>
+                  {activeIssues.filter(issue => {
+                    if (issueFilter === 'all') return true;
+                    if (issueFilter === 'in-progress') return issue.statusCategory === 'indeterminate';
+                    if (issueFilter === 'done') return issue.statusCategory === 'done';
+                    return true;
+                  }).length > 0 ? (
+                    <div className="issues-table-container">
+                      <table className="issues-table">
+                        <thead>
+                          <tr>
+                            <th>ID</th>
+                            <th>Title</th>
+                            <th>Status</th>
+                            <th>Priority</th>
+                            <th>Time Tracked</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {activeIssues
+                            .filter(issue => {
+                              if (issueFilter === 'all') return true;
+                              if (issueFilter === 'in-progress') return issue.statusCategory === 'indeterminate';
+                              if (issueFilter === 'done') return issue.statusCategory === 'done';
+                              return true;
+                            })
+                            .map((issue, idx) => (
+                              <tr key={idx}>
+                                <td className="issue-key">
+                                  <a href={`/browse/${issue.key}`} target="_blank" rel="noopener noreferrer">
+                                    {issue.key}
+                                  </a>
+                                </td>
+                                <td className="issue-title">{issue.summary}</td>
+                                <td className="issue-status">
+                                  <span className={`status-badge status-${issue.statusCategory}`}>
+                                    {issue.status}
+                                  </span>
+                                </td>
+                                <td className="issue-priority">
+                                  <span className={`priority-badge priority-${issue.priority.toLowerCase()}`}>
+                                    {issue.priority}
+                                  </span>
+                                </td>
+                                <td className="issue-time">
+                                  {issue.timeTracked > 0 ? formatTime(issue.timeTracked) : '-'}
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="empty-state">No {issueFilter !== 'all' ? issueFilter.replace('-', ' ') : ''} issues found. Start working on issues to see them here!</p>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -363,6 +569,122 @@ function App() {
           </div>
         )}
 
+        {activeTab === 'team-analytics' && (
+          <div className="team-analytics">
+            <h2>Team Analytics Dashboard</h2>
+            <div className="project-selector">
+              <label htmlFor="team-project-select">Select Project: </label>
+              <select
+                id="team-project-select"
+                value={selectedProjectKey}
+                onChange={(e) => setSelectedProjectKey(e.target.value)}
+              >
+                {userPermissions.projectAdminProjects?.map(pk => (
+                  <option key={pk} value={pk}>{pk}</option>
+                ))}
+              </select>
+            </div>
+            {loading ? (
+              <p>Loading team analytics...</p>
+            ) : error ? (
+              <p className="error">Error: {error}</p>
+            ) : (
+              <div className="analytics-grid">
+                <div className="analytics-card">
+                  <h3>Team Daily Summary (Last 30 Days)</h3>
+                  {teamAnalytics?.teamDailySummary && teamAnalytics.teamDailySummary.length > 0 ? (
+                    <div className="data-list">
+                      {teamAnalytics.teamDailySummary.slice(0, 10).map((day, idx) => (
+                        <div key={idx} className="data-item">
+                          <span className="label">{new Date(day.work_date).toLocaleDateString()}</span>
+                          <span className="value">
+                            {day.active_task_key || 'No task'} - {formatTime(day.total_seconds)}
+                          </span>
+                        </div>
+                      ))}
+                      {teamAnalytics.teamDailySummary.length > 10 && (
+                        <p className="more-data">+ {teamAnalytics.teamDailySummary.length - 10} more days</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p>No team data available yet.</p>
+                  )}
+                </div>
+                <div className="analytics-card">
+                  <h3>Team Time by Issue</h3>
+                  {teamAnalytics?.teamTimeByIssue && teamAnalytics.teamTimeByIssue.length > 0 ? (
+                    <div className="data-list">
+                      {teamAnalytics.teamTimeByIssue.map((issue, idx) => (
+                        <div key={idx} className="data-item">
+                          <span className="label">
+                            <a href={`/browse/${issue.issueKey}`} target="_blank" rel="noopener noreferrer">
+                              {issue.issueKey}
+                            </a>
+                            <span className="contributors"> ({issue.contributors} contributor{issue.contributors !== 1 ? 's' : ''})</span>
+                          </span>
+                          <span className="value">{formatTime(issue.totalSeconds)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p>No team issue data available yet.</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'org-analytics' && (
+          <div className="org-analytics">
+            <h2>Organization Analytics Dashboard</h2>
+            <p className="admin-notice">Jira Administrator View - Global Analytics</p>
+            {loading ? (
+              <p>Loading organization analytics...</p>
+            ) : error ? (
+              <p className="error">Error: {error}</p>
+            ) : (
+              <div className="analytics-grid">
+                <div className="analytics-card">
+                  <h3>Organization Daily Summary (Last 30 Days)</h3>
+                  {orgAnalytics?.dailySummary && orgAnalytics.dailySummary.length > 0 ? (
+                    <div className="data-list">
+                      {orgAnalytics.dailySummary.slice(0, 10).map((day, idx) => (
+                        <div key={idx} className="data-item">
+                          <span className="label">{new Date(day.work_date).toLocaleDateString()}</span>
+                          <span className="value">
+                            {day.active_task_key || 'No task'} - {formatTime(day.total_seconds)}
+                          </span>
+                        </div>
+                      ))}
+                      {orgAnalytics.dailySummary.length > 10 && (
+                        <p className="more-data">+ {orgAnalytics.dailySummary.length - 10} more days</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p>No organization data available yet.</p>
+                  )}
+                </div>
+                <div className="analytics-card">
+                  <h3>Organization Time by Project</h3>
+                  {orgAnalytics?.timeByProject && orgAnalytics.timeByProject.length > 0 ? (
+                    <div className="data-list">
+                      {orgAnalytics.timeByProject.map((project, idx) => (
+                        <div key={idx} className="data-item">
+                          <span className="label">{project.active_project_key || 'Unknown'}</span>
+                          <span className="value">{formatTime(project.total_seconds)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p>No organization project data available yet.</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {activeTab === 'brd-upload' && (
           <div className="brd-upload">
             <h2>Upload BRD Document</h2>
@@ -407,7 +729,7 @@ function App() {
                   <h3>Document Status</h3>
                   <p><strong>Status:</strong> {currentDocument.processing_status || 'unknown'}</p>
                   <p><strong>File:</strong> {currentDocument.file_name}</p>
-                  
+
                   {currentDocument.processing_status === 'completed' && (
                     <div className="create-issues-section">
                       <h4>Create Jira Issues</h4>
@@ -421,7 +743,7 @@ function App() {
                           placeholder="e.g., PROJ"
                           style={{ marginLeft: '10px', padding: '5px' }}
                         />
-                        <button 
+                        <button
                           className="create-issues-btn"
                           onClick={handleCreateIssues}
                           disabled={!projectKey.trim()}
