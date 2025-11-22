@@ -153,11 +153,11 @@ class AtlassianAuthManager:
         return tokens
     
     def get_user_info(self):
-        """Get Atlassian user information"""
+        """Get Atlassian user information with automatic token refresh on 401"""
         access_token = self.tokens.get('access_token')
         if not access_token:
             return None
-        
+
         response = requests.get(
             'https://api.atlassian.com/me',
             headers={
@@ -165,15 +165,71 @@ class AtlassianAuthManager:
                 'Accept': 'application/json'
             }
         )
-        
+
+        # Handle 401 - token expired
+        if response.status_code == 401:
+            print("[WARN] Access token expired (401) in get_user_info, attempting refresh...")
+            if self.refresh_access_token():
+                # Retry with new token
+                access_token = self.tokens.get('access_token')
+                response = requests.get(
+                    'https://api.atlassian.com/me',
+                    headers={
+                        'Authorization': f'Bearer {access_token}',
+                        'Accept': 'application/json'
+                    }
+                )
+            else:
+                print("[ERROR] Token refresh failed in get_user_info")
+                return None
+
         if response.status_code == 200:
             return response.json()
         return None
     
+    def refresh_access_token(self):
+        """Refresh access token using refresh token"""
+        refresh_token = self.tokens.get('refresh_token')
+        if not refresh_token:
+            print("[ERROR] No refresh token available")
+            return False
+
+        print("[INFO] Refreshing access token...")
+        try:
+            response = requests.post(
+                self.token_url,
+                json={
+                    'grant_type': 'refresh_token',
+                    'client_id': self.client_id,
+                    'client_secret': self.client_secret,
+                    'refresh_token': refresh_token
+                },
+                headers={'Content-Type': 'application/json'}
+            )
+
+            if response.status_code != 200:
+                error = response.json().get('error_description', response.text)
+                print(f"[ERROR] Token refresh failed: {error}")
+                return False
+
+            tokens = response.json()
+            self.tokens.update({
+                'access_token': tokens.get('access_token'),
+                'refresh_token': tokens.get('refresh_token', refresh_token),  # Use new refresh token if provided, otherwise keep old one
+                'expires_at': time.time() + tokens.get('expires_in', 3600)
+            })
+            self._save_tokens()
+
+            print("[OK] Access token refreshed successfully")
+            return True
+        except Exception as e:
+            print(f"[ERROR] Failed to refresh access token: {e}")
+            return False
+
     def is_authenticated(self):
         """Check if user is authenticated"""
         return bool(self.tokens.get('access_token'))
-    
+
     def logout(self):
         """Clear authentication tokens"""
         self.tokens = {}
@@ -459,22 +515,36 @@ class BRDTimeTracker:
         return user_id
     
     def get_jira_cloud_id(self):
-        """Get Jira cloud ID for API calls"""
+        """Get Jira cloud ID for API calls with automatic token refresh on 401"""
         if self.jira_cloud_id:
             return self.jira_cloud_id
-        
+
         access_token = self.auth_manager.tokens.get('access_token')
         if not access_token:
             print("[WARN] No access token found for Jira Cloud ID fetch")
             return None
-        
+
         try:
             print("[INFO] Fetching Jira Cloud ID...")
             response = requests.get(
                 'https://api.atlassian.com/oauth/token/accessible-resources',
                 headers={'Authorization': f'Bearer {access_token}'}
             )
-            
+
+            # Handle 401 - token expired
+            if response.status_code == 401:
+                print("[WARN] Access token expired (401), attempting refresh...")
+                if self.auth_manager.refresh_access_token():
+                    # Retry with new token
+                    access_token = self.auth_manager.tokens.get('access_token')
+                    response = requests.get(
+                        'https://api.atlassian.com/oauth/token/accessible-resources',
+                        headers={'Authorization': f'Bearer {access_token}'}
+                    )
+                else:
+                    print("[ERROR] Token refresh failed, please re-authenticate")
+                    return None
+
             if response.status_code == 200:
                 resources = response.json()
                 print(f"[INFO] Found {len(resources)} accessible resources")
@@ -486,32 +556,32 @@ class BRDTimeTracker:
                 print(f"[ERROR] Failed to get resources: {response.status_code} - {response.text}")
         except Exception as e:
             print(f"[ERROR] Failed to get Jira cloud ID: {e}")
-        
+
         return None
 
     def fetch_jira_issues(self):
-        """Fetch user's In Progress Jira issues"""
+        """Fetch user's In Progress Jira issues with automatic token refresh on 401"""
         print("[INFO] Attempting to fetch Jira issues...")
         cloud_id = self.get_jira_cloud_id()
         if not cloud_id:
             print("[WARN] Cannot fetch issues: No Cloud ID")
             return []
-        
+
         access_token = self.auth_manager.tokens.get('access_token')
         if not access_token:
             print("[WARN] Cannot fetch issues: No access token")
             return []
-        
+
         try:
             jql = 'assignee = currentUser() AND status = "In Progress"'
             print(f"[INFO] Querying Jira with JQL (POST): {jql}")
-            
+
             # Use /search/jql endpoint as requested by the 410 error message
             # Note: The error explicitly said "Please migrate to the /rest/api/3/search/jql API"
             response = requests.post(
                 f'https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/search/jql',
                 json={
-                    'jql': jql, 
+                    'jql': jql,
                     'maxResults': 50,
                     'fields': ['summary', 'status', 'project']
                 },
@@ -521,7 +591,31 @@ class BRDTimeTracker:
                     'Content-Type': 'application/json'
                 }
             )
-            
+
+            # Handle 401 - token expired
+            if response.status_code == 401:
+                print("[WARN] Access token expired (401), attempting refresh...")
+                if self.auth_manager.refresh_access_token():
+                    # Retry with new token
+                    access_token = self.auth_manager.tokens.get('access_token')
+                    print("[INFO] Retrying Jira API with refreshed token...")
+                    response = requests.post(
+                        f'https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/search/jql',
+                        json={
+                            'jql': jql,
+                            'maxResults': 50,
+                            'fields': ['summary', 'status', 'project']
+                        },
+                        headers={
+                            'Authorization': f'Bearer {access_token}',
+                            'Accept': 'application/json',
+                            'Content-Type': 'application/json'
+                        }
+                    )
+                else:
+                    print("[ERROR] Token refresh failed, please re-authenticate")
+                    return []
+
             if response.status_code == 200:
                 data = response.json()
                 issues = data.get('issues', [])
@@ -536,7 +630,7 @@ class BRDTimeTracker:
                 print(f"[ERROR] Jira API failed: {response.status_code} - {response.text}")
         except Exception as e:
             print(f"[ERROR] Failed to fetch Jira issues: {e}")
-        
+
         return []
 
     def should_refresh_issues_cache(self):

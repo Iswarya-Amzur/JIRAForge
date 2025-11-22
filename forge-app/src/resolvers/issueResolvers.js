@@ -3,7 +3,7 @@
  * Resolver definitions for Jira issue operations endpoints
  */
 
-import { getAssignedIssues, updateAssignedIssuesCache, getActiveIssuesWithTime } from '../services/issueService.js';
+import { getAssignedIssues, updateAssignedIssuesCache, getActiveIssuesWithTime, getAvailableTransitions, updateIssueStatus } from '../services/issueService.js';
 
 /**
  * Register issue resolvers
@@ -82,6 +82,70 @@ export function registerIssueResolvers(resolver) {
         error: error.message,
         issues: [],
         total: 0
+      };
+    }
+  });
+
+  /**
+   * Resolver for getting available status transitions for an issue
+   * Returns list of available status transitions user can make
+   */
+  resolver.define('getIssueTransitions', async (req) => {
+    const { payload } = req;
+    const { issueKey } = payload;
+
+    if (!issueKey) {
+      return {
+        success: false,
+        error: 'Issue key is required',
+        transitions: []
+      };
+    }
+
+    try {
+      const transitions = await getAvailableTransitions(issueKey);
+      return {
+        success: true,
+        issueKey,
+        transitions
+      };
+    } catch (error) {
+      console.error(`Error getting transitions for ${issueKey}:`, error);
+      return {
+        success: false,
+        error: error.message,
+        transitions: []
+      };
+    }
+  });
+
+  /**
+   * Resolver for updating issue status
+   * Transitions issue to new status via Jira API
+   */
+  resolver.define('updateIssueStatus', async (req) => {
+    const { payload } = req;
+    const { issueKey, transitionId } = payload;
+
+    if (!issueKey || !transitionId) {
+      return {
+        success: false,
+        error: 'Issue key and transition ID are required'
+      };
+    }
+
+    try {
+      const result = await updateIssueStatus(issueKey, transitionId);
+      return {
+        success: true,
+        issueKey,
+        message: result.message
+      };
+    } catch (error) {
+      console.error(`Error updating status for ${issueKey}:`, error);
+      return {
+        success: false,
+        error: error.message
       };
     }
   });

@@ -3,7 +3,7 @@
  * Business logic for Jira issue operations and caching
  */
 
-import { getUserAssignedIssues, getAllUserAssignedIssues, formatIssuesData } from '../utils/jira.js';
+import { getUserAssignedIssues, getAllUserAssignedIssues, formatIssuesData, getIssueTransitions, transitionIssue } from '../utils/jira.js';
 import { getSupabaseConfig, getOrCreateUser, supabaseRequest } from '../utils/supabase.js';
 import { JQL_ACTIVE_STATUSES, ISSUE_BATCH_SIZE } from '../config/constants.js';
 
@@ -86,26 +86,70 @@ export async function getActiveIssuesWithTime(accountId) {
     `analysis_results?user_id=eq.${userId}&is_active_work=eq.true&is_idle=eq.false&active_task_key=not.is.null&select=active_task_key,time_spent_seconds,created_at&order=created_at.desc&limit=1000`
   );
 
-  // Aggregate time by issue key
+  // Aggregate time by issue key and build work sessions
   const timeByIssue = {};
   const lastWorkedByIssue = {};
+  const sessionsByIssue = {};
 
   if (timeTrackingData && Array.isArray(timeTrackingData)) {
-    timeTrackingData.forEach(entry => {
+    // Sort by created_at ascending to build sessions chronologically
+    const sortedData = [...timeTrackingData].sort((a, b) =>
+      new Date(a.created_at) - new Date(b.created_at)
+    );
+
+    sortedData.forEach(entry => {
       const issueKey = entry.active_task_key;
+
+      // Initialize issue data
       if (!timeByIssue[issueKey]) {
         timeByIssue[issueKey] = 0;
         lastWorkedByIssue[issueKey] = entry.created_at;
+        sessionsByIssue[issueKey] = [];
       }
+
+      // Add to total time
       timeByIssue[issueKey] += entry.time_spent_seconds || 0;
-      // Keep the most recent timestamp
+
+      // Update last worked timestamp
       if (entry.created_at > lastWorkedByIssue[issueKey]) {
         lastWorkedByIssue[issueKey] = entry.created_at;
+      }
+
+      // Build sessions - group consecutive work periods
+      const entryTime = new Date(entry.created_at);
+      const timeSpent = entry.time_spent_seconds || 0;
+      const startTime = new Date(entryTime.getTime() - (timeSpent * 1000));
+      const endTime = entryTime;
+
+      // Check if this entry belongs to an existing session (within 10 minutes gap)
+      const sessions = sessionsByIssue[issueKey];
+      let addedToSession = false;
+
+      if (sessions.length > 0) {
+        const lastSession = sessions[sessions.length - 1];
+        const timeSinceLastSession = startTime - new Date(lastSession.endTime);
+
+        // If within 10 minutes, extend the session
+        if (timeSinceLastSession <= 10 * 60 * 1000) {
+          lastSession.endTime = endTime.toISOString();
+          lastSession.duration += timeSpent;
+          addedToSession = true;
+        }
+      }
+
+      // If not added to existing session, create new session
+      if (!addedToSession) {
+        sessions.push({
+          startTime: startTime.toISOString(),
+          endTime: endTime.toISOString(),
+          duration: timeSpent,
+          date: startTime.toISOString().split('T')[0]
+        });
       }
     });
   }
 
-  // Enrich issues with time tracking data
+  // Enrich issues with time tracking data and sessions
   const enrichedIssues = issues.map(issue => ({
     key: issue.key,
     summary: issue.fields.summary || '',
@@ -117,7 +161,8 @@ export async function getActiveIssuesWithTime(accountId) {
     issueTypeIconUrl: issue.fields.issuetype?.iconUrl || '',
     projectKey: issue.fields.project?.key || '',
     timeTracked: timeByIssue[issue.key] || 0,
-    lastWorkedOn: lastWorkedByIssue[issue.key] || null
+    lastWorkedOn: lastWorkedByIssue[issue.key] || null,
+    sessions: sessionsByIssue[issue.key] || []
   }));
 
   return {
@@ -188,4 +233,50 @@ export async function updateAssignedIssuesCache(accountId) {
     cached: issues.length,
     message: `Successfully cached ${issues.length} assigned issues`
   };
+}
+
+/**
+ * Get available status transitions for an issue
+ * @param {string} issueKey - Jira issue key (e.g., SCRUM-5)
+ * @returns {Promise<Array>} Array of available transitions
+ */
+export async function getAvailableTransitions(issueKey) {
+  try {
+    const transitions = await getIssueTransitions(issueKey);
+
+    return transitions.map(transition => ({
+      id: transition.id,
+      name: transition.name,
+      to: {
+        id: transition.to.id,
+        name: transition.to.name,
+        statusCategory: transition.to.statusCategory?.key || 'new'
+      }
+    }));
+  } catch (error) {
+    console.error(`Error getting transitions for ${issueKey}:`, error);
+    throw new Error(`Failed to get available transitions: ${error.message}`);
+  }
+}
+
+/**
+ * Update issue status by transitioning to new status
+ * @param {string} issueKey - Jira issue key (e.g., SCRUM-5)
+ * @param {string} transitionId - Transition ID to execute
+ * @returns {Promise<Object>} Update result
+ */
+export async function updateIssueStatus(issueKey, transitionId) {
+  try {
+    const result = await transitionIssue(issueKey, transitionId);
+
+    return {
+      success: true,
+      issueKey,
+      transitionId,
+      message: `Successfully updated ${issueKey} status`
+    };
+  } catch (error) {
+    console.error(`Error updating status for ${issueKey}:`, error);
+    throw new Error(`Failed to update issue status: ${error.message}`);
+  }
 }

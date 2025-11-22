@@ -2,6 +2,74 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 import './App.css';
 
+// Status Dropdown Component
+function StatusDropdown({ issue, onStatusChange, isUpdating, onLoadTransitions }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [transitions, setTransitions] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const handleClick = async (e) => {
+    e.stopPropagation();
+    if (isUpdating) return;
+
+    if (!isOpen && transitions.length === 0) {
+      setLoading(true);
+      const trans = await onLoadTransitions(issue.key);
+      setTransitions(trans);
+      setLoading(false);
+    }
+    setIsOpen(!isOpen);
+  };
+
+  const handleTransitionSelect = (e, transitionId) => {
+    e.stopPropagation();
+    setIsOpen(false);
+    onStatusChange(issue.key, transitionId);
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => setIsOpen(false);
+    if (isOpen) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [isOpen]);
+
+  return (
+    <div className="status-dropdown-container" onClick={(e) => e.stopPropagation()}>
+      <button
+        className={`status-dropdown-button status-badge status-${issue.statusCategory}`}
+        onClick={handleClick}
+        disabled={isUpdating}
+      >
+        {isUpdating ? '...' : issue.status}
+        <span className="dropdown-arrow">{isOpen ? '▲' : '▼'}</span>
+      </button>
+      {isOpen && (
+        <div className="status-dropdown-menu">
+          {loading ? (
+            <div className="dropdown-loading">Loading...</div>
+          ) : transitions.length === 0 ? (
+            <div className="dropdown-empty">No transitions available</div>
+          ) : (
+            transitions.map((transition) => (
+              <button
+                key={transition.id}
+                className={`dropdown-item status-${transition.to.statusCategory}`}
+                onClick={(e) => handleTransitionSelect(e, transition.id)}
+                disabled={isUpdating}
+              >
+                {transition.to.name}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState('time-analytics');
   const [timeData, setTimeData] = useState(null);
@@ -28,6 +96,10 @@ function App() {
   const [activeIssues, setActiveIssues] = useState([]);
   const [issuesLoading, setIssuesLoading] = useState(false);
   const [issueFilter, setIssueFilter] = useState('all'); // all, in-progress, done
+
+  // Status Update State
+  const [statusUpdating, setStatusUpdating] = useState(null); // Issue key being updated
+  const [issueTransitions, setIssueTransitions] = useState({}); // Cache of transitions by issue key
 
   // BRD Upload State
   const [selectedFile, setSelectedFile] = useState(null);
@@ -140,6 +212,46 @@ function App() {
       setActiveIssues([]);
     } finally {
       setIssuesLoading(false);
+    }
+  };
+
+  const loadTransitionsForIssue = async (issueKey) => {
+    // Check cache first
+    if (issueTransitions[issueKey]) {
+      return issueTransitions[issueKey];
+    }
+
+    try {
+      const result = await invoke('getIssueTransitions', { issueKey });
+      if (result.success) {
+        setIssueTransitions(prev => ({
+          ...prev,
+          [issueKey]: result.transitions
+        }));
+        return result.transitions;
+      }
+      return [];
+    } catch (err) {
+      console.error(`Failed to load transitions for ${issueKey}:`, err);
+      return [];
+    }
+  };
+
+  const handleStatusChange = async (issueKey, transitionId) => {
+    setStatusUpdating(issueKey);
+    try {
+      const result = await invoke('updateIssueStatus', { issueKey, transitionId });
+      if (result.success) {
+        // Refresh issues list to show updated status
+        await loadActiveIssues();
+      } else {
+        alert(`Failed to update status: ${result.error}`);
+      }
+    } catch (err) {
+      console.error(`Error updating status for ${issueKey}:`, err);
+      alert(`Error updating status: ${err.message}`);
+    } finally {
+      setStatusUpdating(null);
     }
   };
 
@@ -305,45 +417,54 @@ function App() {
     <div className="App">
       <header className="App-header">
         <h1>BRD Automate & Time Tracker</h1>
-        <nav className="tabs">
-          <button
-            className={activeTab === 'time-analytics' ? 'active' : ''}
-            onClick={() => setActiveTab('time-analytics')}
-          >
-            My Time Analytics
-          </button>
-          <button
-            className={activeTab === 'screenshots' ? 'active' : ''}
-            onClick={() => setActiveTab('screenshots')}
-          >
-            My Screenshots
-          </button>
-          {userPermissions.projectAdminProjects?.length > 0 && (
-            <button
-              className={activeTab === 'team-analytics' ? 'active' : ''}
-              onClick={() => setActiveTab('team-analytics')}
-            >
-              Team Analytics
-            </button>
-          )}
-          {userPermissions.isJiraAdmin && (
-            <button
-              className={activeTab === 'org-analytics' ? 'active' : ''}
-              onClick={() => setActiveTab('org-analytics')}
-            >
-              Organization Analytics
-            </button>
-          )}
-          <button
-            className={activeTab === 'brd-upload' ? 'active' : ''}
-            onClick={() => setActiveTab('brd-upload')}
-          >
-            BRD Upload
-          </button>
-        </nav>
       </header>
 
-      <main className="App-content">
+      <div className="App-layout">
+        <aside className="App-sidebar">
+          <nav className="sidebar-nav">
+            <button
+              className={`sidebar-item ${activeTab === 'time-analytics' ? 'active' : ''}`}
+              onClick={() => setActiveTab('time-analytics')}
+            >
+              <span className="sidebar-icon">📊</span>
+              <span className="sidebar-label">My Time Analytics</span>
+            </button>
+            <button
+              className={`sidebar-item ${activeTab === 'screenshots' ? 'active' : ''}`}
+              onClick={() => setActiveTab('screenshots')}
+            >
+              <span className="sidebar-icon">🖼️</span>
+              <span className="sidebar-label">My Screenshots</span>
+            </button>
+            {userPermissions.projectAdminProjects?.length > 0 && (
+              <button
+                className={`sidebar-item ${activeTab === 'team-analytics' ? 'active' : ''}`}
+                onClick={() => setActiveTab('team-analytics')}
+              >
+                <span className="sidebar-icon">👥</span>
+                <span className="sidebar-label">Team Analytics</span>
+              </button>
+            )}
+            {userPermissions.isJiraAdmin && (
+              <button
+                className={`sidebar-item ${activeTab === 'org-analytics' ? 'active' : ''}`}
+                onClick={() => setActiveTab('org-analytics')}
+              >
+                <span className="sidebar-icon">🏢</span>
+                <span className="sidebar-label">Organization Analytics</span>
+              </button>
+            )}
+            <button
+              className={`sidebar-item ${activeTab === 'brd-upload' ? 'active' : ''}`}
+              onClick={() => setActiveTab('brd-upload')}
+            >
+              <span className="sidebar-icon">📄</span>
+              <span className="sidebar-label">BRD Upload</span>
+            </button>
+          </nav>
+        </aside>
+
+        <main className="App-content">
         {activeTab === 'time-analytics' && (
           <div className="time-analytics">
             <h2>Time Analytics Dashboard</h2>
@@ -354,73 +475,59 @@ function App() {
             ) : (
               <div className="analytics-grid">
                 <div className="analytics-card">
-                  <h3>Daily Summary (Last 30 Days)</h3>
-                  {timeData?.dailySummary && timeData.dailySummary.length > 0 ? (
-                    <div className="data-list">
-                      {timeData.dailySummary.slice(0, 10).map((day, idx) => (
-                        <div key={idx} className="data-item">
-                          <span className="label">{new Date(day.work_date).toLocaleDateString()}</span>
-                          <span className="value">
-                            {day.active_task_key || 'No task'} - {formatTime(day.total_seconds)}
-                          </span>
-                        </div>
-                      ))}
-                      {timeData.dailySummary.length > 10 && (
-                        <p className="more-data">+ {timeData.dailySummary.length - 10} more days</p>
-                      )}
-                    </div>
-                  ) : (
-                    <p>No data available yet. Install the desktop app to start tracking.</p>
-                  )}
+                  <h3>Today's Total</h3>
+                  {(() => {
+                    const today = new Date().toISOString().split('T')[0];
+                    // Sum ALL entries for today (multiple tasks/projects)
+                    const totalSeconds = timeData?.dailySummary?.filter(day =>
+                      day.work_date?.startsWith(today)
+                    ).reduce((sum, day) => sum + (day.total_seconds || 0), 0) || 0;
+                    return (
+                      <div className="cumulative-stat">
+                        <div className="stat-value">{formatTime(totalSeconds)}</div>
+                        <div className="stat-label">Time tracked today</div>
+                      </div>
+                    );
+                  })()}
                 </div>
                 <div className="analytics-card">
-                  <h3>Weekly Summary (Last 12 Weeks)</h3>
-                  {timeData?.weeklySummary && timeData.weeklySummary.length > 0 ? (
-                    <div className="data-list">
-                      {timeData.weeklySummary.map((week, idx) => (
-                        <div key={idx} className="data-item">
-                          <span className="label">Week of {new Date(week.week_start).toLocaleDateString()}</span>
-                          <span className="value">{formatTime(week.total_seconds)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p>No data available yet.</p>
-                  )}
+                  <h3>This Week's Total</h3>
+                  {(() => {
+                    // Get current week start
+                    const now = new Date();
+                    const currentWeekStart = new Date(now);
+                    currentWeekStart.setDate(now.getDate() - now.getDay()); // Sunday
+                    currentWeekStart.setHours(0, 0, 0, 0);
+
+                    // Sum ALL entries for current week (multiple tasks/projects)
+                    const totalSeconds = timeData?.weeklySummary?.filter(week => {
+                      const weekStart = new Date(week.week_start);
+                      return weekStart >= currentWeekStart;
+                    }).reduce((sum, week) => sum + (week.total_seconds || 0), 0) || 0;
+
+                    return (
+                      <div className="cumulative-stat">
+                        <div className="stat-value">{formatTime(totalSeconds)}</div>
+                        <div className="stat-label">Time tracked this week</div>
+                      </div>
+                    );
+                  })()}
                 </div>
                 <div className="analytics-card">
-                  <h3>Time by Project</h3>
-                  {timeData?.timeByProject && timeData.timeByProject.length > 0 ? (
-                    <div className="data-list">
-                      {timeData.timeByProject.map((project, idx) => (
-                        <div key={idx} className="data-item">
-                          <span className="label">{project.active_project_key || 'Unknown'}</span>
-                          <span className="value">{formatTime(project.total_seconds)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p>No data available yet.</p>
-                  )}
-                </div>
-                <div className="analytics-card">
-                  <h3>Time by Issue (Top 20)</h3>
-                  {timeData?.timeByIssue && timeData.timeByIssue.length > 0 ? (
-                    <div className="data-list">
-                      {timeData.timeByIssue.slice(0, 20).map((issue, idx) => (
-                        <div key={idx} className="data-item">
-                          <span className="label">
-                            <a href={`/browse/${issue.issueKey}`} target="_blank" rel="noopener noreferrer">
-                              {issue.issueKey}
-                            </a>
-                          </span>
-                          <span className="value">{formatTime(issue.totalSeconds)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p>No data available yet.</p>
-                  )}
+                  <h3>All Projects Total</h3>
+                  {(() => {
+                    const totalSeconds = timeData?.timeByProject?.reduce(
+                      (sum, project) => sum + (project.total_seconds || 0),
+                      0
+                    ) || 0;
+                    const projectCount = timeData?.timeByProject?.length || 0;
+                    return (
+                      <div className="cumulative-stat">
+                        <div className="stat-value">{formatTime(totalSeconds)}</div>
+                        <div className="stat-label">{projectCount} {projectCount === 1 ? 'project' : 'projects'}</div>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             )}
@@ -481,27 +588,113 @@ function App() {
                               return true;
                             })
                             .map((issue, idx) => (
-                              <tr key={idx}>
-                                <td className="issue-key">
-                                  <a href={`/browse/${issue.key}`} target="_blank" rel="noopener noreferrer">
-                                    {issue.key}
-                                  </a>
-                                </td>
-                                <td className="issue-title">{issue.summary}</td>
-                                <td className="issue-status">
-                                  <span className={`status-badge status-${issue.statusCategory}`}>
-                                    {issue.status}
-                                  </span>
-                                </td>
-                                <td className="issue-priority">
-                                  <span className={`priority-badge priority-${issue.priority.toLowerCase()}`}>
-                                    {issue.priority}
-                                  </span>
-                                </td>
-                                <td className="issue-time">
-                                  {issue.timeTracked > 0 ? formatTime(issue.timeTracked) : '-'}
-                                </td>
-                              </tr>
+                              <React.Fragment key={idx}>
+                                <tr className={issue.sessions && issue.sessions.length > 0 ? 'expandable-row' : ''}>
+                                  <td className="issue-key">
+                                    {issue.sessions && issue.sessions.length > 0 && (
+                                      <button
+                                        className="expand-button"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          const row = e.target.closest('tr');
+                                          const detailsRow = row.nextElementSibling;
+                                          if (detailsRow && detailsRow.classList.contains('details-row')) {
+                                            detailsRow.classList.toggle('show');
+                                            e.target.textContent = detailsRow.classList.contains('show') ? '▼' : '▶';
+                                          }
+                                        }}
+                                      >
+                                        ▶
+                                      </button>
+                                    )}
+                                    <a href={`/browse/${issue.key}`} target="_blank" rel="noopener noreferrer">
+                                      {issue.key}
+                                    </a>
+                                  </td>
+                                  <td className="issue-title">{issue.summary}</td>
+                                  <td className="issue-status">
+                                    <StatusDropdown
+                                      issue={issue}
+                                      onStatusChange={handleStatusChange}
+                                      isUpdating={statusUpdating === issue.key}
+                                      onLoadTransitions={loadTransitionsForIssue}
+                                    />
+                                  </td>
+                                  <td className="issue-priority">
+                                    <span className={`priority-badge priority-${issue.priority.toLowerCase()}`}>
+                                      {issue.priority}
+                                    </span>
+                                  </td>
+                                  <td className="issue-time">
+                                    {issue.timeTracked > 0 ? formatTime(issue.timeTracked) : '-'}
+                                  </td>
+                                </tr>
+                                {issue.sessions && issue.sessions.length > 0 && (
+                                  <tr className="details-row">
+                                    <td colSpan="5">
+                                      <div className="session-details">
+                                        <h4>Work Sessions ({issue.sessions.length})</h4>
+                                        <div className="sessions-by-date">
+                                          {(() => {
+                                            // Group sessions by date
+                                            const sessionsByDate = issue.sessions.reduce((acc, session) => {
+                                              const dateKey = session.date;
+                                              if (!acc[dateKey]) {
+                                                acc[dateKey] = [];
+                                              }
+                                              acc[dateKey].push(session);
+                                              return acc;
+                                            }, {});
+
+                                            // Render grouped sessions
+                                            return Object.keys(sessionsByDate).sort((a, b) => new Date(b) - new Date(a)).map((dateKey, dateIdx) => {
+                                              const dateSessions = sessionsByDate[dateKey];
+                                              const displayDate = new Date(dateKey);
+                                              const totalDuration = dateSessions.reduce((sum, s) => sum + s.duration, 0);
+
+                                              return (
+                                                <div key={dateIdx} className="date-group">
+                                                  <div className="date-header">
+                                                    <span className="date-label">
+                                                      {displayDate.toLocaleDateString('en-US', {
+                                                        weekday: 'short',
+                                                        month: 'short',
+                                                        day: 'numeric',
+                                                        year: 'numeric'
+                                                      })}
+                                                    </span>
+                                                    <span className="date-total">
+                                                      Total: {formatTime(totalDuration)}
+                                                    </span>
+                                                  </div>
+                                                  <div className="sessions-list">
+                                                    {dateSessions.map((session, sessionIdx) => {
+                                                      const start = new Date(session.startTime);
+                                                      const end = new Date(session.endTime);
+                                                      return (
+                                                        <div key={sessionIdx} className="session-item">
+                                                          <span className="session-time">
+                                                            {start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                                            {' → '}
+                                                            {end.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                                          </span>
+                                                          <span className="session-duration">
+                                                            {formatTime(session.duration)}
+                                                          </span>
+                                                        </div>
+                                                      );
+                                                    })}
+                                                  </div>
+                                                </div>
+                                              );
+                                            });
+                                          })()}
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
                             ))}
                         </tbody>
                       </table>
@@ -780,6 +973,7 @@ function App() {
           </div>
         )}
       </main>
+      </div>
     </div>
   );
 }

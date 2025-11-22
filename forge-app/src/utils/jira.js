@@ -219,3 +219,54 @@ export function formatIssueData(issue) {
 export function formatIssuesData(issues) {
   return (issues || []).map(formatIssueData);
 }
+
+/**
+ * Get available transitions for a Jira issue
+ * @param {string} issueKey - Jira issue key (e.g., PROJ-123)
+ * @returns {Promise<Array>} Array of available transitions
+ */
+export async function getIssueTransitions(issueKey) {
+  const response = await api.asUser().requestJira(
+    route`/rest/api/3/issue/${issueKey}/transitions`,
+    {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json'
+      }
+    }
+  );
+
+  const data = await response.json();
+  return data.transitions || [];
+}
+
+/**
+ * Transition a Jira issue to a new status
+ * @param {string} issueKey - Jira issue key (e.g., PROJ-123)
+ * @param {string} transitionId - Transition ID to execute
+ * @returns {Promise<Object>} Transition response
+ */
+export async function transitionIssue(issueKey, transitionId) {
+  const response = await api.asUser().requestJira(
+    route`/rest/api/3/issue/${issueKey}/transitions`,
+    {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        transition: {
+          id: transitionId
+        }
+      })
+    }
+  );
+
+  if (response.status === 204) {
+    // Success - 204 No Content is expected response
+    return { success: true };
+  }
+
+  return response.json();
+}
