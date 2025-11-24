@@ -13,9 +13,401 @@ if (process.env.OPENAI_API_KEY) {
 }
 
 /**
- * Extract text from screenshot using OCR
+ * Analyze activity using GPT-4 Vision (primary method)
+ * This analyzes the screenshot image directly without OCR
  */
-exports.extractText = async (imageBuffer) => {
+exports.analyzeActivity = async ({ imageBuffer, windowTitle, applicationName, timestamp, userId, userAssignedIssues = [] }) => {
+  try {
+    // Calculate time spent (based on screenshot interval)
+    const timeSpentSeconds = parseInt(process.env.SCREENSHOT_INTERVAL || '300');
+
+    // Use GPT-4 Vision as primary analysis method
+    let visionAnalysis = null;
+    let useVision = openai !== null && process.env.USE_AI_FOR_SCREENSHOTS !== 'false';
+
+    if (useVision && imageBuffer) {
+      try {
+        visionAnalysis = await analyzeWithVision({
+          imageBuffer,
+          windowTitle,
+          applicationName,
+          userAssignedIssues
+        });
+        logger.info('GPT-4 Vision analysis completed', {
+          taskKey: visionAnalysis.taskKey,
+          workType: visionAnalysis.workType,
+          confidence: visionAnalysis.confidenceScore,
+          usedAssignedIssues: userAssignedIssues.length > 0
+        });
+      } catch (visionError) {
+        logger.warn('GPT-4 Vision analysis failed, falling back to OCR + AI', { error: visionError.message });
+        // Fall back to OCR-based analysis
+      }
+    }
+
+    // If Vision analysis failed or not available, fall back to OCR + GPT-4 text
+    if (!visionAnalysis && imageBuffer) {
+      logger.info('Falling back to OCR-based analysis');
+      const extractedText = await extractText(imageBuffer);
+
+      // Extract potential Jira issue keys from text and window title
+      const detectedJiraKeys = extractJiraKeys(extractedText, windowTitle);
+
+      // Filter detected keys to only include user's assigned issues
+      let validDetectedKeys = detectedJiraKeys;
+      if (userAssignedIssues && userAssignedIssues.length > 0) {
+        const assignedIssueKeys = userAssignedIssues.map(issue => issue.key);
+        validDetectedKeys = detectedJiraKeys.filter(key => assignedIssueKeys.includes(key));
+
+        if (detectedJiraKeys.length > 0 && validDetectedKeys.length === 0) {
+          logger.warn('Detected Jira keys not in user\'s assigned issues', {
+            detectedKeys: detectedJiraKeys,
+            assignedKeys: assignedIssueKeys
+          });
+        }
+      }
+
+      // Use AI for enhanced analysis
+      try {
+        visionAnalysis = await analyzeWithAI({
+          extractedText,
+          windowTitle,
+          applicationName,
+          detectedJiraKeys: validDetectedKeys,
+          userAssignedIssues
+        });
+        logger.info('OCR + AI analysis completed', {
+          taskKey: visionAnalysis.taskKey,
+          workType: visionAnalysis.workType,
+          confidence: visionAnalysis.confidenceScore
+        });
+        // Add extracted text to metadata for storage
+        visionAnalysis.extractedText = extractedText;
+      } catch (aiError) {
+        logger.error('Both Vision and OCR+AI analysis failed', { error: aiError.message });
+        // Last fallback: basic heuristics
+        visionAnalysis = {
+          taskKey: validDetectedKeys.length > 0 ? validDetectedKeys[0] : null,
+          projectKey: validDetectedKeys.length > 0 ? validDetectedKeys[0].split('-')[0] : null,
+          workType: 'office', // Default to office work
+          confidenceScore: validDetectedKeys.length > 0 ? 0.7 : 0.3,
+          detectedJiraKeys: validDetectedKeys,
+          reasoning: 'Fallback to basic heuristics',
+          extractedText
+        };
+      }
+    }
+
+    // Extract final results
+    const taskKey = visionAnalysis?.taskKey || null;
+    const projectKey = visionAnalysis?.projectKey || (taskKey ? taskKey.split('-')[0] : null);
+    const workType = visionAnalysis?.workType || 'office';
+    const confidenceScore = visionAnalysis?.confidenceScore || 0.0;
+    const detectedJiraKeys = visionAnalysis?.detectedJiraKeys || [];
+
+    return {
+      taskKey,
+      projectKey,
+      timeSpentSeconds,
+      confidenceScore,
+      detectedJiraKeys,
+      workType, // 'office' or 'non-office'
+      modelVersion: visionAnalysis?.modelVersion || 'v3.0-vision',
+      metadata: {
+        application: applicationName,
+        windowTitle,
+        aiEnhanced: true,
+        usedVision: !!visionAnalysis,
+        assignedIssuesCount: userAssignedIssues.length,
+        usedAssignedIssues: userAssignedIssues.length > 0,
+        reasoning: visionAnalysis?.reasoning || '',
+        extractedText: visionAnalysis?.extractedText || '' // Store OCR text if fallback was used
+      }
+    };
+  } catch (error) {
+    logger.error('Activity analysis error:', error);
+    throw new Error(`Failed to analyze activity: ${error.message}`);
+  }
+};
+
+/**
+ * Analyze screenshot using GPT-4 Vision API
+ * This is the PRIMARY analysis method - analyzes image directly
+ */
+async function analyzeWithVision({ imageBuffer, windowTitle, applicationName, userAssignedIssues = [] }) {
+  if (!openai) {
+    throw new Error('OpenAI client not initialized');
+  }
+
+  // Convert image buffer to base64
+  const base64Image = imageBuffer.toString('base64');
+  const imageDataUrl = `data:image/png;base64,${base64Image}`;
+
+  // Build user's assigned issues list for the prompt
+  let assignedIssuesText = 'None - track all work';
+  if (userAssignedIssues && userAssignedIssues.length > 0) {
+    assignedIssuesText = userAssignedIssues
+      .slice(0, 20) // Limit to first 20 issues to avoid token limits
+      .map(issue => `- ${issue.key}: ${issue.summary} (Status: ${issue.status})`)
+      .join('\n');
+  }
+
+  const prompt = `You are analyzing a screenshot to determine:
+1. What Jira task the user is working on (if any)
+2. Whether this is office work or non-office work
+
+Context:
+- Application: ${applicationName}
+- Window Title: ${windowTitle}
+
+User's Assigned Issues (from Jira):
+${assignedIssuesText}
+
+Analyze the screenshot and determine:
+
+1. **Work Type Classification:**
+   - 'office': Work-related activities including:
+     * Coding, development, debugging
+     * Jira, project management tools
+     * Documentation, technical writing
+     * Meetings, Slack, Teams, Zoom
+     * Work-related research (Stack Overflow, documentation, work-related YouTube tutorials)
+     * Email, calendar, work communication
+   - 'non-office': Personal/non-work activities including:
+     * Entertainment (Netflix, personal YouTube, gaming)
+     * Social media (Facebook, Twitter, Instagram - unless for work)
+     * Personal browsing, shopping
+     * Any clearly non-work-related activity
+
+2. **Task Detection:**
+   - Look for Jira issue keys in the screenshot (format: PROJECT-123)
+   - Match the screenshot content to the user's assigned issues
+   - Consider: window content, visible text, code comments, browser tabs, etc.
+   - ONLY return task keys that are in the "User's Assigned Issues" list above
+   - If you can't match to an assigned issue, return null for taskKey
+
+3. **Confidence Score:**
+   - High (0.9+): Clear Jira key visible or exact match to issue summary
+   - Medium (0.6-0.8): Good contextual match (e.g., code matches issue description)
+   - Low (0.3-0.5): Weak match or just general work activity
+   - Very Low (0.0-0.2): No clear task association
+
+IMPORTANT RULES:
+- Track EVERYTHING - don't skip any activities
+- Let AI decide dynamically what is office vs non-office work
+- Work-related YouTube tutorials = 'office'
+- Entertainment YouTube = 'non-office'
+- Be smart about context - coding tutorial = office, cat videos = non-office
+- ONLY return task keys from the assigned issues list
+- If screenshot shows work but doesn't match any assigned issue, set taskKey to null
+
+Return ONLY valid JSON in this exact format:
+{
+  "workType": "office" or "non-office",
+  "taskKey": "PROJECT-123" or null,
+  "projectKey": "PROJECT" or null,
+  "confidenceScore": 0.0-1.0,
+  "detectedJiraKeys": ["KEY1", "KEY2"],
+  "reasoning": "Brief explanation of your analysis"
+}`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: process.env.OPENAI_VISION_MODEL || 'gpt-4o', // gpt-4o has vision capabilities
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an expert at analyzing work activity from screenshots. You classify work as office or non-office and identify Jira tasks dynamically without hardcoded rules.'
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: prompt
+            },
+            {
+              type: 'image_url',
+              image_url: {
+                url: imageDataUrl,
+                detail: 'high' // Use high detail for better analysis
+              }
+            }
+          ]
+        }
+      ],
+      temperature: 0.3, // Lower temperature for more consistent results
+      max_tokens: 500
+    });
+
+    const content = response.choices[0].message.content.trim();
+
+    // Parse JSON from the response
+    let aiResult;
+    try {
+      // Extract JSON from markdown code blocks if present
+      const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) || content.match(/```\s*([\s\S]*?)\s*```/);
+      const jsonString = jsonMatch ? jsonMatch[1] : content;
+      aiResult = JSON.parse(jsonString);
+    } catch (parseError) {
+      logger.warn('Failed to parse AI response as JSON', { content });
+      throw new Error('Invalid JSON response from AI');
+    }
+
+    // Validate work_type
+    if (aiResult.workType !== 'office' && aiResult.workType !== 'non-office') {
+      logger.warn('Invalid work_type from AI, defaulting to office', { workType: aiResult.workType });
+      aiResult.workType = 'office';
+    }
+
+    // Validate task key is in user's assigned issues (if provided)
+    let validatedTaskKey = aiResult.taskKey || null;
+    let detectedJiraKeys = aiResult.detectedJiraKeys || [];
+
+    if (validatedTaskKey && userAssignedIssues && userAssignedIssues.length > 0) {
+      const assignedIssueKeys = userAssignedIssues.map(issue => issue.key);
+      if (!assignedIssueKeys.includes(validatedTaskKey)) {
+        logger.warn('AI returned task key not in assigned issues, setting to null', {
+          aiTaskKey: validatedTaskKey,
+          assignedKeys: assignedIssueKeys
+        });
+        validatedTaskKey = null;
+      }
+
+      // Filter detected keys to only assigned issues
+      detectedJiraKeys = detectedJiraKeys.filter(key => assignedIssueKeys.includes(key));
+    }
+
+    // Return validated analysis
+    return {
+      workType: aiResult.workType,
+      taskKey: validatedTaskKey,
+      projectKey: aiResult.projectKey || (validatedTaskKey ? validatedTaskKey.split('-')[0] : null),
+      confidenceScore: Math.min(Math.max(aiResult.confidenceScore || 0.5, 0), 1), // Clamp between 0 and 1
+      detectedJiraKeys,
+      reasoning: aiResult.reasoning || '',
+      modelVersion: 'v3.0-vision'
+    };
+  } catch (error) {
+    logger.error('GPT-4 Vision analysis error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Analyze screenshot using GPT-4 text model with OCR (fallback method)
+ */
+async function analyzeWithAI({ extractedText, windowTitle, applicationName, detectedJiraKeys, userAssignedIssues = [] }) {
+  if (!openai) {
+    throw new Error('OpenAI client not initialized');
+  }
+
+  // Build user's assigned issues list for the prompt
+  let assignedIssuesText = 'None - track all work';
+  if (userAssignedIssues && userAssignedIssues.length > 0) {
+    assignedIssuesText = userAssignedIssues
+      .slice(0, 20)
+      .map(issue => `- ${issue.key}: ${issue.summary} (Status: ${issue.status})`)
+      .join('\n');
+  }
+
+  const prompt = `You are analyzing a screenshot to determine what Jira task the user is working on and classify work type.
+
+Context:
+- Application: ${applicationName}
+- Window Title: ${windowTitle}
+- Extracted Text (from OCR): ${extractedText.substring(0, 1000)}${extractedText.length > 1000 ? '...' : ''}
+- Detected Jira Keys: ${detectedJiraKeys.length > 0 ? detectedJiraKeys.join(', ') : 'None found'}
+
+User's Assigned Issues (from Jira):
+${assignedIssuesText}
+
+Analyze this information and determine:
+
+1. Work Type: 'office' (work-related) or 'non-office' (personal/entertainment)
+2. Task Key: Which Jira issue from the assigned list (or null)
+3. Confidence Score: 0.0 to 1.0
+
+Rules:
+- Track EVERYTHING - classify as office or non-office
+- Work-related YouTube = office, entertainment = non-office
+- ONLY return task keys from the assigned issues list
+- Return ONLY valid JSON in this exact format:
+{
+  "workType": "office" or "non-office",
+  "taskKey": "PROJECT-123" or null,
+  "projectKey": "PROJECT" or null,
+  "confidenceScore": 0.0-1.0,
+  "reasoning": "Brief explanation"
+}`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an expert at analyzing work activity. You classify work dynamically without hardcoded rules.'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      temperature: 0.3,
+      max_tokens: 300
+    });
+
+    const content = response.choices[0].message.content.trim();
+
+    // Parse JSON
+    let aiResult;
+    try {
+      const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) || content.match(/```\s*([\s\S]*?)\s*```/);
+      const jsonString = jsonMatch ? jsonMatch[1] : content;
+      aiResult = JSON.parse(jsonString);
+    } catch (parseError) {
+      logger.warn('Failed to parse AI response as JSON', { content });
+      throw new Error('Invalid JSON response from AI');
+    }
+
+    // Validate work_type
+    if (aiResult.workType !== 'office' && aiResult.workType !== 'non-office') {
+      aiResult.workType = 'office';
+    }
+
+    // Validate task key
+    let validatedTaskKey = aiResult.taskKey || null;
+    if (validatedTaskKey && userAssignedIssues && userAssignedIssues.length > 0) {
+      const assignedIssueKeys = userAssignedIssues.map(issue => issue.key);
+      if (!assignedIssueKeys.includes(validatedTaskKey)) {
+        logger.warn('AI returned task key not in assigned issues, setting to null', {
+          aiTaskKey: validatedTaskKey,
+          assignedKeys: assignedIssueKeys
+        });
+        validatedTaskKey = null;
+      }
+    }
+
+    return {
+      workType: aiResult.workType,
+      taskKey: validatedTaskKey,
+      projectKey: aiResult.projectKey || (validatedTaskKey ? validatedTaskKey.split('-')[0] : null),
+      confidenceScore: Math.min(Math.max(aiResult.confidenceScore || 0.5, 0), 1),
+      detectedJiraKeys,
+      reasoning: aiResult.reasoning || '',
+      modelVersion: 'v2.1-ocr-ai'
+    };
+  } catch (error) {
+    logger.error('OpenAI analysis error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Extract text from screenshot using OCR (fallback method)
+ */
+async function extractText(imageBuffer) {
   try {
     // Preprocess image for better OCR results
     const processedImage = await sharp(imageBuffer)
@@ -41,158 +433,7 @@ exports.extractText = async (imageBuffer) => {
     logger.error('OCR extraction error:', error);
     throw new Error(`Failed to extract text from screenshot: ${error.message}`);
   }
-};
-
-/**
- * Analyze activity and determine Jira task with AI enhancement
- */
-exports.analyzeActivity = async ({ extractedText, windowTitle, applicationName, timestamp, userId, userAssignedIssues = [] }) => {
-  try {
-    // Extract potential Jira issue keys from text and window title
-    const detectedJiraKeys = extractJiraKeys(extractedText, windowTitle);
-
-    // Filter detected keys to only include user's assigned issues (if provided)
-    let validDetectedKeys = detectedJiraKeys;
-    if (userAssignedIssues && userAssignedIssues.length > 0) {
-      const assignedIssueKeys = userAssignedIssues.map(issue => issue.key);
-      validDetectedKeys = detectedJiraKeys.filter(key => assignedIssueKeys.includes(key));
-      
-      // If we found keys but none match assigned issues, log a warning
-      if (detectedJiraKeys.length > 0 && validDetectedKeys.length === 0) {
-        logger.warn('Detected Jira keys not in user\'s assigned issues', {
-          detectedKeys: detectedJiraKeys,
-          assignedKeys: assignedIssueKeys
-        });
-      }
-    }
-
-    // Calculate time spent (based on screenshot interval)
-    const timeSpentSeconds = parseInt(process.env.SCREENSHOT_INTERVAL || '300');
-
-    // Use AI for enhanced analysis if OpenAI is available
-    let aiAnalysis = null;
-    let useAI = openai !== null && process.env.USE_AI_FOR_SCREENSHOTS !== 'false';
-
-    if (useAI) {
-      try {
-        aiAnalysis = await analyzeWithAI({
-          extractedText,
-          windowTitle,
-          applicationName,
-          detectedJiraKeys: validDetectedKeys,
-          userAssignedIssues // Pass assigned issues to AI
-        });
-        logger.info('AI analysis completed', {
-          taskKey: aiAnalysis.taskKey,
-          confidence: aiAnalysis.confidenceScore,
-          isActiveWork: aiAnalysis.isActiveWork,
-          usedAssignedIssues: userAssignedIssues.length > 0
-        });
-      } catch (aiError) {
-        logger.warn('AI analysis failed, falling back to heuristics', { error: aiError.message });
-        // Fall back to heuristic-based analysis
-      }
-    }
-
-    // Determine if this is active work or idle time
-    let isIdle = false;
-    let isActiveWork = false;
-
-    if (aiAnalysis) {
-      // Use AI results
-      isIdle = aiAnalysis.isIdle;
-      isActiveWork = aiAnalysis.isActiveWork;
-    } else {
-      // Fallback to heuristic-based classification
-      isIdle = checkIfIdle(applicationName, windowTitle, extractedText);
-      isActiveWork = !isIdle && isWorkRelated(applicationName, windowTitle);
-    }
-
-    // Determine the most likely task based on context
-    let taskKey = null;
-    let projectKey = null;
-    let confidenceScore = 0;
-    let modelVersion = 'v1.0-tesseract';
-
-    // IMPORTANT: Only set taskKey and projectKey if we can match to user's assigned issues
-    // Do NOT create random project keys from OCR text
-    if (validDetectedKeys.length > 0) {
-      // If we found Jira keys in the screenshot (and they're in assigned issues), use the first one
-      taskKey = validDetectedKeys[0];
-      projectKey = taskKey.split('-')[0];
-      confidenceScore = 0.9; // High confidence when we find explicit Jira keys
-      modelVersion = aiAnalysis ? 'v2.0-ai-enhanced' : 'v1.0-tesseract';
-      logger.info('Using detected Jira key from assigned issues', { taskKey, projectKey });
-    } else if (aiAnalysis && aiAnalysis.taskKey) {
-      // Use AI-inferred task (AI already validated it's in assigned issues)
-      taskKey = aiAnalysis.taskKey;
-      projectKey = aiAnalysis.projectKey;
-      confidenceScore = aiAnalysis.confidenceScore;
-      modelVersion = 'v2.0-ai-enhanced';
-      logger.info('Using AI-inferred task key from assigned issues', { taskKey, projectKey });
-    } else if (isActiveWork && userAssignedIssues && userAssignedIssues.length > 0) {
-      // Try to infer task from window title or application context using heuristics
-      // ONLY if we have assigned issues to match against
-      const inferredTask = await inferTaskFromContext({
-        windowTitle,
-        applicationName,
-        extractedText,
-        userId,
-        userAssignedIssues // Pass assigned issues for better matching
-      });
-
-      if (inferredTask && inferredTask.key) {
-        // Double-check that inferred key is in assigned issues
-        const assignedIssueKeys = userAssignedIssues.map(issue => issue.key);
-        if (assignedIssueKeys.includes(inferredTask.key)) {
-          taskKey = inferredTask.key;
-          projectKey = inferredTask.project;
-          confidenceScore = inferredTask.confidence;
-          logger.info('Using heuristic-inferred task key from assigned issues', { taskKey, projectKey });
-        } else {
-          logger.warn('Heuristic inference returned key not in assigned issues, ignoring', {
-            inferredKey: inferredTask.key,
-            assignedKeys: assignedIssueKeys
-          });
-        }
-      } else {
-        logger.debug('No task key could be inferred from context', {
-          hasAssignedIssues: userAssignedIssues.length > 0,
-          windowTitle
-        });
-      }
-    } else {
-      logger.debug('Cannot infer task: either not active work or no assigned issues available', {
-        isActiveWork,
-        hasAssignedIssues: userAssignedIssues && userAssignedIssues.length > 0
-      });
-    }
-
-    return {
-      taskKey,
-      projectKey,
-      timeSpentSeconds,
-      confidenceScore,
-      detectedJiraKeys,
-      isActiveWork,
-      isIdle,
-      modelVersion,
-      metadata: {
-        application: applicationName,
-        windowTitle,
-        hasText: extractedText.length > 0,
-        textLength: extractedText.length,
-        aiEnhanced: !!aiAnalysis,
-        aiAnalysisUsed: useAI,
-        assignedIssuesCount: userAssignedIssues.length,
-        usedAssignedIssues: userAssignedIssues.length > 0
-      }
-    };
-  } catch (error) {
-    logger.error('Activity analysis error:', error);
-    throw new Error(`Failed to analyze activity: ${error.message}`);
-  }
-};
+}
 
 /**
  * Extract Jira issue keys from text (e.g., PROJ-123)
@@ -206,248 +447,10 @@ function extractJiraKeys(text, windowTitle = '') {
 }
 
 /**
- * Check if the activity is idle time
- */
-function checkIfIdle(appName, windowTitle, text) {
-  const idleIndicators = [
-    'lock screen',
-    'screensaver',
-    'idle',
-    'away',
-    'afk'
-  ];
-
-  const combined = `${appName} ${windowTitle} ${text}`.toLowerCase();
-
-  return idleIndicators.some(indicator => combined.includes(indicator));
-}
-
-/**
- * Check if activity is work-related
- */
-function isWorkRelated(appName, windowTitle) {
-  const workApps = [
-    'visual studio code',
-    'intellij',
-    'pycharm',
-    'eclipse',
-    'sublime',
-    'atom',
-    'chrome',
-    'firefox',
-    'edge',
-    'terminal',
-    'iterm',
-    'git',
-    'slack',
-    'teams',
-    'zoom',
-    'jira',
-    'confluence',
-    'postman',
-    'docker'
-  ];
-
-  const nonWorkIndicators = [
-    'youtube',
-    'netflix',
-    'spotify',
-    'facebook',
-    'twitter',
-    'instagram',
-    'reddit',
-    'game'
-  ];
-
-  const combined = `${appName} ${windowTitle}`.toLowerCase();
-
-  // Check if it's a known non-work activity
-  if (nonWorkIndicators.some(indicator => combined.includes(indicator))) {
-    return false;
-  }
-
-  // Check if it's a known work app
-  return workApps.some(app => combined.includes(app));
-}
-
-/**
- * Analyze screenshot context using OpenAI for better task detection
- */
-async function analyzeWithAI({ extractedText, windowTitle, applicationName, detectedJiraKeys, userAssignedIssues = [] }) {
-  if (!openai) {
-    throw new Error('OpenAI client not initialized');
-  }
-
-  // Build user's assigned issues list for the prompt
-  let assignedIssuesText = 'None provided';
-  if (userAssignedIssues && userAssignedIssues.length > 0) {
-    assignedIssuesText = userAssignedIssues
-      .slice(0, 20) // Limit to first 20 issues to avoid token limits
-      .map(issue => `- ${issue.key}: ${issue.summary} (Status: ${issue.status})`)
-      .join('\n');
-  }
-
-  const prompt = `You are analyzing a screenshot to determine what Jira task the user is working on.
-
-Context:
-- Application: ${applicationName}
-- Window Title: ${windowTitle}
-- Extracted Text (from OCR): ${extractedText.substring(0, 1000)}${extractedText.length > 1000 ? '...' : ''}
-- Detected Jira Keys: ${detectedJiraKeys.length > 0 ? detectedJiraKeys.join(', ') : 'None found'}
-
-User's Assigned Issues (from Jira):
-${assignedIssuesText}
-
-Analyze this information and determine:
-1. Is this active work or idle time? (Consider: lock screens, screensavers, non-work apps like YouTube/Netflix)
-2. What Jira task key (format: PROJECT-123) is the user most likely working on?
-3. What is the project key?
-4. Confidence score (0.0 to 1.0) for your assessment
-
-Rules:
-- IMPORTANT: Only return task keys that are in the "User's Assigned Issues" list above
-- If explicit Jira keys are found AND they're in the assigned issues list, use those with high confidence (0.9+)
-- If no explicit keys, match the screenshot content to one of the user's assigned issues based on:
-  * Window title matching issue summary
-  * Extracted text matching issue description/keywords
-  * Application context (e.g., "Login Page" code matches "PROJ-123: Login Implementation")
-- If screenshot shows work but doesn't match any assigned issue, return null for taskKey
-- Mark as idle if it's clearly non-work (lock screen, entertainment, etc.)
-- Mark as active work if it's a development tool, Jira, Confluence, or work-related application
-- Return ONLY valid JSON in this exact format:
-{
-  "isActiveWork": true/false,
-  "isIdle": true/false,
-  "taskKey": "PROJECT-123" or null,
-  "projectKey": "PROJECT" or null,
-  "confidenceScore": 0.0-1.0,
-  "reasoning": "Brief explanation of your analysis"
-}`;
-
-  try {
-    const response = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are an expert at analyzing work activity from screenshots. You identify Jira tasks and determine if work is active or idle.'
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      temperature: 0.3, // Lower temperature for more consistent, factual results
-      max_tokens: 300
-    });
-
-    const content = response.choices[0].message.content.trim();
-    
-    // Try to parse JSON from the response
-    let aiResult;
-    try {
-      // Extract JSON from markdown code blocks if present
-      const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) || content.match(/```\s*([\s\S]*?)\s*```/);
-      const jsonString = jsonMatch ? jsonMatch[1] : content;
-      aiResult = JSON.parse(jsonString);
-    } catch (parseError) {
-      // If JSON parsing fails, try to extract key information
-      logger.warn('Failed to parse AI response as JSON, attempting fallback', { content });
-      throw new Error('Invalid JSON response from AI');
-    }
-
-    // Validate task key is in user's assigned issues (if provided)
-    let validatedTaskKey = aiResult.taskKey || null;
-    if (validatedTaskKey && userAssignedIssues && userAssignedIssues.length > 0) {
-      const assignedIssueKeys = userAssignedIssues.map(issue => issue.key);
-      if (!assignedIssueKeys.includes(validatedTaskKey)) {
-        logger.warn('AI returned task key not in assigned issues, setting to null', {
-          aiTaskKey: validatedTaskKey,
-          assignedKeys: assignedIssueKeys
-        });
-        validatedTaskKey = null;
-      }
-    }
-
-    // Validate and return AI analysis
-    return {
-      isActiveWork: aiResult.isActiveWork === true,
-      isIdle: aiResult.isIdle === true,
-      taskKey: validatedTaskKey,
-      projectKey: aiResult.projectKey || (validatedTaskKey ? validatedTaskKey.split('-')[0] : null),
-      confidenceScore: Math.min(Math.max(aiResult.confidenceScore || 0.5, 0), 1), // Clamp between 0 and 1
-      reasoning: aiResult.reasoning || ''
-    };
-  } catch (error) {
-    logger.error('OpenAI analysis error:', error);
-    throw error;
-  }
-}
-
-/**
- * Infer task from context using heuristics (fallback when AI is not available)
- */
-async function inferTaskFromContext({ windowTitle, applicationName, extractedText, userId, userAssignedIssues = [] }) {
-  // Heuristic-based inference (fallback)
-  // Match window title or extracted text to user's assigned issues
-  
-  if (!userAssignedIssues || userAssignedIssues.length === 0) {
-    logger.debug('No assigned issues provided for inference');
-    return null;
-  }
-
-  // Try to match window title or extracted text to issue summaries
-  const searchText = `${windowTitle} ${extractedText}`.toLowerCase();
-  
-  // Score each assigned issue based on keyword matching
-  const scoredIssues = userAssignedIssues.map(issue => {
-    const issueText = `${issue.key} ${issue.summary}`.toLowerCase();
-    let score = 0;
-    
-    // Check if issue key appears in text
-    if (searchText.includes(issue.key.toLowerCase())) {
-      score += 10;
-    }
-    
-    // Check for keyword matches in summary
-    const summaryWords = issue.summary.toLowerCase().split(/\s+/);
-    summaryWords.forEach(word => {
-      if (word.length > 3 && searchText.includes(word)) {
-        score += 1;
-      }
-    });
-    
-    return { issue, score };
-  });
-
-  // Sort by score and return best match if score is significant
-  scoredIssues.sort((a, b) => b.score - a.score);
-  
-  if (scoredIssues.length > 0 && scoredIssues[0].score >= 2) {
-    const bestMatch = scoredIssues[0].issue;
-    logger.info('Inferred task from context', {
-      taskKey: bestMatch.key,
-      score: scoredIssues[0].score,
-      windowTitle
-    });
-    
-    return {
-      key: bestMatch.key,
-      project: bestMatch.project || bestMatch.key.split('-')[0],
-      confidence: Math.min(scoredIssues[0].score / 10, 0.7) // Cap at 0.7 for heuristic matches
-    };
-  }
-
-  return null;
-}
-
-/**
  * Create worklog in Jira via Forge app
  */
 exports.createWorklog = async ({ userId, issueKey, timeSpentSeconds, startedAt }) => {
   try {
-    // This would call the Forge app's API to create a worklog
-    // For now, log the action
     logger.info('Worklog creation requested', {
       userId,
       issueKey,

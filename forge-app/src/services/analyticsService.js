@@ -23,17 +23,25 @@ export async function fetchTimeAnalytics(accountId) {
     throw new Error('Unable to get user information');
   }
 
-  // Fetch daily summary
-  const dailySummary = await supabaseRequest(
-    supabaseConfig,
-    `daily_time_summary?user_id=eq.${userId}&order=work_date.desc&limit=${MAX_DAILY_SUMMARY_DAYS}`
-  );
+  // Check if user is admin or project admin
+  const isAdmin = await isJiraAdmin();
+  const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS']);
+  const isProjectAdmin = permissions.permissions?.ADMINISTER_PROJECTS?.havePermission;
+  const canViewAllUsers = isAdmin || isProjectAdmin;
+
+  // Fetch daily summary - all users if admin, only current user otherwise
+  const dailySummaryQuery = canViewAllUsers
+    ? `daily_time_summary?order=work_date.desc&limit=${MAX_DAILY_SUMMARY_DAYS}`
+    : `daily_time_summary?user_id=eq.${userId}&order=work_date.desc&limit=${MAX_DAILY_SUMMARY_DAYS}`;
+
+  const dailySummary = await supabaseRequest(supabaseConfig, dailySummaryQuery);
 
   // Fetch weekly summary
-  const weeklySummary = await supabaseRequest(
-    supabaseConfig,
-    `weekly_time_summary?user_id=eq.${userId}&order=week_start.desc&limit=${MAX_WEEKLY_SUMMARY_WEEKS}`
-  );
+  const weeklySummaryQuery = canViewAllUsers
+    ? `weekly_time_summary?order=week_start.desc&limit=${MAX_WEEKLY_SUMMARY_WEEKS}`
+    : `weekly_time_summary?user_id=eq.${userId}&order=week_start.desc&limit=${MAX_WEEKLY_SUMMARY_WEEKS}`;
+
+  const weeklySummary = await supabaseRequest(supabaseConfig, weeklySummaryQuery);
 
   // Fetch project time summary
   const timeByProject = await supabaseRequest(
@@ -42,10 +50,11 @@ export async function fetchTimeAnalytics(accountId) {
   );
 
   // Fetch time by issue (from analysis_results)
-  const timeByIssue = await supabaseRequest(
-    supabaseConfig,
-    `analysis_results?user_id=eq.${userId}&is_active_work=eq.true&is_idle=eq.false&active_task_key=not.is.null&select=active_task_key,active_project_key,time_spent_seconds&order=created_at.desc`
-  );
+  const timeByIssueQuery = canViewAllUsers
+    ? `analysis_results?work_type=eq.office&active_task_key=not.is.null&select=active_task_key,active_project_key,time_spent_seconds&order=created_at.desc`
+    : `analysis_results?user_id=eq.${userId}&work_type=eq.office&active_task_key=not.is.null&select=active_task_key,active_project_key,time_spent_seconds&order=created_at.desc`;
+
+  const timeByIssue = await supabaseRequest(supabaseConfig, timeByIssueQuery);
 
   // Aggregate time by issue
   const issueAggregation = {};
@@ -65,11 +74,29 @@ export async function fetchTimeAnalytics(accountId) {
     .sort((a, b) => b.totalSeconds - a.totalSeconds)
     .slice(0, MAX_ISSUES_IN_ANALYTICS);
 
+  // Fetch all active users for team view (only if admin/project admin)
+  let allUsers = [];
+  if (canViewAllUsers) {
+    allUsers = await supabaseRequest(
+      supabaseConfig,
+      `users?is_active=eq.true&select=id,display_name,email`
+    );
+  } else {
+    // For regular users, only include themselves
+    const currentUser = await supabaseRequest(
+      supabaseConfig,
+      `users?id=eq.${userId}&select=id,display_name,email`
+    );
+    allUsers = currentUser || [];
+  }
+
   return {
     dailySummary: dailySummary || [],
     weeklySummary: weeklySummary || [],
     timeByProject: timeByProject || [],
-    timeByIssue: timeByIssueArray
+    timeByIssue: timeByIssueArray,
+    allUsers: allUsers || [],
+    canViewAllUsers // Pass this to frontend so it knows how to display
   };
 }
 /**
@@ -141,7 +168,7 @@ export async function fetchProjectAnalytics(accountId, projectKey) {
   // Fetch issues for this project
   const timeByIssue = await supabaseRequest(
     supabaseConfig,
-    `analysis_results?active_project_key=eq.${projectKey}&is_active_work=eq.true&select=active_task_key,time_spent_seconds,user_id&order=created_at.desc&limit=100`
+    `analysis_results?active_project_key=eq.${projectKey}&work_type=eq.office&select=active_task_key,time_spent_seconds,user_id&order=created_at.desc&limit=100`
   );
 
   return {
@@ -183,7 +210,7 @@ export async function fetchProjectTeamAnalytics(accountId, projectKey) {
   // Time by issue for this project
   const timeByIssue = await supabaseRequest(
     supabaseConfig,
-    `analysis_results?active_project_key=eq.${projectKey}&is_active_work=eq.true&is_idle=eq.false&active_task_key=not.is.null&select=active_task_key,time_spent_seconds,user_id&order=created_at.desc&limit=200`
+    `analysis_results?active_project_key=eq.${projectKey}&work_type=eq.office&active_task_key=not.is.null&select=active_task_key,time_spent_seconds,user_id&order=created_at.desc&limit=200`
   );
 
   // Aggregate time by issue (across all team members)

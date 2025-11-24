@@ -277,7 +277,11 @@ class BRDTimeTracker:
         # Tracking state
         self.running = False
         self.tracking_active = False
+        self.is_idle = False  # Idle state - when no activity for idle_timeout seconds
+        self.last_activity_time = time.time()  # Last mouse/keyboard activity
+        self.idle_timeout = 300  # 5 minutes idle timeout (in seconds)
         self._tracking_thread = None
+        self._activity_monitor_thread = None  # Activity monitoring thread
         self.screenshot_hash = None
         
         # Jira issue caching
@@ -766,9 +770,44 @@ class BRDTimeTracker:
             traceback.print_exc()
         
         return None
-    
+
+    def monitor_user_activity(self):
+        """Monitor mouse and keyboard activity for idle detection"""
+        try:
+            from pynput import mouse, keyboard
+        except ImportError:
+            print("[WARN] pynput not installed - idle detection disabled")
+            print("[INFO] Install with: pip install pynput")
+            return
+
+        def on_activity(*args, **kwargs):
+            """Called on any mouse or keyboard activity"""
+            self.last_activity_time = time.time()
+
+            # Resume tracking if idle
+            if self.is_idle:
+                print("[INFO] Activity detected, resuming tracking from idle")
+                self.is_idle = False
+                self.update_tray_icon()
+
+        # Start mouse listener
+        mouse_listener = mouse.Listener(
+            on_move=on_activity,
+            on_click=on_activity,
+            on_scroll=on_activity
+        )
+        mouse_listener.start()
+
+        # Start keyboard listener
+        keyboard_listener = keyboard.Listener(
+            on_press=on_activity
+        )
+        keyboard_listener.start()
+
+        print("[OK] Activity monitoring started (5-minute idle timeout)")
+
     def tracking_loop(self):
-        """Main tracking loop"""
+        """Main tracking loop with idle detection"""
         print("[OK] Tracking started")
         
         while self.running:
@@ -776,43 +815,72 @@ class BRDTimeTracker:
                 if not self.tracking_active:
                     time.sleep(1)
                     continue
-                
-                # Capture screenshot
+
+                # Check for idle timeout
+                idle_duration = time.time() - self.last_activity_time
+                if idle_duration > self.idle_timeout:
+                    if not self.is_idle:
+                        print(f"[INFO] No activity for {int(idle_duration)}s, entering idle mode (pausing screenshots)")
+                        self.is_idle = True
+                        self.update_tray_icon()
+
+                    # Skip screenshot capture when idle
+                    # Check every 5 seconds instead of full interval
+                    time.sleep(5)
+                    continue
+
+                # Resume from idle if needed (activity was detected)
+                if self.is_idle:
+                    print("[INFO] Resuming tracking from idle mode")
+                    self.is_idle = False
+                    self.update_tray_icon()
+
+                # Capture screenshot (only when not idle)
                 screenshot = self.capture_screenshot()
                 if screenshot:
                     # Get window info
                     window_info = self.get_active_window()
-                    
+
                     # Upload screenshot
                     self.upload_screenshot(screenshot, window_info)
-                
+
                 # Wait for next interval
                 time.sleep(self.capture_interval)
-                
+
             except Exception as e:
                 print(f"[ERROR] Tracking loop error: {e}")
                 traceback.print_exc()
                 time.sleep(5)
     
     def start_tracking(self):
-        """Start screenshot tracking"""
+        """Start screenshot tracking with idle detection"""
         if self.running:
             return
-        
+
         if not self.current_user_id:
             print("[WARN] Cannot start tracking - user not authenticated")
             return
-        
+
         self.running = True
         self.tracking_active = True
-        
+        self.is_idle = False
+        self.last_activity_time = time.time()  # Reset activity time
+
+        # Start tracking thread
         self._tracking_thread = threading.Thread(target=self.tracking_loop, daemon=True)
         self._tracking_thread.start()
-        
+
+        # Start activity monitoring thread (for idle detection)
+        if not self._activity_monitor_thread or not self._activity_monitor_thread.is_alive():
+            self._activity_monitor_thread = threading.Thread(
+                target=self.monitor_user_activity, daemon=True
+            )
+            self._activity_monitor_thread.start()
+
         # Update tray icon to green
         self.update_tray_icon()
-        
-        print("[OK] Tracking started")
+
+        print("[OK] Tracking started with idle detection")
     
     def stop_tracking(self):
         """Stop screenshot tracking"""
@@ -841,7 +909,8 @@ class BRDTimeTracker:
         color_map = {
             'red': (220, 53, 69, 255),      # Red - not logged in
             'blue': (0, 82, 204, 255),      # Atlassian blue - logged in, not tracking
-            'green': (40, 167, 69, 255)     # Green - logged in and tracking
+            'green': (40, 167, 69, 255),    # Green - logged in and actively tracking
+            'orange': (255, 152, 0, 255)    # Orange - logged in, tracking, but idle
         }
         
         icon_color = color_map.get(state, color_map['blue'])
@@ -876,10 +945,12 @@ class BRDTimeTracker:
         """Determine the current state for tray icon color"""
         if not self.current_user:
             return 'red'  # Not logged in
+        elif self.is_idle:
+            return 'orange'  # Logged in, tracking enabled, but idle (no activity)
         elif self.tracking_active:
-            return 'green'  # Logged in and tracking
+            return 'green'  # Logged in and actively tracking
         else:
-            return 'blue'  # Logged in but not tracking
+            return 'blue'  # Logged in but tracking not started
     
     def update_tray_icon(self):
         """Update the tray icon based on current state"""
@@ -937,7 +1008,8 @@ class BRDTimeTracker:
                 color_map = {
                     'red': '#DC3545',
                     'blue': '#0052CC',
-                    'green': '#28A745'
+                    'green': '#28A745',
+                    'orange': '#FF9800'
                 }
                 icon_image = PILImage.new('RGB', (16, 16), color=color_map.get(state, '#0052CC'))
                 menu = pystray.Menu(

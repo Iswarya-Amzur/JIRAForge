@@ -52,13 +52,11 @@ exports.analyzeScreenshot = async (req, res) => {
     // Download screenshot from Supabase Storage
     const imageBuffer = await supabaseService.downloadFile('screenshots', storage_path);
 
-    // Extract text from screenshot using OCR
-    const extractedText = await screenshotService.extractText(imageBuffer);
-
-    // Analyze the screenshot and determine Jira task
+    // Analyze the screenshot using GPT-4 Vision
+    // This will automatically fall back to OCR + AI if Vision fails
     // Pass user's assigned issues if provided (from webhook payload)
     const analysis = await screenshotService.analyzeActivity({
-      extractedText,
+      imageBuffer, // Pass image buffer directly for Vision analysis
       windowTitle: window_title,
       applicationName: application_name,
       timestamp,
@@ -74,10 +72,9 @@ exports.analyzeScreenshot = async (req, res) => {
       active_task_key: analysis.taskKey,
       active_project_key: analysis.projectKey,
       confidence_score: analysis.confidenceScore,
-      extracted_text: extractedText,
+      extracted_text: analysis.metadata?.extractedText || '', // OCR text if fallback was used
       detected_jira_keys: analysis.detectedJiraKeys,
-      is_active_work: analysis.isActiveWork,
-      is_idle: analysis.isIdle,
+      work_type: analysis.workType, // 'office' or 'non-office'
       ai_model_version: analysis.modelVersion,
       analysis_metadata: analysis.metadata
     });
@@ -85,8 +82,8 @@ exports.analyzeScreenshot = async (req, res) => {
     // Update screenshot status
     await supabaseService.updateScreenshotStatus(screenshot_id, 'analyzed');
 
-    // If configured, create worklog in Jira
-    if (analysis.taskKey && analysis.isActiveWork && process.env.AUTO_CREATE_WORKLOGS === 'true') {
+    // If configured, create worklog in Jira (only for office work)
+    if (analysis.taskKey && analysis.workType === 'office' && process.env.AUTO_CREATE_WORKLOGS === 'true') {
       try {
         await screenshotService.createWorklog({
           userId: user_id,
@@ -116,7 +113,7 @@ exports.analyzeScreenshot = async (req, res) => {
         task_key: analysis.taskKey,
         project_key: analysis.projectKey,
         confidence_score: analysis.confidenceScore,
-        is_active_work: analysis.isActiveWork
+        work_type: analysis.workType // 'office' or 'non-office'
       }
     });
 

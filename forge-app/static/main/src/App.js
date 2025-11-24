@@ -71,7 +71,8 @@ function StatusDropdown({ issue, onStatusChange, isUpdating, onLoadTransitions }
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState('time-analytics');
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [timesheetView, setTimesheetView] = useState('day'); // day, week, month
   const [timeData, setTimeData] = useState(null);
   const [screenshots, setScreenshots] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -114,9 +115,10 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'time-analytics') {
-      loadTimeAnalytics();
+    if (activeTab === 'dashboard') {
       loadActiveIssues();
+    } else if (activeTab === 'time-analytics') {
+      loadTimeAnalytics();
     } else if (activeTab === 'screenshots') {
       loadScreenshots();
     } else if (activeTab === 'team-analytics' && selectedProjectKey) {
@@ -415,19 +417,22 @@ function App() {
 
   return (
     <div className="App">
-      <header className="App-header">
-        <h1>BRD Automate & Time Tracker</h1>
-      </header>
-
       <div className="App-layout">
         <aside className="App-sidebar">
           <nav className="sidebar-nav">
             <button
+              className={`sidebar-item ${activeTab === 'dashboard' ? 'active' : ''}`}
+              onClick={() => setActiveTab('dashboard')}
+            >
+              <span className="sidebar-icon">📊</span>
+              <span className="sidebar-label">Dashboard</span>
+            </button>
+            <button
               className={`sidebar-item ${activeTab === 'time-analytics' ? 'active' : ''}`}
               onClick={() => setActiveTab('time-analytics')}
             >
-              <span className="sidebar-icon">📊</span>
-              <span className="sidebar-label">My Time Analytics</span>
+              <span className="sidebar-icon">📈</span>
+              <span className="sidebar-label">Time Analytics</span>
             </button>
             <button
               className={`sidebar-item ${activeTab === 'screenshots' ? 'active' : ''}`}
@@ -465,72 +470,9 @@ function App() {
         </aside>
 
         <main className="App-content">
-        {activeTab === 'time-analytics' && (
-          <div className="time-analytics">
-            <h2>Time Analytics Dashboard</h2>
-            {loading ? (
-              <p>Loading analytics...</p>
-            ) : error ? (
-              <p className="error">Error: {error}</p>
-            ) : (
-              <div className="analytics-grid">
-                <div className="analytics-card">
-                  <h3>Today's Total</h3>
-                  {(() => {
-                    const today = new Date().toISOString().split('T')[0];
-                    // Sum ALL entries for today (multiple tasks/projects)
-                    const totalSeconds = timeData?.dailySummary?.filter(day =>
-                      day.work_date?.startsWith(today)
-                    ).reduce((sum, day) => sum + (day.total_seconds || 0), 0) || 0;
-                    return (
-                      <div className="cumulative-stat">
-                        <div className="stat-value">{formatTime(totalSeconds)}</div>
-                        <div className="stat-label">Time tracked today</div>
-                      </div>
-                    );
-                  })()}
-                </div>
-                <div className="analytics-card">
-                  <h3>This Week's Total</h3>
-                  {(() => {
-                    // Get current week start
-                    const now = new Date();
-                    const currentWeekStart = new Date(now);
-                    currentWeekStart.setDate(now.getDate() - now.getDay()); // Sunday
-                    currentWeekStart.setHours(0, 0, 0, 0);
-
-                    // Sum ALL entries for current week (multiple tasks/projects)
-                    const totalSeconds = timeData?.weeklySummary?.filter(week => {
-                      const weekStart = new Date(week.week_start);
-                      return weekStart >= currentWeekStart;
-                    }).reduce((sum, week) => sum + (week.total_seconds || 0), 0) || 0;
-
-                    return (
-                      <div className="cumulative-stat">
-                        <div className="stat-value">{formatTime(totalSeconds)}</div>
-                        <div className="stat-label">Time tracked this week</div>
-                      </div>
-                    );
-                  })()}
-                </div>
-                <div className="analytics-card">
-                  <h3>All Projects Total</h3>
-                  {(() => {
-                    const totalSeconds = timeData?.timeByProject?.reduce(
-                      (sum, project) => sum + (project.total_seconds || 0),
-                      0
-                    ) || 0;
-                    const projectCount = timeData?.timeByProject?.length || 0;
-                    return (
-                      <div className="cumulative-stat">
-                        <div className="stat-value">{formatTime(totalSeconds)}</div>
-                        <div className="stat-label">{projectCount} {projectCount === 1 ? 'project' : 'projects'}</div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
-            )}
+        {activeTab === 'dashboard' && (
+          <div className="dashboard">
+            <h2>Dashboard</h2>
 
             {/* My Focus Widget - Active Issues with Time Tracking */}
             <div className="my-focus-widget">
@@ -703,6 +645,455 @@ function App() {
                     <p className="empty-state">No {issueFilter !== 'all' ? issueFilter.replace('-', ' ') : ''} issues found. Start working on issues to see them here!</p>
                   )}
                 </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'time-analytics' && (
+          <div className="time-analytics">
+            <h2>Time Analytics Dashboard</h2>
+
+            {/* Summary Cards */}
+            <div className="analytics-summary-cards">
+              <div className="analytics-card cumulative-card">
+                <h3>Today's Total</h3>
+                {loading ? (
+                  <p>Loading...</p>
+                ) : (
+                  <div className="cumulative-stat">
+                    <div className="stat-value">
+                      {(() => {
+                        const today = new Date().toISOString().split('T')[0];
+                        const totalSeconds = timeData?.dailySummary?.filter(day =>
+                          day.work_date?.startsWith(today)
+                        ).reduce((sum, day) => sum + (day.total_seconds || 0), 0) || 0;
+                        return formatTime(totalSeconds);
+                      })()}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="analytics-card cumulative-card">
+                <h3>This Week's Total</h3>
+                {loading ? (
+                  <p>Loading...</p>
+                ) : (
+                  <div className="cumulative-stat">
+                    <div className="stat-value">
+                      {(() => {
+                        const today = new Date();
+                        const startOfWeek = new Date(today);
+                        startOfWeek.setDate(today.getDate() - today.getDay());
+                        const startStr = startOfWeek.toISOString().split('T')[0];
+
+                        // Use dailySummary and filter for all days in current week
+                        const totalSeconds = timeData?.dailySummary?.filter(day =>
+                          day.work_date >= startStr
+                        ).reduce((sum, day) => sum + (day.total_seconds || 0), 0) || 0;
+                        return formatTime(totalSeconds);
+                      })()}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="analytics-card cumulative-card">
+                <h3>This Month's Total</h3>
+                {loading ? (
+                  <p>Loading...</p>
+                ) : (
+                  <div className="cumulative-stat">
+                    <div className="stat-value">
+                      {(() => {
+                        const today = new Date();
+                        const currentMonth = today.toISOString().slice(0, 7); // YYYY-MM
+
+                        // Use dailySummary and filter for all days in current month
+                        const totalSeconds = timeData?.dailySummary?.filter(day =>
+                          day.work_date?.startsWith(currentMonth)
+                        ).reduce((sum, day) => sum + (day.total_seconds || 0), 0) || 0;
+                        return formatTime(totalSeconds);
+                      })()}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Timesheet View Tabs */}
+            <div className="timesheet-tabs">
+              <button
+                className={`timesheet-tab ${timesheetView === 'day' ? 'active' : ''}`}
+                onClick={() => setTimesheetView('day')}
+              >
+                Day
+              </button>
+              <button
+                className={`timesheet-tab ${timesheetView === 'week' ? 'active' : ''}`}
+                onClick={() => setTimesheetView('week')}
+              >
+                Week
+              </button>
+              <button
+                className={`timesheet-tab ${timesheetView === 'month' ? 'active' : ''}`}
+                onClick={() => setTimesheetView('month')}
+              >
+                Month
+              </button>
+            </div>
+
+            {/* Timesheet Content */}
+            <div className="timesheet-content">
+              {timesheetView === 'day' && (
+                <div className="timesheet-day-view">
+                  <div className="timesheet-header">
+                    <h3>{timeData?.canViewAllUsers ? 'Daily Timesheet' : 'My Daily Timesheet'} - {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</h3>
+                  </div>
+
+                  {loading ? (
+                    <p>Loading...</p>
+                  ) : (
+                    <div className="team-members-list">
+                      {(() => {
+                        const today = new Date().toISOString().split('T')[0];
+                        const todayData = timeData?.dailySummary?.filter(day =>
+                          day.work_date?.startsWith(today)
+                        ) || [];
+
+                        // Initialize all users with 0 time
+                        const tasksByUser = {};
+
+                        // First, add all active users
+                        timeData?.allUsers?.forEach(user => {
+                          tasksByUser[user.id] = {
+                            userId: user.id,
+                            displayName: user.display_name || user.email || 'User',
+                            tasks: [],
+                            totalSeconds: 0
+                          };
+                        });
+
+                        // Then, populate tasks for users who have tracked time today
+                        todayData.forEach(item => {
+                          const userId = item.user_id || 'current_user';
+                          if (!tasksByUser[userId]) {
+                            // User exists in time data but not in allUsers list
+                            tasksByUser[userId] = {
+                              userId,
+                              displayName: item.user_display_name || 'User',
+                              tasks: [],
+                              totalSeconds: 0
+                            };
+                          }
+                          tasksByUser[userId].tasks.push(item);
+                          tasksByUser[userId].totalSeconds += item.total_seconds || 0;
+                        });
+
+                        const users = Object.values(tasksByUser).sort((a, b) => b.totalSeconds - a.totalSeconds);
+
+                        if (users.length === 0) {
+                          return <p className="empty-state">No users found</p>;
+                        }
+
+                        return users.map((user, idx) => (
+                          <div key={idx} className="team-member-card">
+                            <div className="member-header">
+                              <div className="member-avatar">
+                                {(user.displayName || 'U').charAt(0).toUpperCase()}
+                              </div>
+                              <div className="member-info">
+                                <span className="member-name">{user.displayName}</span>
+                                <span className="member-total">{formatTime(user.totalSeconds)}</span>
+                              </div>
+                            </div>
+                            {user.tasks.length > 0 && (
+                              <div className="member-tasks">
+                                {user.tasks.map((task, taskIdx) => (
+                                  <div key={taskIdx} className="task-item">
+                                    <span className="task-key">{task.active_task_key || 'No Task'}</span>
+                                    <span className="task-time">{formatTime(task.total_seconds)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {timesheetView === 'week' && (
+                <div className="timesheet-week-view">
+                  <div className="timesheet-header">
+                    <h3>{timeData?.canViewAllUsers ? 'Weekly Timesheet' : 'My Weekly Timesheet'} - Week of {(() => {
+                      const today = new Date();
+                      const startOfWeek = new Date(today);
+                      startOfWeek.setDate(today.getDate() - today.getDay());
+                      return startOfWeek.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    })()}</h3>
+                  </div>
+
+                  {loading ? (
+                    <p>Loading...</p>
+                  ) : (
+                    <div className="week-table-container">
+                      <table className="week-table">
+                        <thead>
+                          <tr>
+                            <th>{timeData?.canViewAllUsers ? 'Team Member' : 'User'}</th>
+                            <th>Mon</th>
+                            <th>Tue</th>
+                            <th>Wed</th>
+                            <th>Thu</th>
+                            <th>Fri</th>
+                            <th>Sat</th>
+                            <th>Sun</th>
+                            <th>Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            // Get current week date range
+                            const today = new Date();
+                            const startOfWeek = new Date(today);
+                            startOfWeek.setDate(today.getDate() - today.getDay());
+
+                            // Create array of this week's dates
+                            const weekDates = Array.from({ length: 7 }, (_, i) => {
+                              const date = new Date(startOfWeek);
+                              date.setDate(startOfWeek.getDate() + i);
+                              return date.toISOString().split('T')[0];
+                            });
+
+                            // Initialize all users with 0 time
+                            const userTimeByDay = {};
+
+                            // First, add all active users with 0 time
+                            timeData?.allUsers?.forEach(user => {
+                              userTimeByDay[user.id] = {
+                                userId: user.id,
+                                name: user.display_name || user.email || 'User',
+                                days: Array(7).fill(0),
+                                total: 0
+                              };
+                            });
+
+                            // Then, populate time data for users who have tracked time
+                            timeData?.dailySummary?.forEach(day => {
+                              if (weekDates.includes(day.work_date)) {
+                                const userId = day.user_id || 'current_user';
+                                if (!userTimeByDay[userId]) {
+                                  // User exists in time data but not in allUsers list (shouldn't happen)
+                                  userTimeByDay[userId] = {
+                                    userId,
+                                    name: day.user_display_name || 'User',
+                                    days: Array(7).fill(0),
+                                    total: 0
+                                  };
+                                }
+                                const dayIndex = weekDates.indexOf(day.work_date);
+                                userTimeByDay[userId].days[dayIndex] += day.total_seconds || 0;
+                                userTimeByDay[userId].total += day.total_seconds || 0;
+                              }
+                            });
+
+                            const users = Object.values(userTimeByDay).sort((a, b) => b.total - a.total);
+
+                            if (users.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan="9" className="empty-state">No users found</td>
+                                </tr>
+                              );
+                            }
+
+                            return (
+                              <>
+                                {users.map((user, idx) => (
+                                  <tr key={idx}>
+                                    <td className="member-name-cell">
+                                      <div className="member-avatar-small">
+                                        {user.name.charAt(0)}
+                                      </div>
+                                      {user.name}
+                                    </td>
+                                    {user.days.map((seconds, dayIdx) => (
+                                      <td key={dayIdx} className="time-cell">
+                                        {seconds > 0 ? formatTime(seconds) : '-'}
+                                      </td>
+                                    ))}
+                                    <td className="total-cell">{formatTime(user.total)}</td>
+                                  </tr>
+                                ))}
+                                {timeData?.canViewAllUsers && users.length > 1 && (
+                                  <tr className="totals-row">
+                                    <td><strong>Daily Totals</strong></td>
+                                    {Array.from({ length: 7 }, (_, dayIdx) => {
+                                      const dayTotal = users.reduce((sum, user) => sum + user.days[dayIdx], 0);
+                                      return (
+                                        <td key={dayIdx} className="total-cell">
+                                          {dayTotal > 0 ? formatTime(dayTotal) : '-'}
+                                        </td>
+                                      );
+                                    })}
+                                    <td className="grand-total-cell">
+                                      {formatTime(users.reduce((sum, user) => sum + user.total, 0))}
+                                    </td>
+                                  </tr>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {timesheetView === 'month' && (
+                <div className="timesheet-month-view">
+                  <div className="timesheet-header">
+                    <h3>{timeData?.canViewAllUsers ? 'Monthly Timesheet' : 'My Monthly Timesheet'} - {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
+                  </div>
+
+                  {loading ? (
+                    <p>Loading...</p>
+                  ) : (
+                    <div className="month-layout">
+                      <div className="month-calendar">
+                        <div className="calendar-grid">
+                          <div className="calendar-header">
+                            <div className="day-name">Sun</div>
+                            <div className="day-name">Mon</div>
+                            <div className="day-name">Tue</div>
+                            <div className="day-name">Wed</div>
+                            <div className="day-name">Thu</div>
+                            <div className="day-name">Fri</div>
+                            <div className="day-name">Sat</div>
+                          </div>
+                          <div className="calendar-days">
+                            {(() => {
+                              const today = new Date();
+                              const year = today.getFullYear();
+                              const month = today.getMonth();
+                              const firstDay = new Date(year, month, 1).getDay();
+                              const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+                              // Create time map by date
+                              const timeByDate = {};
+                              timeData?.dailySummary?.forEach(day => {
+                                const date = new Date(day.work_date);
+                                if (date.getMonth() === month && date.getFullYear() === year) {
+                                  const dayNum = date.getDate();
+                                  timeByDate[dayNum] = (timeByDate[dayNum] || 0) + (day.total_seconds || 0);
+                                }
+                              });
+
+                              const cells = [];
+
+                              // Empty cells before first day
+                              for (let i = 0; i < firstDay; i++) {
+                                cells.push(<div key={`empty-${i}`} className="calendar-day empty"></div>);
+                              }
+
+                              // Days of the month
+                              for (let day = 1; day <= daysInMonth; day++) {
+                                const isToday = day === today.getDate();
+                                const timeTracked = timeByDate[day] || 0;
+
+                                cells.push(
+                                  <div key={day} className={`calendar-day ${isToday ? 'today' : ''} ${timeTracked > 0 ? 'has-time' : ''}`}>
+                                    <div className="day-number">{day}</div>
+                                    {timeTracked > 0 && (
+                                      <div className="day-time">{formatTime(timeTracked)}</div>
+                                    )}
+                                  </div>
+                                );
+                              }
+
+                              return cells;
+                            })()}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Team Summary - Only visible to Admins and Project Admins */}
+                      {(userPermissions.isJiraAdmin || userPermissions.projectAdminProjects?.length > 0) && (
+                        <div className="team-summary">
+                          <h4>Team Summary</h4>
+                        <div className="team-summary-list">
+                          {(() => {
+                            const today = new Date();
+                            const currentMonth = today.toISOString().slice(0, 7);
+
+                            // Initialize all users with 0 time
+                            const userMonthlyTime = {};
+
+                            // First, add all active users
+                            timeData?.allUsers?.forEach(user => {
+                              userMonthlyTime[user.id] = {
+                                userId: user.id,
+                                name: user.display_name || user.email || 'User',
+                                seconds: 0
+                              };
+                            });
+
+                            // Then, populate time data for users who have tracked time this month
+                            timeData?.dailySummary?.forEach(day => {
+                              if (day.work_date?.startsWith(currentMonth)) {
+                                const userId = day.user_id || 'current_user';
+                                if (!userMonthlyTime[userId]) {
+                                  // User exists in time data but not in allUsers list
+                                  userMonthlyTime[userId] = {
+                                    userId,
+                                    name: day.user_display_name || 'User',
+                                    seconds: 0
+                                  };
+                                }
+                                userMonthlyTime[userId].seconds += day.total_seconds || 0;
+                              }
+                            });
+
+                            const totalSeconds = Object.values(userMonthlyTime).reduce((sum, u) => sum + u.seconds, 0);
+                            const users = Object.values(userMonthlyTime)
+                              .map(user => ({
+                                userId: user.userId,
+                                name: user.name,
+                                seconds: user.seconds,
+                                percentage: totalSeconds > 0 ? Math.round((user.seconds / totalSeconds) * 100) : 0
+                              }))
+                              .sort((a, b) => b.seconds - a.seconds);
+
+                            if (users.length === 0) {
+                              return <p className="empty-state">No users found</p>;
+                            }
+
+                            return users.map((user, idx) => (
+                              <div key={idx} className="team-summary-item">
+                                <div className="summary-member">
+                                  <div className="member-avatar-small">
+                                    {user.name.charAt(0)}
+                                  </div>
+                                  <div className="summary-info">
+                                    <div className="summary-name">{user.name}</div>
+                                    <div className="summary-time">{formatTime(user.seconds)}</div>
+                                  </div>
+                                </div>
+                                <div className="summary-percentage">{user.percentage}%</div>
+                              </div>
+                            ));
+                          })()}
+                        </div>
+                      </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>
