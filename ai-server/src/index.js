@@ -8,11 +8,12 @@ const screenshotController = require('./controllers/screenshot-controller');
 const brdController = require('./controllers/brd-controller');
 const authMiddleware = require('./middleware/auth');
 const logger = require('./utils/logger');
+const pollingService = require('./services/polling-service');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Trust proxy - required for localtunnel/ngrok
+// Trust proxy - required for ngrok tunnel
 app.set('trust proxy', 1);
 
 // Middleware
@@ -71,15 +72,21 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   logger.info(`AI Analysis Server running on port ${PORT}`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+
+  // Start polling service to process pending screenshots
+  pollingService.start();
+  logger.info('Polling service started - will process pending screenshots automatically');
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
   logger.info('SIGTERM received, shutting down gracefully');
+  pollingService.stop();
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   logger.info('SIGINT received, shutting down gracefully');
+  pollingService.stop();
   process.exit(0);
 });

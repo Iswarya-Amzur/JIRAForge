@@ -41,13 +41,8 @@ try:
 except ImportError:
     WIN32_AVAILABLE = False
 
-# OpenAI for enhanced screenshot analysis (optional)
-try:
-    from openai import OpenAI
-    OPENAI_AVAILABLE = True
-except ImportError:
-    OPENAI_AVAILABLE = False
-    OpenAI = None
+# Note: AI analysis is now handled by the separate AI server
+# Desktop app only captures and uploads screenshots to Supabase
 
 # Load environment variables
 load_dotenv()
@@ -290,16 +285,8 @@ class BRDTimeTracker:
         self.issues_cache_ttl = 300  # 5 minutes cache TTL
         self.jira_cloud_id = None  # Cached Jira cloud ID
         
-        # OpenAI (optional)
-        openai_key = get_env_var('OPENAI_API_KEY')
-        use_ai = get_env_var('USE_AI_FOR_SCREENSHOTS', 'false').lower() == 'true'
-        
-        if OPENAI_AVAILABLE and openai_key and use_ai:
-            self.openai_client = OpenAI(api_key=openai_key)
-            self.openai_enabled = True
-        else:
-            self.openai_client = None
-            self.openai_enabled = False
+        # AI analysis is handled by the separate AI server
+        # Desktop app only captures and uploads screenshots
         
         # Flask app
         self.app = Flask(__name__)

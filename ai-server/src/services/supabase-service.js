@@ -183,12 +183,78 @@ exports.getUserJiraIssues = async (userId, atlassianAccountId = null) => {
     // If we have a Forge app URL configured, we could call it here
     // But since Forge apps use resolvers, we'll handle this in the controller
     // which can call the Forge app's resolver via the webhook payload
-    
+
     // For now, return empty array - the controller will fetch via Forge
     logger.debug('getUserJiraIssues called - will be fetched by controller', { userId });
     return [];
   } catch (error) {
     logger.error('Error fetching user Jira issues:', error);
+    return [];
+  }
+};
+
+/**
+ * Fetch pending screenshots from Supabase
+ * @param {number} limit - Maximum number of screenshots to fetch
+ * @returns {Array} Array of pending screenshots
+ */
+exports.getPendingScreenshots = async (limit = 10) => {
+  try {
+    const { data, error } = await supabase
+      .from('screenshots')
+      .select('*')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true })
+      .limit(limit);
+
+    if (error) {
+      throw error;
+    }
+
+    logger.info(`Fetched ${data?.length || 0} pending screenshots`);
+    return data || [];
+  } catch (error) {
+    // Check if this is a network error (expected in corporate environments)
+    const errorMessage = error.message || '';
+    const isNetworkError = 
+      errorMessage.includes('ENOTFOUND') ||
+      errorMessage.includes('ECONNREFUSED') ||
+      errorMessage.includes('ETIMEDOUT') ||
+      errorMessage.includes('timeout') ||
+      errorMessage.includes('certificate') ||
+      errorMessage.includes('fetch failed');
+
+    if (isNetworkError) {
+      // Re-throw network errors so polling service can handle them gracefully
+      // Don't log here - let the polling service decide log level
+      throw error;
+    } else {
+      // Log non-network errors
+      logger.error('Error fetching pending screenshots:', error);
+      throw new Error(`Failed to fetch pending screenshots: ${error.message}`);
+    }
+  }
+};
+
+/**
+ * Fetch user's cached Jira issues
+ * @param {string} userId - User ID
+ * @returns {Array} Array of cached Jira issues
+ */
+exports.getUserCachedIssues = async (userId) => {
+  try {
+    const { data, error } = await supabase
+      .from('user_jira_issues_cache')
+      .select('*')
+      .eq('user_id', userId);
+
+    if (error) {
+      throw error;
+    }
+
+    return data || [];
+  } catch (error) {
+    logger.error('Error fetching user cached issues:', error);
     return [];
   }
 };
