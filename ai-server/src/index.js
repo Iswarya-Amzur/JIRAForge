@@ -48,6 +48,25 @@ app.get('/health', (req, res) => {
 // Routes
 app.post('/api/analyze-screenshot', authMiddleware, screenshotController.analyzeScreenshot);
 app.post('/api/process-brd', authMiddleware, brdController.processBRD);
+app.post('/api/cluster-unassigned-work', async (req, res, next) => {
+  try {
+    const { sessions, userIssues } = req.body;
+
+    if (!sessions || !Array.isArray(sessions)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Sessions array required'
+      });
+    }
+
+    const clusteringService = require('./services/clustering-service');
+    const result = await clusteringService.clusterUnassignedWork(sessions, userIssues || []);
+
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Error handling middleware
 app.use((err, req, res, next) => {

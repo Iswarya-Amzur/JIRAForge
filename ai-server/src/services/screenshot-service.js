@@ -37,7 +37,10 @@ exports.analyzeActivity = async ({ imageBuffer, windowTitle, applicationName, ti
           taskKey: visionAnalysis.taskKey,
           workType: visionAnalysis.workType,
           confidence: visionAnalysis.confidenceScore,
-          usedAssignedIssues: userAssignedIssues.length > 0
+          usedAssignedIssues: userAssignedIssues.length > 0,
+          assignedIssuesCount: userAssignedIssues.length,
+          assignedIssueKeys: userAssignedIssues.map(i => i.key).join(', '),
+          reasoning: visionAnalysis.reasoning || 'No reasoning provided'
         });
       } catch (visionError) {
         logger.warn('GPT-4 Vision analysis failed, falling back to OCR + AI', { error: visionError.message });
@@ -148,7 +151,25 @@ async function analyzeWithVision({ imageBuffer, windowTitle, applicationName, us
   if (userAssignedIssues && userAssignedIssues.length > 0) {
     assignedIssuesText = userAssignedIssues
       .slice(0, 20) // Limit to first 20 issues to avoid token limits
-      .map(issue => `- ${issue.key}: ${issue.summary} (Status: ${issue.status})`)
+      .map(issue => {
+        let issueText = `- ${issue.key}: ${issue.summary} (Status: ${issue.status})`;
+
+        // Add description if available (provides important context)
+        if (issue.description && issue.description.trim()) {
+          // Truncate long descriptions to save tokens
+          const desc = issue.description.length > 200
+            ? issue.description.substring(0, 200) + '...'
+            : issue.description;
+          issueText += `\n  Description: ${desc}`;
+        }
+
+        // Add labels if available (helps with categorization)
+        if (issue.labels && issue.labels.length > 0) {
+          issueText += `\n  Labels: ${issue.labels.join(', ')}`;
+        }
+
+        return issueText;
+      })
       .join('\n');
   }
 
@@ -182,15 +203,23 @@ Analyze the screenshot and determine:
 2. **Task Detection:**
    - Look for Jira issue keys in the screenshot (format: PROJECT-123)
    - Match the screenshot content to the user's assigned issues
-   - Consider: window content, visible text, code comments, browser tabs, etc.
+   - Consider: window content, visible text, code comments, browser tabs, file names, visible issue keys, etc.
    - ONLY return task keys that are in the "User's Assigned Issues" list above
-   - If you can't match to an assigned issue, return null for taskKey
+   - **Matching Rules:**
+     * If you see a Jira key (e.g., "SCRUM-5") visible in the screenshot, use that key
+     * If the screenshot content (code, text, file names) clearly relates to an issue's summary/description, match to that issue
+     * If working in a code editor and the code/file names match an issue's context, use that issue
+     * If you cannot determine which specific task the user is working on, return null
+   - **Return null when:**
+     * No Jira key is visible AND the work doesn't clearly match any specific issue
+     * The work is too generic to associate with a particular task
+     * You cannot confidently determine which assigned issue is being worked on
 
 3. **Confidence Score:**
    - High (0.9+): Clear Jira key visible or exact match to issue summary
-   - Medium (0.6-0.8): Good contextual match (e.g., code matches issue description)
-   - Low (0.3-0.5): Weak match or just general work activity
-   - Very Low (0.0-0.2): No clear task association
+   - Medium (0.6-0.8): Good contextual match (e.g., code matches issue description, working in relevant app)
+   - Low (0.4-0.5): Weak match but reasonable assumption (e.g., coding with only 1-2 assigned issues)
+   - Very Low (0.0-0.3): No clear task association or multiple unrelated tasks
 
 IMPORTANT RULES:
 - Track EVERYTHING - don't skip any activities
@@ -199,7 +228,12 @@ IMPORTANT RULES:
 - Entertainment YouTube = 'non-office'
 - Be smart about context - coding tutorial = office, cat videos = non-office
 - ONLY return task keys from the assigned issues list
-- If screenshot shows work but doesn't match any assigned issue, set taskKey to null
+- **Task Matching:**
+  * Match when you can see a Jira key in the screenshot OR when the work clearly relates to a specific issue
+  * If you cannot determine which specific task is being worked on, return null (this is correct behavior)
+  * Do NOT guess or force a match - only match when there's clear evidence
+  * When multiple issues could match, choose based on visible context (visible keys, file names, code content)
+- When in doubt, return null - it's better to have no task than an incorrect one
 
 Return ONLY valid JSON in this exact format:
 {
@@ -307,7 +341,25 @@ async function analyzeWithAI({ extractedText, windowTitle, applicationName, dete
   if (userAssignedIssues && userAssignedIssues.length > 0) {
     assignedIssuesText = userAssignedIssues
       .slice(0, 20)
-      .map(issue => `- ${issue.key}: ${issue.summary} (Status: ${issue.status})`)
+      .map(issue => {
+        let issueText = `- ${issue.key}: ${issue.summary} (Status: ${issue.status})`;
+
+        // Add description if available (provides important context)
+        if (issue.description && issue.description.trim()) {
+          // Truncate long descriptions to save tokens
+          const desc = issue.description.length > 200
+            ? issue.description.substring(0, 200) + '...'
+            : issue.description;
+          issueText += `\n  Description: ${desc}`;
+        }
+
+        // Add labels if available (helps with categorization)
+        if (issue.labels && issue.labels.length > 0) {
+          issueText += `\n  Labels: ${issue.labels.join(', ')}`;
+        }
+
+        return issueText;
+      })
       .join('\n');
   }
 

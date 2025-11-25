@@ -258,3 +258,123 @@ exports.getUserCachedIssues = async (userId) => {
     return [];
   }
 };
+
+/**
+ * Fetch unassigned work sessions for a user
+ * @param {string} userId - User ID
+ * @param {Object} options - Query options (limit, offset, dateFrom, dateTo)
+ * @returns {Array} Array of unassigned work sessions with screenshot data
+ */
+exports.getUnassignedWork = async (userId, options = {}) => {
+  try {
+    const { limit = 100, offset = 0, dateFrom = null, dateTo = null } = options;
+
+    let query = supabase
+      .from('analysis_results')
+      .select(`
+        *,
+        screenshots (
+          id,
+          user_id,
+          window_title,
+          application_name,
+          timestamp,
+          thumbnail_url,
+          storage_path
+        )
+      `)
+      .eq('user_id', userId)
+      .is('active_task_key', null)
+      .order('created_at', { ascending: false })
+      .limit(limit)
+      .range(offset, offset + limit - 1);
+
+    // Add date filters if provided
+    if (dateFrom) {
+      query = query.gte('created_at', dateFrom);
+    }
+    if (dateTo) {
+      query = query.lte('created_at', dateTo);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw error;
+    }
+
+    // Flatten the data structure for easier use
+    const flattenedData = (data || []).map(result => ({
+      ...result,
+      screenshot_id: result.screenshots?.id || result.screenshot_id,
+      window_title: result.screenshots?.window_title,
+      application_name: result.screenshots?.application_name,
+      timestamp: result.screenshots?.timestamp || result.created_at,
+      thumbnail_url: result.screenshots?.thumbnail_url,
+      storage_path: result.screenshots?.storage_path
+    }));
+
+    logger.info(`Fetched ${flattenedData.length} unassigned work sessions for user ${userId}`);
+    return flattenedData;
+
+  } catch (error) {
+    logger.error('Error fetching unassigned work:', error);
+    return [];
+  }
+};
+
+/**
+ * Assign a group of sessions to a Jira issue
+ * @param {Array} sessionIds - Array of screenshot IDs
+ * @param {string} issueKey - Jira issue key
+ * @param {Object} metadata - Additional metadata about the assignment
+ * @returns {Promise<Object>} Assignment result
+ */
+exports.assignWorkGroup = async (sessionIds, issueKey, metadata = {}) => {
+  try {
+    const { error } = await supabase
+      .from('analysis_results')
+      .update({
+        active_task_key: issueKey,
+        manually_assigned: true,
+        assignment_group_id: metadata.groupId || null,
+        updated_at: new Date().toISOString()
+      })
+      .in('screenshot_id', sessionIds);
+
+    if (error) {
+      throw error;
+    }
+
+    logger.info(`Assigned ${sessionIds.length} sessions to ${issueKey}`);
+    return { success: true, assigned_count: sessionIds.length };
+
+  } catch (error) {
+    logger.error('Error assigning work group:', error);
+    throw new Error(`Failed to assign work group: ${error.message}`);
+  }
+};
+
+/**
+ * Get count of unassigned work sessions
+ * @param {string} userId - User ID
+ * @returns {Promise<number>} Count of unassigned sessions
+ */
+exports.getUnassignedWorkCount = async (userId) => {
+  try {
+    const { count, error } = await supabase
+      .from('analysis_results')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .is('active_task_key', null);
+
+    if (error) {
+      throw error;
+    }
+
+    return count || 0;
+  } catch (error) {
+    logger.error('Error fetching unassigned work count:', error);
+    return 0;
+  }
+};

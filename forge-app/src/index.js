@@ -12,6 +12,7 @@ import { registerSettingsResolvers } from './resolvers/settingsResolvers.js';
 import { registerIssueResolvers } from './resolvers/issueResolvers.js';
 import { registerPermissionsResolvers } from './resolvers/permissionsResolvers.js';
 import { registerUserResolvers } from './resolvers/userResolvers.js';
+import { registerUnassignedWorkResolvers } from './resolvers/unassignedWorkResolvers.js';
 
 // Create resolver instance
 const resolver = new Resolver();
@@ -25,6 +26,7 @@ registerSettingsResolvers(resolver);
 registerIssueResolvers(resolver);
 registerPermissionsResolvers(resolver);
 registerUserResolvers(resolver);
+registerUnassignedWorkResolvers(resolver);
 
 // Export handler for Forge
 export const handler = resolver.getDefinitions();

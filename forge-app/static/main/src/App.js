@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 import './App.css';
+import UnassignedWork from './components/UnassignedWork';
 
 // Status Dropdown Component
 function StatusDropdown({ issue, onStatusChange, isUpdating, onLoadTransitions }) {
@@ -72,6 +73,7 @@ function StatusDropdown({ issue, onStatusChange, isUpdating, onLoadTransitions }
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [timesheetView, setTimesheetView] = useState('day'); // day, week, month
   const [timeData, setTimeData] = useState(null);
   const [screenshots, setScreenshots] = useState([]);
@@ -417,54 +419,89 @@ function App() {
 
   return (
     <div className="App">
+      <div className="App-top-bar">
+        <div className="App-top-bar-content">
+          <span className="App-brand">BRD & Time Tracker</span>
+          <span className="App-brand-badge">DEV</span>
+        </div>
+      </div>
       <div className="App-layout">
-        <aside className="App-sidebar">
+        <aside className={`App-sidebar ${sidebarOpen ? '' : 'collapsed'}`}>
+          <div className="sidebar-header">
+            <button
+              className={`sidebar-toggle ${sidebarOpen ? 'open' : ''}`}
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+              aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+            >
+              <span className="hamburger-line"></span>
+              <span className="hamburger-line"></span>
+              <span className="hamburger-line"></span>
+            </button>
+            {sidebarOpen && (
+              <h3 className="sidebar-title">BRD & Time Tracker</h3>
+            )}
+          </div>
           <nav className="sidebar-nav">
             <button
               className={`sidebar-item ${activeTab === 'dashboard' ? 'active' : ''}`}
               onClick={() => setActiveTab('dashboard')}
+              title="Dashboard"
             >
               <span className="sidebar-icon">📊</span>
-              <span className="sidebar-label">Dashboard</span>
+              {sidebarOpen && <span className="sidebar-label">Dashboard</span>}
             </button>
             <button
               className={`sidebar-item ${activeTab === 'time-analytics' ? 'active' : ''}`}
               onClick={() => setActiveTab('time-analytics')}
+              title="Time Analytics"
             >
               <span className="sidebar-icon">📈</span>
-              <span className="sidebar-label">Time Analytics</span>
+              {sidebarOpen && <span className="sidebar-label">Time Analytics</span>}
             </button>
             <button
               className={`sidebar-item ${activeTab === 'screenshots' ? 'active' : ''}`}
               onClick={() => setActiveTab('screenshots')}
+              title="My Screenshots"
             >
               <span className="sidebar-icon">🖼️</span>
-              <span className="sidebar-label">My Screenshots</span>
+              {sidebarOpen && <span className="sidebar-label">My Screenshots</span>}
+            </button>
+            <button
+              className={`sidebar-item ${activeTab === 'unassigned-work' ? 'active' : ''}`}
+              onClick={() => setActiveTab('unassigned-work')}
+              title="Unassigned Work"
+            >
+              <span className="sidebar-icon">⏰</span>
+              {sidebarOpen && <span className="sidebar-label">Unassigned Work</span>}
             </button>
             {userPermissions.projectAdminProjects?.length > 0 && (
               <button
                 className={`sidebar-item ${activeTab === 'team-analytics' ? 'active' : ''}`}
                 onClick={() => setActiveTab('team-analytics')}
+                title="Team Analytics"
               >
                 <span className="sidebar-icon">👥</span>
-                <span className="sidebar-label">Team Analytics</span>
+                {sidebarOpen && <span className="sidebar-label">Team Analytics</span>}
               </button>
             )}
             {userPermissions.isJiraAdmin && (
               <button
                 className={`sidebar-item ${activeTab === 'org-analytics' ? 'active' : ''}`}
                 onClick={() => setActiveTab('org-analytics')}
+                title="Organization Analytics"
               >
                 <span className="sidebar-icon">🏢</span>
-                <span className="sidebar-label">Organization Analytics</span>
+                {sidebarOpen && <span className="sidebar-label">Organization Analytics</span>}
               </button>
             )}
             <button
               className={`sidebar-item ${activeTab === 'brd-upload' ? 'active' : ''}`}
               onClick={() => setActiveTab('brd-upload')}
+              title="BRD Upload"
             >
               <span className="sidebar-icon">📄</span>
-              <span className="sidebar-label">BRD Upload</span>
+              {sidebarOpen && <span className="sidebar-label">BRD Upload</span>}
             </button>
           </nav>
         </aside>
@@ -592,7 +629,12 @@ function App() {
                                             return Object.keys(sessionsByDate).sort((a, b) => new Date(b) - new Date(a)).map((dateKey, dateIdx) => {
                                               const dateSessions = sessionsByDate[dateKey];
                                               const displayDate = new Date(dateKey);
-                                              const totalDuration = dateSessions.reduce((sum, s) => sum + s.duration, 0);
+                                              // Calculate total duration from actual time differences
+                                              const totalDuration = dateSessions.reduce((sum, s) => {
+                                                const start = new Date(s.startTime);
+                                                const end = new Date(s.endTime);
+                                                return sum + Math.round((end - start) / 1000); // Convert to seconds
+                                              }, 0);
 
                                               return (
                                                 <div key={dateIdx} className="date-group">
@@ -613,6 +655,8 @@ function App() {
                                                     {dateSessions.map((session, sessionIdx) => {
                                                       const start = new Date(session.startTime);
                                                       const end = new Date(session.endTime);
+                                                      // Calculate duration from actual time difference instead of stored duration
+                                                      const actualDuration = Math.round((end - start) / 1000); // Convert to seconds
                                                       return (
                                                         <div key={sessionIdx} className="session-item">
                                                           <span className="session-time">
@@ -621,7 +665,7 @@ function App() {
                                                             {end.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
                                                           </span>
                                                           <span className="session-duration">
-                                                            {formatTime(session.duration)}
+                                                            {formatTime(actualDuration)}
                                                           </span>
                                                         </div>
                                                       );
@@ -684,14 +728,33 @@ function App() {
                     <div className="stat-value">
                       {(() => {
                         const today = new Date();
+                        today.setHours(0, 0, 0, 0);
+                        const todayStr = today.toISOString().split('T')[0];
                         const startOfWeek = new Date(today);
                         startOfWeek.setDate(today.getDate() - today.getDay());
                         const startStr = startOfWeek.toISOString().split('T')[0];
 
+                        // Create array of this week's dates
+                        const weekDates = Array.from({ length: 7 }, (_, i) => {
+                          const date = new Date(startOfWeek);
+                          date.setDate(startOfWeek.getDate() + i);
+                          const dateStr = date.toISOString().split('T')[0];
+                          return dateStr;
+                        }).filter(dateStr => dateStr <= todayStr);
+
                         // Use dailySummary and filter for all days in current week
-                        const totalSeconds = timeData?.dailySummary?.filter(day =>
-                          day.work_date >= startStr
-                        ).reduce((sum, day) => sum + (day.total_seconds || 0), 0) || 0;
+                        const totalSeconds = timeData?.dailySummary?.filter(day => {
+                          // Normalize work_date to string format
+                          let workDateStr;
+                          if (typeof day.work_date === 'string') {
+                            workDateStr = day.work_date.split('T')[0];
+                          } else if (day.work_date instanceof Date) {
+                            workDateStr = day.work_date.toISOString().split('T')[0];
+                          } else {
+                            workDateStr = String(day.work_date);
+                          }
+                          return weekDates.includes(workDateStr);
+                        }).reduce((sum, day) => sum + (day.total_seconds || 0), 0) || 0;
                         return formatTime(totalSeconds);
                       })()}
                     </div>
@@ -808,16 +871,6 @@ function App() {
                                 <span className="member-total">{formatTime(user.totalSeconds)}</span>
                               </div>
                             </div>
-                            {user.tasks.length > 0 && (
-                              <div className="member-tasks">
-                                {user.tasks.map((task, taskIdx) => (
-                                  <div key={taskIdx} className="task-item">
-                                    <span className="task-key">{task.active_task_key || 'No Task'}</span>
-                                    <span className="task-time">{formatTime(task.total_seconds)}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
                           </div>
                         ));
                       })()}
@@ -845,13 +898,28 @@ function App() {
                         <thead>
                           <tr>
                             <th>{timeData?.canViewAllUsers ? 'Team Member' : 'User'}</th>
-                            <th>Mon</th>
-                            <th>Tue</th>
-                            <th>Wed</th>
-                            <th>Thu</th>
-                            <th>Fri</th>
-                            <th>Sat</th>
-                            <th>Sun</th>
+                            {(() => {
+                              // Calculate week dates (same logic as data processing)
+                              const today = new Date();
+                              today.setHours(0, 0, 0, 0);
+                              const todayStr = today.toISOString().split('T')[0];
+                              const startOfWeek = new Date(today);
+                              startOfWeek.setDate(today.getDate() - today.getDay());
+                              
+                              const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                              
+                              // Only show columns for days up to today
+                              return Array.from({ length: 7 }, (_, i) => {
+                                const date = new Date(startOfWeek);
+                                date.setDate(startOfWeek.getDate() + i);
+                                const dateStr = date.toISOString().split('T')[0];
+                                
+                                if (dateStr <= todayStr) {
+                                  return <th key={i}>{dayNames[date.getDay()]}</th>;
+                                }
+                                return null;
+                              }).filter(Boolean);
+                            })()}
                             <th>Total</th>
                           </tr>
                         </thead>
@@ -859,45 +927,71 @@ function App() {
                           {(() => {
                             // Get current week date range
                             const today = new Date();
+                            today.setHours(0, 0, 0, 0); // Reset time to start of day for comparison
+                            const todayDateStr = today.toISOString().split('T')[0];
+                            
                             const startOfWeek = new Date(today);
                             startOfWeek.setDate(today.getDate() - today.getDay());
 
-                            // Create array of this week's dates
+                            // Create array of this week's dates with day info, but only up to today
                             const weekDates = Array.from({ length: 7 }, (_, i) => {
                               const date = new Date(startOfWeek);
                               date.setDate(startOfWeek.getDate() + i);
-                              return date.toISOString().split('T')[0];
-                            });
+                              const dateStr = date.toISOString().split('T')[0];
+                              return {
+                                dateStr: dateStr,
+                                dayOfWeek: date.getDay(), // 0=Sunday, 1=Monday, etc.
+                                date: date
+                              };
+                            }).filter(item => item.dateStr <= todayDateStr); // Only include dates up to today
 
                             // Initialize all users with 0 time
                             const userTimeByDay = {};
+                            const daysCount = weekDates.length; // Number of days to show (up to today)
 
                             // First, add all active users with 0 time
                             timeData?.allUsers?.forEach(user => {
                               userTimeByDay[user.id] = {
                                 userId: user.id,
                                 name: user.display_name || user.email || 'User',
-                                days: Array(7).fill(0),
+                                days: Array(daysCount).fill(0), // Only create array for days up to today
                                 total: 0
                               };
                             });
 
                             // Then, populate time data for users who have tracked time
                             timeData?.dailySummary?.forEach(day => {
-                              if (weekDates.includes(day.work_date)) {
+                              // Normalize work_date to string format (handle both DATE and string types)
+                              let workDateStr;
+                              if (typeof day.work_date === 'string') {
+                                // Handle ISO strings like "2025-11-23T00:00:00.000Z" or "2025-11-23"
+                                workDateStr = day.work_date.split('T')[0];
+                              } else if (day.work_date instanceof Date) {
+                                // Handle Date objects
+                                workDateStr = day.work_date.toISOString().split('T')[0];
+                              } else {
+                                // Assume it's already a date string
+                                workDateStr = String(day.work_date);
+                              }
+                              
+                              // Only process dates that are in the week AND not in the future
+                              const weekDateItem = weekDates.find(item => item.dateStr === workDateStr);
+                              if (weekDateItem && workDateStr <= todayDateStr) {
                                 const userId = day.user_id || 'current_user';
                                 if (!userTimeByDay[userId]) {
                                   // User exists in time data but not in allUsers list (shouldn't happen)
                                   userTimeByDay[userId] = {
                                     userId,
                                     name: day.user_display_name || 'User',
-                                    days: Array(7).fill(0),
+                                    days: Array(daysCount).fill(0),
                                     total: 0
                                   };
                                 }
-                                const dayIndex = weekDates.indexOf(day.work_date);
-                                userTimeByDay[userId].days[dayIndex] += day.total_seconds || 0;
-                                userTimeByDay[userId].total += day.total_seconds || 0;
+                                const dayIndex = weekDates.indexOf(weekDateItem);
+                                if (dayIndex >= 0 && dayIndex < daysCount) {
+                                  userTimeByDay[userId].days[dayIndex] += day.total_seconds || 0;
+                                  userTimeByDay[userId].total += day.total_seconds || 0;
+                                }
                               }
                             });
 
@@ -932,7 +1026,7 @@ function App() {
                                 {timeData?.canViewAllUsers && users.length > 1 && (
                                   <tr className="totals-row">
                                     <td><strong>Daily Totals</strong></td>
-                                    {Array.from({ length: 7 }, (_, dayIdx) => {
+                                    {Array.from({ length: daysCount }, (_, dayIdx) => {
                                       const dayTotal = users.reduce((sum, user) => sum + user.days[dayIdx], 0);
                                       return (
                                         <td key={dayIdx} className="total-cell">
@@ -983,14 +1077,28 @@ function App() {
                               const month = today.getMonth();
                               const firstDay = new Date(year, month, 1).getDay();
                               const daysInMonth = new Date(year, month + 1, 0).getDate();
+                              const currentMonthStr = today.toISOString().slice(0, 7); // "2025-11"
 
                               // Create time map by date
                               const timeByDate = {};
                               timeData?.dailySummary?.forEach(day => {
-                                const date = new Date(day.work_date);
-                                if (date.getMonth() === month && date.getFullYear() === year) {
-                                  const dayNum = date.getDate();
-                                  timeByDate[dayNum] = (timeByDate[dayNum] || 0) + (day.total_seconds || 0);
+                                // Normalize work_date to string format (handle both DATE and string types)
+                                let workDateStr;
+                                if (typeof day.work_date === 'string') {
+                                  workDateStr = day.work_date.split('T')[0];
+                                } else if (day.work_date instanceof Date) {
+                                  workDateStr = day.work_date.toISOString().split('T')[0];
+                                } else {
+                                  workDateStr = String(day.work_date);
+                                }
+                                
+                                // Check if date is in current month
+                                if (workDateStr.startsWith(currentMonthStr)) {
+                                  const date = new Date(workDateStr + 'T00:00:00');
+                                  if (date.getMonth() === month && date.getFullYear() === year) {
+                                    const dayNum = date.getDate();
+                                    timeByDate[dayNum] = (timeByDate[dayNum] || 0) + (day.total_seconds || 0);
+                                  }
                                 }
                               });
 
@@ -1045,7 +1153,18 @@ function App() {
 
                             // Then, populate time data for users who have tracked time this month
                             timeData?.dailySummary?.forEach(day => {
-                              if (day.work_date?.startsWith(currentMonth)) {
+                              // Normalize work_date to string format (handle both DATE and string types)
+                              let workDateStr;
+                              if (typeof day.work_date === 'string') {
+                                workDateStr = day.work_date.split('T')[0];
+                              } else if (day.work_date instanceof Date) {
+                                workDateStr = day.work_date.toISOString().split('T')[0];
+                              } else {
+                                workDateStr = String(day.work_date);
+                              }
+                              
+                              // Check if date is in current month
+                              if (workDateStr && workDateStr.startsWith(currentMonth)) {
                                 const userId = day.user_id || 'current_user';
                                 if (!userMonthlyTime[userId]) {
                                   // User exists in time data but not in allUsers list
@@ -1362,6 +1481,10 @@ function App() {
               )}
             </div>
           </div>
+        )}
+
+        {activeTab === 'unassigned-work' && (
+          <UnassignedWork />
         )}
       </main>
       </div>

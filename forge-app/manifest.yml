@@ -48,3 +48,5 @@ permissions:
     fetch:
       backend:
         - address: "*.supabase.co"
+    images:
+      - "*.supabase.co"

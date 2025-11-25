@@ -144,9 +144,10 @@ export async function uploadToSupabaseStorage(supabaseConfig, bucket, path, data
  * @returns {Promise<string>} Signed URL
  */
 export async function generateSignedUrl(supabaseConfig, bucket, path, expiresIn = 3600) {
-  const filePath = encodeURIComponent(path);
+  // Don't encode the entire path - Supabase expects slashes to be unencoded
+  // Only encode individual path segments if needed
   const signedUrlResponse = await fetch(
-    `${supabaseConfig.url}/storage/v1/object/sign/${bucket}/${filePath}`,
+    `${supabaseConfig.url}/storage/v1/object/sign/${bucket}/${path}`,
     {
       method: 'POST',
       headers: {
@@ -161,18 +162,25 @@ export async function generateSignedUrl(supabaseConfig, bucket, path, expiresIn 
   );
 
   if (!signedUrlResponse.ok) {
-    throw new Error('Failed to generate signed URL');
+    const errorText = await signedUrlResponse.text();
+    console.error('Signed URL generation failed:', errorText);
+    throw new Error(`Failed to generate signed URL: ${errorText}`);
   }
 
   const signedData = await signedUrlResponse.json();
 
   // Supabase returns signedURL as a path, need to prepend the base URL
   if (signedData.signedURL) {
-    return `${supabaseConfig.url}${signedData.signedURL}`;
+    // Check if the path already includes /storage/v1
+    const signedPath = signedData.signedURL.startsWith('/storage/v1')
+      ? signedData.signedURL
+      : `/storage/v1${signedData.signedURL}`;
+    return `${supabaseConfig.url}${signedPath}`;
   } else if (signedData.url) {
     return signedData.url;
   }
 
+  console.error('No signed URL in response:', signedData);
   throw new Error('No signed URL in response');
 }
 

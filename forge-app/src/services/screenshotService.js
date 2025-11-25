@@ -39,9 +39,9 @@ export async function fetchScreenshots(accountId, limit = DEFAULT_PAGINATION_LIM
       // Generate signed URL for thumbnail if it exists
       if (screenshot.thumbnail_url || screenshot.storage_path) {
         try {
-          // Extract thumbnail path from storage_path
-          let thumbPath = screenshot.thumbnail_url;
-          if (!thumbPath && screenshot.storage_path) {
+          // Always derive thumbnail path from storage_path, not thumbnail_url (which is a full URL)
+          let thumbPath;
+          if (screenshot.storage_path) {
             // Format: user_id/screenshot_timestamp.png -> user_id/thumb_timestamp.jpg
             if (screenshot.storage_path.includes('/')) {
               const dirPath = screenshot.storage_path.substring(0, screenshot.storage_path.lastIndexOf('/'));
@@ -51,13 +51,24 @@ export async function fetchScreenshots(accountId, limit = DEFAULT_PAGINATION_LIM
             } else {
               thumbPath = screenshot.storage_path.replace('screenshot_', 'thumb_').replace('.png', '.jpg');
             }
+          } else {
+            // Fallback: extract path from thumbnail_url if storage_path missing
+            const urlObj = new URL(screenshot.thumbnail_url);
+            // Extract path after '/screenshots/'
+            const pathMatch = urlObj.pathname.match(/\/screenshots\/(.+)$/);
+            thumbPath = pathMatch ? pathMatch[1] : null;
+          }
+
+          if (!thumbPath) {
+            throw new Error('Could not determine thumbnail path');
           }
 
           // Generate signed URL (valid for 1 hour)
           const signedUrl = await generateSignedUrl(supabaseConfig, 'screenshots', thumbPath, 3600);
           screenshotWithUrl.signed_thumbnail_url = signedUrl;
+          console.log('[Screenshot Service] Generated signed URL for:', thumbPath);
         } catch (err) {
-          console.error('Error generating signed URL:', err);
+          console.error('[Screenshot Service] Error generating signed URL for', thumbPath, ':', err);
           // Fallback to original URL
           screenshotWithUrl.signed_thumbnail_url = screenshot.thumbnail_url;
         }

@@ -574,7 +574,7 @@ class BRDTimeTracker:
                 json={
                     'jql': jql,
                     'maxResults': 50,
-                    'fields': ['summary', 'status', 'project']
+                    'fields': ['summary', 'status', 'project', 'description', 'labels']
                 },
                 headers={
                     'Authorization': f'Bearer {access_token}',
@@ -595,7 +595,7 @@ class BRDTimeTracker:
                         json={
                             'jql': jql,
                             'maxResults': 50,
-                            'fields': ['summary', 'status', 'project']
+                            'fields': ['summary', 'status', 'project', 'description', 'labels']
                         },
                         headers={
                             'Authorization': f'Bearer {access_token}',
@@ -611,12 +611,43 @@ class BRDTimeTracker:
                 data = response.json()
                 issues = data.get('issues', [])
                 print(f"[OK] Jira API returned {len(issues)} issues")
-                return [{
-                    'key': issue['key'],
-                    'summary': issue['fields']['summary'],
-                    'status': issue['fields']['status']['name'],
-                    'project': issue['fields']['project']['key']
-                } for issue in issues]
+
+                # Extract and format issue data with description and labels
+                formatted_issues = []
+                for issue in issues:
+                    fields = issue['fields']
+
+                    # Get description text (handle ADF format)
+                    description = ''
+                    if fields.get('description'):
+                        # Jira uses Atlassian Document Format (ADF)
+                        # Extract plain text from content
+                        desc_content = fields['description']
+                        if isinstance(desc_content, dict) and desc_content.get('content'):
+                            # Simple text extraction from ADF
+                            text_parts = []
+                            for content_item in desc_content.get('content', []):
+                                if content_item.get('type') == 'paragraph':
+                                    for text_node in content_item.get('content', []):
+                                        if text_node.get('type') == 'text':
+                                            text_parts.append(text_node.get('text', ''))
+                            description = ' '.join(text_parts).strip()
+                        elif isinstance(desc_content, str):
+                            description = desc_content
+
+                    # Get labels (array of strings)
+                    labels = fields.get('labels', [])
+
+                    formatted_issues.append({
+                        'key': issue['key'],
+                        'summary': fields['summary'],
+                        'status': fields['status']['name'],
+                        'project': fields['project']['key'],
+                        'description': description,
+                        'labels': labels
+                    })
+
+                return formatted_issues
             else:
                 print(f"[ERROR] Jira API failed: {response.status_code} - {response.text}")
         except Exception as e:
