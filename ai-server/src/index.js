@@ -9,6 +9,7 @@ const brdController = require('./controllers/brd-controller');
 const authMiddleware = require('./middleware/auth');
 const logger = require('./utils/logger');
 const pollingService = require('./services/polling-service');
+const clusteringPollingService = require('./services/clustering-polling-service');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -94,18 +95,24 @@ app.listen(PORT, () => {
 
   // Start polling service to process pending screenshots
   pollingService.start();
-  logger.info('Polling service started - will process pending screenshots automatically');
+  logger.info('Screenshot analysis polling service started - will process pending screenshots automatically');
+
+  // Start clustering polling service to group unassigned work
+  clusteringPollingService.start();
+  logger.info('Unassigned work clustering service started - will cluster similar sessions automatically');
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
   logger.info('SIGTERM received, shutting down gracefully');
   pollingService.stop();
+  clusteringPollingService.stop();
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   logger.info('SIGINT received, shutting down gracefully');
   pollingService.stop();
+  clusteringPollingService.stop();
   process.exit(0);
 });

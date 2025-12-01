@@ -81,9 +81,10 @@ export async function getActiveIssuesWithTime(accountId) {
   }
 
   // Fetch time tracking data for all issues
+  // Join with screenshots table to get the actual work timestamp (not analysis creation time)
   const timeTrackingData = await supabaseRequest(
     supabaseConfig,
-    `analysis_results?user_id=eq.${userId}&work_type=eq.office&active_task_key=not.is.null&select=active_task_key,time_spent_seconds,created_at&order=created_at.desc&limit=1000`
+    `analysis_results?user_id=eq.${userId}&work_type=eq.office&active_task_key=not.is.null&select=active_task_key,time_spent_seconds,created_at,screenshots(timestamp)&order=created_at.desc&limit=1000`
   );
 
   // Aggregate time by issue key and build work sessions
@@ -92,10 +93,13 @@ export async function getActiveIssuesWithTime(accountId) {
   const sessionsByIssue = {};
 
   if (timeTrackingData && Array.isArray(timeTrackingData)) {
-    // Sort by created_at ascending to build sessions chronologically
-    const sortedData = [...timeTrackingData].sort((a, b) =>
-      new Date(a.created_at) - new Date(b.created_at)
-    );
+    // Sort by screenshot timestamp ascending to build sessions chronologically
+    // This ensures sessions are built in the order work actually happened
+    const sortedData = [...timeTrackingData].sort((a, b) => {
+      const timeA = a.screenshots?.timestamp || a.created_at;
+      const timeB = b.screenshots?.timestamp || b.created_at;
+      return new Date(timeA) - new Date(timeB);
+    });
 
     sortedData.forEach(entry => {
       const issueKey = entry.active_task_key;
@@ -116,10 +120,15 @@ export async function getActiveIssuesWithTime(accountId) {
       }
 
       // Build sessions - group consecutive work periods
-      const entryTime = new Date(entry.created_at);
+      // Use the screenshot timestamp (when work actually happened), not analysis created_at
+      const screenshotTimestamp = entry.screenshots?.timestamp || entry.created_at;
+      const workTime = new Date(screenshotTimestamp);
       const timeSpent = entry.time_spent_seconds || 0;
-      const startTime = new Date(entryTime.getTime() - (timeSpent * 1000));
-      const endTime = entryTime;
+
+      // Calculate session time window based on screenshot timestamp
+      // Screenshots are captured every 5 minutes, so work ended at screenshot time
+      const endTime = workTime;
+      const startTime = new Date(workTime.getTime() - (timeSpent * 1000));
 
       // Check if this entry belongs to an existing session (within 10 minutes gap)
       const sessions = sessionsByIssue[issueKey];

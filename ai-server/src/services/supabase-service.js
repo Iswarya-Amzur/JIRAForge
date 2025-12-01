@@ -378,3 +378,227 @@ exports.getUnassignedWorkCount = async (userId) => {
     return 0;
   }
 };
+
+/**
+ * CLUSTERING FUNCTIONS FOR UNASSIGNED WORK
+ */
+
+/**
+ * Get all users who have unassigned activities
+ * @returns {Promise<Array>} Array of user objects with unassigned work
+ */
+exports.getUsersWithUnassignedWork = async () => {
+  try {
+    const { data, error } = await supabase
+      .from('unassigned_activity')
+      .select('user_id')
+      .eq('manually_assigned', false)
+      .order('timestamp', { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    // Get unique user IDs
+    const uniqueUserIds = [...new Set(data.map(item => item.user_id))];
+
+    return uniqueUserIds.map(id => ({ id }));
+  } catch (error) {
+    logger.error('Error fetching users with unassigned work:', error);
+    return [];
+  }
+};
+
+/**
+ * Get unassigned activities for a specific user
+ * @param {string} userId - User ID
+ * @returns {Promise<Array>} Array of unassigned activity sessions
+ */
+exports.getUnassignedActivities = async (userId) => {
+  try {
+    const { data, error } = await supabase
+      .from('unassigned_activity')
+      .select(`
+        id,
+        screenshot_id,
+        timestamp,
+        window_title,
+        application_name,
+        extracted_text,
+        time_spent_seconds,
+        reason,
+        confidence_score,
+        metadata,
+        analysis_result_id
+      `)
+      .eq('user_id', userId)
+      .eq('manually_assigned', false)
+      .order('timestamp', { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    // Fetch analysis_metadata for each activity to get AI reasoning
+    const enrichedData = await Promise.all(
+      data.map(async (activity) => {
+        const { data: analysisData } = await supabase
+          .from('analysis_results')
+          .select('analysis_metadata')
+          .eq('id', activity.analysis_result_id)
+          .single();
+
+        return {
+          ...activity,
+          reasoning: analysisData?.analysis_metadata?.reasoning || 'No description available'
+        };
+      })
+    );
+
+    return enrichedData;
+  } catch (error) {
+    logger.error('Error fetching unassigned activities:', error);
+    throw new Error(`Failed to fetch unassigned activities: ${error.message}`);
+  }
+};
+
+/**
+ * Get user's active Jira issues for better AI recommendations
+ * @param {string} userId - User ID
+ * @returns {Promise<Array>} Array of user's active issues with summaries
+ */
+exports.getUserActiveIssues = async (userId) => {
+  try {
+    // First try to get from cache (has summaries)
+    const { data: cachedIssues, error: cacheError } = await supabase
+      .from('user_jira_issues_cache')
+      .select('issue_key, summary, project_key, status')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false })
+      .limit(50);
+
+    if (!cacheError && cachedIssues && cachedIssues.length > 0) {
+      return cachedIssues.map(issue => ({
+        issue_key: issue.issue_key,
+        summary: issue.summary,
+        project: issue.project_key,
+        status: issue.status
+      }));
+    }
+
+    // Fallback: get from analysis_results (no summaries, but at least we have keys)
+    const { data, error } = await supabase
+      .from('analysis_results')
+      .select('active_task_key, active_project_key')
+      .eq('user_id', userId)
+      .not('active_task_key', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      throw error;
+    }
+
+    // Get unique issues
+    const uniqueIssues = [...new Set(data.map(item => item.active_task_key))];
+
+    return uniqueIssues.map(key => ({
+      issue_key: key,
+      summary: '', // No summary available from analysis_results
+      project: data.find(d => d.active_task_key === key)?.active_project_key
+    }));
+  } catch (error) {
+    logger.error('Error fetching user active issues:', error);
+    return [];
+  }
+};
+
+/**
+ * Check if user has recent groups (to avoid re-clustering too frequently)
+ * @param {string} userId - User ID
+ * @param {number} hoursAgo - How many hours ago to check
+ * @returns {Promise<Array>} Recent groups
+ */
+exports.getRecentGroups = async (userId, hoursAgo = 24) => {
+  try {
+    const cutoffTime = new Date(Date.now() - hoursAgo * 60 * 60 * 1000).toISOString();
+
+    const { data, error } = await supabase
+      .from('unassigned_work_groups')
+      .select('id, created_at')
+      .eq('user_id', userId)
+      .gte('created_at', cutoffTime);
+
+    if (error) {
+      throw error;
+    }
+
+    return data || [];
+  } catch (error) {
+    logger.error('Error fetching recent groups:', error);
+    return [];
+  }
+};
+
+/**
+ * Create a new unassigned work group
+ * @param {Object} groupData - Group data from AI clustering
+ * @returns {Promise<Object>} Created group record
+ */
+exports.createUnassignedGroup = async (groupData) => {
+  try {
+    const { data, error } = await supabase
+      .from('unassigned_work_groups')
+      .insert({
+        user_id: groupData.user_id,
+        group_label: groupData.group_label,
+        group_description: groupData.group_description,
+        confidence_level: groupData.confidence_level,
+        recommended_action: groupData.recommended_action,
+        suggested_issue_key: groupData.suggested_issue_key,
+        recommendation_reason: groupData.recommendation_reason,
+        session_count: groupData.session_count,
+        total_seconds: groupData.total_seconds,
+        clustering_metadata: groupData.clustering_metadata || {}
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    logger.info(`Created unassigned group: ${data.id} for user ${groupData.user_id}`);
+    return data;
+  } catch (error) {
+    logger.error('Error creating unassigned group:', error);
+    throw new Error(`Failed to create unassigned group: ${error.message}`);
+  }
+};
+
+/**
+ * Add a member to an unassigned work group
+ * @param {Object} memberData - Member data
+ * @returns {Promise<Object>} Created member record
+ */
+exports.addGroupMember = async (memberData) => {
+  try {
+    const { data, error } = await supabase
+      .from('unassigned_group_members')
+      .insert({
+        group_id: memberData.group_id,
+        unassigned_activity_id: memberData.unassigned_activity_id
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return data;
+  } catch (error) {
+    logger.error('Error adding group member:', error);
+    throw new Error(`Failed to add group member: ${error.message}`);
+  }
+};

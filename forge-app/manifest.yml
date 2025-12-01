@@ -30,7 +30,6 @@ modules:
       resolver:
         function: main
 
-
 resources:
   - key: main
     path: static/main/build
@@ -49,4 +48,4 @@ permissions:
       backend:
         - address: "*.supabase.co"
     images:
-      - "*.supabase.co"
+      - address: "*.supabase.co"

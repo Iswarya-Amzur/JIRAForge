@@ -25,10 +25,11 @@ export async function fetchScreenshots(accountId, limit = DEFAULT_PAGINATION_LIM
     throw new Error('Unable to get user information');
   }
 
-  // Fetch screenshots (excluding deleted ones)
+  // Fetch screenshots with analysis results (to get issue info)
+  // Join with analysis_results to get active_task_key and time_spent_seconds
   const screenshots = await supabaseRequest(
     supabaseConfig,
-    `screenshots?user_id=eq.${userId}&deleted_at=is.null&order=timestamp.desc&limit=${limit}&offset=${offset}`
+    `screenshots?user_id=eq.${userId}&deleted_at=is.null&select=*,analysis_results(active_task_key,active_project_key,time_spent_seconds)&order=timestamp.desc&limit=${limit}&offset=${offset}`
   );
 
   // Generate signed URLs for private storage images

@@ -3,6 +3,25 @@ import { invoke } from '@forge/bridge';
 import './App.css';
 import UnassignedWork from './components/UnassignedWork';
 
+// Helper function to navigate to Jira issues (works within Forge iframe)
+const navigateToIssue = (issueKey) => {
+  // For Forge apps, we need to navigate in the parent window
+  // Try to use parent window navigation
+  try {
+    if (window.parent && window.parent !== window) {
+      // Use parent window to navigate (works in Forge iframe)
+      window.parent.location.href = `/browse/${issueKey}`;
+    } else {
+      // Fallback to same window
+      window.location.href = `/browse/${issueKey}`;
+    }
+  } catch (e) {
+    // If cross-origin restrictions prevent parent navigation,
+    // the link href will handle it as a fallback
+    console.warn('Could not navigate programmatically, using link fallback');
+  }
+};
+
 // Status Dropdown Component
 function StatusDropdown({ issue, onStatusChange, isUpdating, onLoadTransitions }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -79,6 +98,7 @@ function App() {
   const [screenshots, setScreenshots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [selectedScreenshots, setSelectedScreenshots] = useState(new Set());
 
   // User Permissions State
   const [userPermissions, setUserPermissions] = useState({
@@ -266,6 +286,8 @@ function App() {
       const result = await invoke('getScreenshots');
       if (result.success) {
         setScreenshots(result.data.screenshots);
+        // Clear selection when reloading
+        setSelectedScreenshots(new Set());
       } else {
         setError(result.error);
       }
@@ -281,11 +303,67 @@ function App() {
       const result = await invoke('deleteScreenshot', { screenshotId });
       if (result.success) {
         loadScreenshots(); // Reload the list
+        // Remove from selection if it was selected
+        setSelectedScreenshots(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(screenshotId);
+          return newSet;
+        });
       } else {
         alert('Failed to delete screenshot: ' + result.error);
       }
     } catch (err) {
       alert('Error deleting screenshot: ' + err.message);
+    }
+  };
+
+  const handleBulkDeleteScreenshots = async () => {
+    if (selectedScreenshots.size === 0) return;
+
+    const count = selectedScreenshots.size;
+    if (!window.confirm(`Are you sure you want to delete ${count} screenshot${count > 1 ? 's' : ''}?`)) {
+      return;
+    }
+
+    try {
+      const deletePromises = Array.from(selectedScreenshots).map(screenshotId =>
+        invoke('deleteScreenshot', { screenshotId })
+      );
+
+      const results = await Promise.all(deletePromises);
+      const failed = results.filter(r => !r.success);
+
+      if (failed.length > 0) {
+        alert(`Failed to delete ${failed.length} screenshot(s). Please try again.`);
+      } else {
+        // Clear selection and reload
+        setSelectedScreenshots(new Set());
+        loadScreenshots();
+      }
+    } catch (err) {
+      alert('Error deleting screenshots: ' + err.message);
+    }
+  };
+
+  const handleToggleSelect = (screenshotId) => {
+    setSelectedScreenshots(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(screenshotId)) {
+        newSet.delete(screenshotId);
+      } else {
+        newSet.add(screenshotId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedScreenshots.size === screenshots.length) {
+      // Deselect all
+      setSelectedScreenshots(new Set());
+    } else {
+      // Select all
+      setSelectedScreenshots(new Set(screenshots.map(s => s.id)));
     }
   };
 
@@ -586,7 +664,14 @@ function App() {
                                         ▶
                                       </button>
                                     )}
-                                    <a href={`/browse/${issue.key}`} target="_blank" rel="noopener noreferrer">
+                                    <a 
+                                      href={`/browse/${issue.key}`}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        navigateToIssue(issue.key);
+                                      }}
+                                      style={{ cursor: 'pointer' }}
+                                    >
                                       {issue.key}
                                     </a>
                                   </td>
@@ -629,11 +714,11 @@ function App() {
                                             return Object.keys(sessionsByDate).sort((a, b) => new Date(b) - new Date(a)).map((dateKey, dateIdx) => {
                                               const dateSessions = sessionsByDate[dateKey];
                                               const displayDate = new Date(dateKey);
-                                              // Calculate total duration from actual time differences
+                                              // Calculate total duration from stored duration (not time difference)
+                                              // This ensures accuracy when sessions are merged
                                               const totalDuration = dateSessions.reduce((sum, s) => {
-                                                const start = new Date(s.startTime);
-                                                const end = new Date(s.endTime);
-                                                return sum + Math.round((end - start) / 1000); // Convert to seconds
+                                                // Use stored duration if available, otherwise calculate from times
+                                                return sum + (s.duration || Math.round((new Date(s.endTime) - new Date(s.startTime)) / 1000));
                                               }, 0);
 
                                               return (
@@ -655,8 +740,9 @@ function App() {
                                                     {dateSessions.map((session, sessionIdx) => {
                                                       const start = new Date(session.startTime);
                                                       const end = new Date(session.endTime);
-                                                      // Calculate duration from actual time difference instead of stored duration
-                                                      const actualDuration = Math.round((end - start) / 1000); // Convert to seconds
+                                                      // Use stored duration (which is the sum of time_spent_seconds)
+                                                      // This ensures accuracy when sessions are merged
+                                                      const sessionDuration = session.duration || Math.round((end - start) / 1000);
                                                       return (
                                                         <div key={sessionIdx} className="session-item">
                                                           <span className="session-time">
@@ -665,7 +751,7 @@ function App() {
                                                             {end.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
                                                           </span>
                                                           <span className="session-duration">
-                                                            {formatTime(actualDuration)}
+                                                            {formatTime(sessionDuration)}
                                                           </span>
                                                         </div>
                                                       );
@@ -708,9 +794,14 @@ function App() {
                   <div className="cumulative-stat">
                     <div className="stat-value">
                       {(() => {
-                        const today = new Date().toISOString().split('T')[0];
+                        // Use LOCAL time formatting (no UTC conversion)
+                        const today = new Date();
+                        const y = today.getFullYear();
+                        const m = String(today.getMonth() + 1).padStart(2, '0');
+                        const d = String(today.getDate()).padStart(2, '0');
+                        const todayStr = `${y}-${m}-${d}`;
                         const totalSeconds = timeData?.dailySummary?.filter(day =>
-                          day.work_date?.startsWith(today)
+                          day.work_date?.startsWith(todayStr)
                         ).reduce((sum, day) => sum + (day.total_seconds || 0), 0) || 0;
                         return formatTime(totalSeconds);
                       })()}
@@ -727,19 +818,27 @@ function App() {
                   <div className="cumulative-stat">
                     <div className="stat-value">
                       {(() => {
+                        // Use LOCAL time formatting (no UTC conversion)
                         const today = new Date();
-                        today.setHours(0, 0, 0, 0);
-                        const todayStr = today.toISOString().split('T')[0];
-                        const startOfWeek = new Date(today);
-                        startOfWeek.setDate(today.getDate() - today.getDay());
-                        const startStr = startOfWeek.toISOString().split('T')[0];
+                        const year = today.getFullYear();
+                        const month = today.getMonth();
+                        const date = today.getDate();
+
+                        // Helper to format date as YYYY-MM-DD in local time
+                        const formatLocalDate = (d) => {
+                          const y = d.getFullYear();
+                          const m = String(d.getMonth() + 1).padStart(2, '0');
+                          const day = String(d.getDate()).padStart(2, '0');
+                          return `${y}-${m}-${day}`;
+                        };
+
+                        const todayStr = formatLocalDate(today);
+                        const startOfWeek = new Date(year, month, date - today.getDay());
 
                         // Create array of this week's dates
                         const weekDates = Array.from({ length: 7 }, (_, i) => {
-                          const date = new Date(startOfWeek);
-                          date.setDate(startOfWeek.getDate() + i);
-                          const dateStr = date.toISOString().split('T')[0];
-                          return dateStr;
+                          const weekDate = new Date(year, month, startOfWeek.getDate() + i);
+                          return formatLocalDate(weekDate);
                         }).filter(dateStr => dateStr <= todayStr);
 
                         // Use dailySummary and filter for all days in current week
@@ -812,7 +911,10 @@ function App() {
               {timesheetView === 'day' && (
                 <div className="timesheet-day-view">
                   <div className="timesheet-header">
-                    <h3>{timeData?.canViewAllUsers ? 'Daily Timesheet' : 'My Daily Timesheet'} - {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</h3>
+                    <h3>{timeData?.canViewAllUsers ? 'Daily Timesheet' : 'My Daily Timesheet'} - {(() => {
+                      const today = new Date();
+                      return today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                    })()}</h3>
                   </div>
 
                   {loading ? (
@@ -820,9 +922,12 @@ function App() {
                   ) : (
                     <div className="team-members-list">
                       {(() => {
-                        const today = new Date().toISOString().split('T')[0];
+                        // Use LOCAL time to match database date parsing
+                        const today = new Date();
+                        today.setHours(0, 0, 0, 0);
+                        const todayStr = today.toISOString().split('T')[0];
                         const todayData = timeData?.dailySummary?.filter(day =>
-                          day.work_date?.startsWith(today)
+                          day.work_date?.startsWith(todayStr)
                         ) || [];
 
                         // Initialize all users with 0 time
@@ -884,6 +989,7 @@ function App() {
                   <div className="timesheet-header">
                     <h3>{timeData?.canViewAllUsers ? 'Weekly Timesheet' : 'My Weekly Timesheet'} - Week of {(() => {
                       const today = new Date();
+                      today.setHours(0, 0, 0, 0);
                       const startOfWeek = new Date(today);
                       startOfWeek.setDate(today.getDate() - today.getDay());
                       return startOfWeek.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -899,21 +1005,21 @@ function App() {
                           <tr>
                             <th>{timeData?.canViewAllUsers ? 'Team Member' : 'User'}</th>
                             {(() => {
-                              // Calculate week dates (same logic as data processing)
+                              // Calculate week dates (same logic as data processing) - Use LOCAL time
                               const today = new Date();
                               today.setHours(0, 0, 0, 0);
                               const todayStr = today.toISOString().split('T')[0];
                               const startOfWeek = new Date(today);
                               startOfWeek.setDate(today.getDate() - today.getDay());
-                              
+
                               const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-                              
+
                               // Only show columns for days up to today
                               return Array.from({ length: 7 }, (_, i) => {
                                 const date = new Date(startOfWeek);
                                 date.setDate(startOfWeek.getDate() + i);
                                 const dateStr = date.toISOString().split('T')[0];
-                                
+
                                 if (dateStr <= todayStr) {
                                   return <th key={i}>{dayNames[date.getDay()]}</th>;
                                 }
@@ -926,22 +1032,33 @@ function App() {
                         <tbody>
                           {(() => {
                             // Get current week date range
+                            // IMPORTANT: Match month view logic exactly - use local dates, format manually
                             const today = new Date();
-                            today.setHours(0, 0, 0, 0); // Reset time to start of day for comparison
-                            const todayDateStr = today.toISOString().split('T')[0];
-                            
-                            const startOfWeek = new Date(today);
-                            startOfWeek.setDate(today.getDate() - today.getDay());
+                            const year = today.getFullYear();
+                            const month = today.getMonth();
+                            const date = today.getDate();
+
+                            // Helper to format date as YYYY-MM-DD in local time
+                            const formatLocalDate = (d) => {
+                              const y = d.getFullYear();
+                              const m = String(d.getMonth() + 1).padStart(2, '0');
+                              const day = String(d.getDate()).padStart(2, '0');
+                              return `${y}-${m}-${day}`;
+                            };
+
+                            const todayDateStr = formatLocalDate(today);
+
+                            // Calculate start of week (Sunday) in LOCAL time
+                            const startOfWeek = new Date(year, month, date - today.getDay());
 
                             // Create array of this week's dates with day info, but only up to today
                             const weekDates = Array.from({ length: 7 }, (_, i) => {
-                              const date = new Date(startOfWeek);
-                              date.setDate(startOfWeek.getDate() + i);
-                              const dateStr = date.toISOString().split('T')[0];
+                              const weekDate = new Date(year, month, startOfWeek.getDate() + i);
+                              const dateStr = formatLocalDate(weekDate);
                               return {
                                 dateStr: dateStr,
-                                dayOfWeek: date.getDay(), // 0=Sunday, 1=Monday, etc.
-                                date: date
+                                dayOfWeek: weekDate.getDay(), // 0=Sunday, 1=Monday, etc.
+                                date: weekDate
                               };
                             }).filter(item => item.dateStr <= todayDateStr); // Only include dates up to today
 
@@ -973,11 +1090,13 @@ function App() {
                                 // Assume it's already a date string
                                 workDateStr = String(day.work_date);
                               }
-                              
+
                               // Only process dates that are in the week AND not in the future
                               const weekDateItem = weekDates.find(item => item.dateStr === workDateStr);
                               if (weekDateItem && workDateStr <= todayDateStr) {
                                 const userId = day.user_id || 'current_user';
+                                const dayIndex = weekDates.indexOf(weekDateItem);
+
                                 if (!userTimeByDay[userId]) {
                                   // User exists in time data but not in allUsers list (shouldn't happen)
                                   userTimeByDay[userId] = {
@@ -987,7 +1106,6 @@ function App() {
                                     total: 0
                                   };
                                 }
-                                const dayIndex = weekDates.indexOf(weekDateItem);
                                 if (dayIndex >= 0 && dayIndex < daysCount) {
                                   userTimeByDay[userId].days[dayIndex] += day.total_seconds || 0;
                                   userTimeByDay[userId].total += day.total_seconds || 0;
@@ -1229,10 +1347,61 @@ function App() {
               <p>No screenshots captured yet. Install the desktop app to start tracking.</p>
             ) : (
               <div className="screenshot-gallery-content">
-                <p className="screenshot-count">Total: {screenshots.length} screenshots</p>
+                <div className="screenshot-toolbar">
+                  <p className="screenshot-count">Total: {screenshots.length} screenshots</p>
+                  {selectedScreenshots.size > 0 && (
+                    <div className="screenshot-bulk-actions">
+                      <span className="selected-count">
+                        {selectedScreenshots.size} selected
+                      </span>
+                      <button
+                        className="select-all-btn"
+                        onClick={handleSelectAll}
+                      >
+                        {selectedScreenshots.size === screenshots.length ? 'Deselect All' : 'Select All'}
+                      </button>
+                      <button
+                        className="bulk-delete-btn"
+                        onClick={handleBulkDeleteScreenshots}
+                      >
+                        Delete Selected ({selectedScreenshots.size})
+                      </button>
+                    </div>
+                  )}
+                  {selectedScreenshots.size === 0 && (
+                    <button
+                      className="select-all-btn"
+                      onClick={handleSelectAll}
+                    >
+                      Select All
+                    </button>
+                  )}
+                </div>
                 <div className="screenshot-grid">
                   {screenshots.map(screenshot => (
-                    <div key={screenshot.id} className="screenshot-item">
+                    <div 
+                      key={screenshot.id} 
+                      className={`screenshot-item ${selectedScreenshots.has(screenshot.id) ? 'selected' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="screenshot-checkbox"
+                        checked={selectedScreenshots.has(screenshot.id)}
+                        onChange={() => handleToggleSelect(screenshot.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`Select screenshot ${screenshot.id}`}
+                      />
+                      <button
+                        className="screenshot-delete-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm('Are you sure you want to delete this screenshot?')) {
+                            handleDeleteScreenshot(screenshot.id);
+                          }
+                        }}
+                        title="Delete screenshot"
+                        aria-label="Delete screenshot"
+                      />
                       {(screenshot.signed_thumbnail_url || screenshot.thumbnail_url) ? (
                         <img 
                           src={screenshot.signed_thumbnail_url || screenshot.thumbnail_url} 
@@ -1250,19 +1419,30 @@ function App() {
                         <p className="window-title" title={screenshot.window_title}>
                           {screenshot.window_title || 'Unknown Window'}
                         </p>
-                        <p className="app-name">{screenshot.application_name || 'Unknown App'}</p>
-                        <p className="timestamp">{new Date(screenshot.timestamp).toLocaleString()}</p>
-                        <p className="status">Status: {screenshot.status || 'pending'}</p>
-                        <button 
-                          className="delete-btn"
-                          onClick={() => {
-                            if (window.confirm('Are you sure you want to delete this screenshot?')) {
-                              handleDeleteScreenshot(screenshot.id);
+                        {screenshot.analysis_results && screenshot.analysis_results.length > 0 && screenshot.analysis_results[0].active_task_key && (
+                          <p className="issue-key">
+                            <strong>Issue:</strong> {screenshot.analysis_results[0].active_task_key}
+                            {screenshot.analysis_results[0].time_spent_seconds &&
+                              ` (${formatTime(screenshot.analysis_results[0].time_spent_seconds)})`
                             }
-                          }}
-                        >
-                          Delete
-                        </button>
+                          </p>
+                        )}
+                        {(!screenshot.analysis_results || screenshot.analysis_results.length === 0 || !screenshot.analysis_results[0].active_task_key) && (
+                          <p className="issue-key unassigned">
+                            <strong>Issue:</strong> Unassigned
+                          </p>
+                        )}
+                        <p className="timestamp">
+                          <strong>Time:</strong> {new Date(screenshot.timestamp).toLocaleString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                            hour12: true
+                          })}
+                        </p>
                       </div>
                     </div>
                   ))}
@@ -1320,7 +1500,14 @@ function App() {
                       {teamAnalytics.teamTimeByIssue.map((issue, idx) => (
                         <div key={idx} className="data-item">
                           <span className="label">
-                            <a href={`/browse/${issue.issueKey}`} target="_blank" rel="noopener noreferrer">
+                            <a 
+                              href={`/browse/${issue.issueKey}`}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                navigateToIssue(issue.issueKey);
+                              }}
+                              style={{ cursor: 'pointer' }}
+                            >
                               {issue.issueKey}
                             </a>
                             <span className="contributors"> ({issue.contributors} contributor{issue.contributors !== 1 ? 's' : ''})</span>
@@ -1464,7 +1651,14 @@ function App() {
                         {currentDocument.created_issues.map((issue, idx) => (
                           <li key={idx}>
                             {issue.key ? (
-                              <a href={`/browse/${issue.key}`} target="_blank" rel="noopener noreferrer">
+                              <a 
+                                href={`/browse/${issue.key}`}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  navigateToIssue(issue.key);
+                                }}
+                                style={{ cursor: 'pointer' }}
+                              >
                                 {issue.key} - {issue.type}: {issue.summary}
                               </a>
                             ) : (

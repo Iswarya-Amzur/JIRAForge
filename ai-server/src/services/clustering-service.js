@@ -1,5 +1,10 @@
-const openai = require('../config/openai');
+const OpenAI = require('openai');
 const logger = require('../utils/logger');
+
+// Initialize OpenAI client
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
 /**
  * Create clustering input text from session data
@@ -33,7 +38,7 @@ exports.clusterUnassignedWork = async (sessions, userIssues = []) => {
 
     // Create input text for each session
     const sessionDescriptions = sessions.map((session, index) => {
-      return `Session ${index + 1} (ID: ${session.screenshot_id}, Time: ${session.time_spent_seconds}s):
+      return `Session ${index + 1} (ID: ${session.id}, Time: ${session.time_spent_seconds}s):
 ${createClusteringInput(session)}`;
     }).join('\n\n');
 
@@ -108,7 +113,7 @@ Return ONLY valid JSON in this exact format (no markdown, no backticks):
     const enrichedGroups = clusteringResult.groups.map(group => {
       const groupSessions = group.session_indices.map(idx => sessions[idx - 1]).filter(Boolean);
       const totalSeconds = groupSessions.reduce((sum, s) => sum + (s.time_spent_seconds || 0), 0);
-      const sessionIds = groupSessions.map(s => s.screenshot_id);
+      const sessionIds = groupSessions.map(s => s.id);
 
       return {
         ...group,

@@ -14,6 +14,11 @@ function UnassignedWork() {
   const [userIssues, setUserIssues] = useState([]);
   const [userProjects, setUserProjects] = useState([]);
 
+  // Accordion states
+  const [expandedGroups, setExpandedGroups] = useState(new Set());
+  const [groupScreenshots, setGroupScreenshots] = useState({});
+  const [loadingScreenshots, setLoadingScreenshots] = useState({});
+
   // Form states
   const [selectedIssueKey, setSelectedIssueKey] = useState('');
   const [newIssueSummary, setNewIssueSummary] = useState('');
@@ -21,6 +26,9 @@ function UnassignedWork() {
   const [selectedProject, setSelectedProject] = useState('');
   const [issueType, setIssueType] = useState('Task');
   const [assigning, setAssigning] = useState(false);
+  const [selectedStatus, setSelectedStatus] = useState('To Do');
+  const [availableStatuses, setAvailableStatuses] = useState([]);
+  const [assignToMe, setAssignToMe] = useState(true);
 
   useEffect(() => {
     loadUnassignedWork();
@@ -28,21 +36,38 @@ function UnassignedWork() {
     loadUserProjects();
   }, []);
 
+  // Load statuses when project changes
+  useEffect(() => {
+    if (selectedProject) {
+      loadProjectStatuses(selectedProject);
+    }
+  }, [selectedProject]);
+
   const loadUnassignedWork = async () => {
     setLoading(true);
     setError(null);
     try {
-      const result = await invoke('getUnassignedWork', { limit: 100 });
+      // Load pre-clustered groups from database (AI server creates these automatically)
+      const groupsResult = await invoke('getUnassignedGroups');
 
-      if (result.success) {
-        setSessions(result.sessions || []);
+      if (groupsResult.success) {
+        // Filter out groups with no valid sessions (data inconsistency)
+        const validGroups = (groupsResult.groups || []).filter(g => 
+          g.session_ids && Array.isArray(g.session_ids) && g.session_ids.length > 0
+        );
+        setGroups(validGroups);
+        
+        if (validGroups.length < (groupsResult.groups || []).length) {
+          console.warn(`Filtered out ${(groupsResult.groups || []).length - validGroups.length} groups with no valid sessions`);
+        }
 
-        // Auto-cluster if we have sessions
-        if (result.sessions && result.sessions.length > 0) {
-          await clusterSessions(result.sessions);
+        // Also load individual sessions for display purposes
+        const sessionsResult = await invoke('getUnassignedWork', { limit: 100 });
+        if (sessionsResult.success) {
+          setSessions(sessionsResult.sessions || []);
         }
       } else {
-        setError(result.error || 'Failed to load unassigned work');
+        setError(groupsResult.error || 'Failed to load unassigned work');
       }
     } catch (err) {
       console.error('Error loading unassigned work:', err);
@@ -54,7 +79,7 @@ function UnassignedWork() {
 
   const loadUserIssues = async () => {
     try {
-      const result = await invoke('getUserAssignedIssues');
+      const result = await invoke('getAllUserAssignedIssues');
       if (result.success) {
         setUserIssues(result.issues || []);
       }
@@ -77,24 +102,73 @@ function UnassignedWork() {
     }
   };
 
-  const clusterSessions = async (sessionsToCluster) => {
-    setClustering(true);
+  const loadProjectStatuses = async (projectKey) => {
     try {
-      const result = await invoke('clusterUnassignedWork', { sessions: sessionsToCluster });
-
+      const result = await invoke('getProjectStatuses', { projectKey });
       if (result.success) {
-        setGroups(result.groups || []);
-      } else {
-        console.error('Clustering failed:', result.error);
-        setError('Failed to cluster sessions: ' + result.error);
+        setAvailableStatuses(result.statuses || []);
+        // Set default status if available
+        if (result.statuses && result.statuses.length > 0) {
+          const toDoStatus = result.statuses.find(s => s.name === 'To Do');
+          setSelectedStatus(toDoStatus ? 'To Do' : result.statuses[0].name);
+        }
       }
     } catch (err) {
-      console.error('Error clustering sessions:', err);
-      setError('Error clustering sessions: ' + err.message);
-    } finally {
-      setClustering(false);
+      console.error('Error loading project statuses:', err);
+      // Set default statuses
+      setAvailableStatuses([
+        { name: 'To Do', id: '1' },
+        { name: 'In Progress', id: '3' },
+        { name: 'Done', id: '10001' }
+      ]);
     }
   };
+
+  const toggleGroup = async (groupId, sessionIds) => {
+    const newExpanded = new Set(expandedGroups);
+
+    if (newExpanded.has(groupId)) {
+      // Collapse
+      newExpanded.delete(groupId);
+    } else {
+      // Expand - load screenshots if not already loaded
+      newExpanded.add(groupId);
+
+      if (!groupScreenshots[groupId] && sessionIds && sessionIds.length > 0) {
+        setLoadingScreenshots(prev => ({ ...prev, [groupId]: true }));
+        try {
+          console.log('[UnassignedWork] Fetching screenshots for group:', groupId, 'with session IDs:', sessionIds);
+          const result = await invoke('getGroupScreenshots', { sessionIds });
+          console.log('[UnassignedWork] Screenshot result:', result);
+          if (result.success) {
+            setGroupScreenshots(prev => ({ ...prev, [groupId]: result.screenshots || [] }));
+          } else {
+            console.error('[UnassignedWork] Failed to load screenshots:', result.error);
+          }
+        } catch (err) {
+          console.error('Error loading screenshots for group:', err);
+        } finally {
+          setLoadingScreenshots(prev => ({ ...prev, [groupId]: false }));
+        }
+      }
+    }
+
+    setExpandedGroups(newExpanded);
+  };
+
+  const formatTimestamp = (timestamp) => {
+    const date = new Date(timestamp);
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+  };
+
+  // NOTE: Clustering is now done automatically by the AI server
+  // Groups are fetched directly from database via getUnassignedGroups
 
   const handleAssignClick = (group) => {
     setSelectedGroup(group);
@@ -117,12 +191,18 @@ function UnassignedWork() {
       return;
     }
 
+    // Validate session IDs before proceeding
+    if (!selectedGroup.session_ids || !Array.isArray(selectedGroup.session_ids) || selectedGroup.session_ids.length === 0) {
+      alert('No sessions available in this group. Please select a different group.');
+      return;
+    }
+
     setAssigning(true);
     try {
       const result = await invoke('assignToExistingIssue', {
         sessionIds: selectedGroup.session_ids,
         issueKey: selectedIssueKey,
-        groupId: generateGroupId(),
+        groupId: selectedGroup.id, // Use actual UUID from database
         totalSeconds: selectedGroup.total_seconds
       });
 
@@ -154,6 +234,12 @@ function UnassignedWork() {
       return;
     }
 
+    // Validate session IDs before proceeding
+    if (!selectedGroup.session_ids || !Array.isArray(selectedGroup.session_ids) || selectedGroup.session_ids.length === 0) {
+      alert('No sessions available in this group. Please select a different group.');
+      return;
+    }
+
     setAssigning(true);
     try {
       const result = await invoke('createIssueAndAssign', {
@@ -163,7 +249,9 @@ function UnassignedWork() {
         projectKey: selectedProject,
         issueType: issueType,
         totalSeconds: selectedGroup.total_seconds,
-        groupId: generateGroupId()
+        groupId: selectedGroup.id, // Use actual UUID from database
+        assigneeAccountId: assignToMe ? null : null, // null means use current user (default)
+        statusName: selectedStatus
       });
 
       if (result.success) {
@@ -183,12 +271,16 @@ function UnassignedWork() {
     }
   };
 
-  const generateGroupId = () => {
-    return 'group_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-  };
+  // Removed generateGroupId - now using actual group.id from database
 
   const getTotalTime = () => {
-    return sessions.reduce((sum, s) => sum + (s.time_spent_seconds || 0), 0);
+    // Calculate from groups instead of all sessions to match displayed data
+    return groups.reduce((sum, g) => sum + (g.total_seconds || 0), 0);
+  };
+
+  const getTotalSessions = () => {
+    // Count sessions from groups instead of all sessions
+    return groups.reduce((sum, g) => sum + (g.session_count || 0), 0);
   };
 
   const formatDuration = (seconds) => {
@@ -230,7 +322,7 @@ function UnassignedWork() {
         <h2>Unassigned Work</h2>
         <div className="unassigned-work-summary">
           <span className="summary-item">
-            <strong>{sessions.length}</strong> sessions
+            <strong>{getTotalSessions()}</strong> sessions
           </span>
           <span className="summary-divider">•</span>
           <span className="summary-item">
@@ -249,55 +341,138 @@ function UnassignedWork() {
         </div>
       )}
 
-      {groups.length === 0 && !clustering && (
+      {groups.length === 0 && !clustering && sessions.length > 0 && (
         <div className="no-groups-message">
-          No groups created. Click "Re-cluster" to group sessions.
-          <button onClick={() => clusterSessions(sessions)}>Re-cluster</button>
+          <p>No groups available yet.</p>
+          <p>The AI server automatically groups similar sessions every 5 minutes.</p>
+          <p>Check back shortly or wait for automatic grouping to complete.</p>
         </div>
       )}
 
-      <div className="groups-list">
-        {groups.map((group, index) => (
-          <div key={index} className={`group-card confidence-${group.confidence}`}>
-            <div className="group-header">
-              <h3 className="group-label">{group.label}</h3>
-              <span className={`confidence-badge confidence-${group.confidence}`}>
-                {group.confidence} confidence
-              </span>
-            </div>
+      <div className="groups-accordion">
+        {groups.map((group, index) => {
+          const isExpanded = expandedGroups.has(group.id);
+          const screenshots = groupScreenshots[group.id] || [];
+          const isLoadingScreenshots = loadingScreenshots[group.id];
 
-            <p className="group-description">{group.description}</p>
-
-            <div className="group-stats">
-              <div className="stat">
-                <span className="stat-label">Sessions:</span>
-                <span className="stat-value">{group.session_count}</span>
-              </div>
-              <div className="stat">
-                <span className="stat-label">Total Time:</span>
-                <span className="stat-value">{group.total_time_formatted}</span>
-              </div>
-            </div>
-
-            {group.recommendation && (
-              <div className={`group-recommendation recommendation-${group.recommendation.action}`}>
-                <strong>AI Recommendation:</strong> {group.recommendation.reason}
-                {group.recommendation.suggested_issue_key && (
-                  <div className="suggested-issue">
-                    Suggested Issue: <strong>{group.recommendation.suggested_issue_key}</strong>
+          return (
+            <div key={group.id || index} className={`accordion-item confidence-${group.confidence}`}>
+              <div
+                className="accordion-header"
+                onClick={() => toggleGroup(group.id, group.session_ids)}
+              >
+                <div className="accordion-header-left">
+                  <span className="accordion-toggle">
+                    {isExpanded ? '▼' : '▶'}
+                  </span>
+                  <div className="group-title-section">
+                    <h3 className="group-label">{group.label || 'Untitled Group'}</h3>
+                    {!isExpanded && group.description && (
+                      <p className="group-description-preview">{group.description}</p>
+                    )}
                   </div>
-                )}
+                  <span className={`confidence-badge confidence-${group.confidence}`}>
+                    {group.confidence}
+                  </span>
+                </div>
+                <div className="accordion-header-right">
+                  <div className="stat-compact">
+                    <span className="stat-icon">📸</span>
+                    <span className="stat-value">{group.session_count}</span>
+                  </div>
+                  <div className="stat-compact">
+                    <span className="stat-icon">⏱️</span>
+                    <span className="stat-value">{group.total_time_formatted}</span>
+                  </div>
+                  <button
+                    className="assign-button-compact"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleAssignClick(group);
+                    }}
+                  >
+                    Assign
+                  </button>
+                </div>
               </div>
-            )}
 
-            <button
-              className="assign-button"
-              onClick={() => handleAssignClick(group)}
-            >
-              Assign This Group
-            </button>
-          </div>
-        ))}
+              {isExpanded && (
+                <div className="accordion-content">
+                  <p className="group-description">{group.description}</p>
+
+                  {group.recommendation && (
+                    <div className={`group-recommendation recommendation-${group.recommendation.action}`}>
+                      <strong>AI Recommendation:</strong> {group.recommendation.reason}
+                      {group.recommendation.suggested_issue_key && (
+                        <div className="suggested-issue">
+                          Suggested Issue: <strong>{group.recommendation.suggested_issue_key}</strong>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="screenshots-section">
+                    <h4 className="screenshots-title">
+                      Screenshots ({group.session_count})
+                    </h4>
+
+                    {isLoadingScreenshots && (
+                      <div className="loading-screenshots">Loading screenshots...</div>
+                    )}
+
+                    {!isLoadingScreenshots && screenshots.length === 0 && (
+                      <div className="no-screenshots">No screenshots available</div>
+                    )}
+
+                    {!isLoadingScreenshots && screenshots.length > 0 && (
+                      <div className="screenshots-grid">
+                        {screenshots.map((screenshot, idx) => (
+                          <div key={screenshot.id || idx} className="screenshot-card">
+                            <div className="screenshot-thumbnail">
+                              {screenshot.signed_thumbnail_url ? (
+                                <img
+                                  src={screenshot.signed_thumbnail_url}
+                                  alt={`Screenshot ${idx + 1}`}
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="screenshot-placeholder">
+                                  📷 No preview
+                                </div>
+                              )}
+                            </div>
+                            <div className="screenshot-info">
+                              <div className="screenshot-time">
+                                {formatTimestamp(screenshot.timestamp)}
+                              </div>
+                              <div className="screenshot-details">
+                                <div className="screenshot-app" title={screenshot.application_name}>
+                                  {screenshot.application_name || 'Unknown'}
+                                </div>
+                                <div className="screenshot-window" title={screenshot.window_title}>
+                                  {screenshot.window_title || 'No title'}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="accordion-actions">
+                    <button
+                      className="assign-button-full"
+                      onClick={() => handleAssignClick(group)}
+                    >
+                      Assign This Group
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* Assignment Modal */}
@@ -411,6 +586,39 @@ function UnassignedWork() {
                       <option value="Bug">Bug</option>
                       <option value="Story">Story</option>
                     </select>
+                  </label>
+
+                  <label>
+                    Status: *
+                    <select
+                      value={selectedStatus}
+                      onChange={(e) => setSelectedStatus(e.target.value)}
+                      required
+                    >
+                      {availableStatuses.length > 0 ? (
+                        availableStatuses.map(status => (
+                          <option key={status.id || status.name} value={status.name}>
+                            {status.name}
+                          </option>
+                        ))
+                      ) : (
+                        <>
+                          <option value="To Do">To Do</option>
+                          <option value="In Progress">In Progress</option>
+                          <option value="Done">Done</option>
+                        </>
+                      )}
+                    </select>
+                    <small>Selecting a status prevents the issue from going to backlog</small>
+                  </label>
+
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={assignToMe}
+                      onChange={(e) => setAssignToMe(e.target.checked)}
+                    />
+                    Assign to me (current user)
                   </label>
 
                   <div className="time-preview">

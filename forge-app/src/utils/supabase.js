@@ -100,7 +100,33 @@ export async function supabaseRequest(supabaseConfig, endpoint, options = {}) {
     throw new Error(`Supabase request failed: ${error}`);
   }
 
-  return response.json();
+  // Handle empty responses (204 No Content) from PATCH/DELETE operations
+  if (response.status === 204) {
+    // 204 No Content - return empty array for PATCH operations that need data
+    return options.method === 'PATCH' ? [] : null;
+  }
+
+  // Check content-type before parsing
+  const contentType = response.headers.get('content-type');
+  const text = await response.text();
+  
+  // Handle empty responses
+  if (!text || text.trim() === '') {
+    return options.method === 'PATCH' ? [] : null;
+  }
+
+  // Parse JSON response
+  try {
+    return JSON.parse(text);
+  } catch (parseError) {
+    console.error('Failed to parse JSON response:', {
+      status: response.status,
+      contentType,
+      text: text.substring(0, 200),
+      url
+    });
+    throw new Error(`Invalid JSON response from Supabase: ${text.substring(0, 100)}`);
+  }
 }
 
 /**
