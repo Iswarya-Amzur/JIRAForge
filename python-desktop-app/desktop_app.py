@@ -910,6 +910,22 @@ class BRDTimeTracker:
         
         print("[OK] Tracking stopped")
     
+    def pause_tracking(self):
+        """Pause screenshot tracking (can be resumed)"""
+        if self.tracking_active:
+            self.tracking_active = False
+            self.update_tray_icon()
+            print("[OK] Tracking paused")
+    
+    def resume_tracking(self):
+        """Resume screenshot tracking"""
+        if not self.tracking_active and self.running:
+            self.tracking_active = True
+            self.is_idle = False
+            self.last_activity_time = time.time()
+            self.update_tray_icon()
+            print("[OK] Tracking resumed")
+    
     def create_tray_icon(self, state='blue'):
         """
         Create a system tray icon image with color based on state
@@ -987,23 +1003,26 @@ class BRDTimeTracker:
             initial_state = self.get_tray_icon_state()
             icon_image = self.create_tray_icon(initial_state)
             
-            # Create dynamic menu that updates based on tracking state
-            def create_menu():
-                if not self.current_user:
-                    return pystray.Menu(
-                        item('Login', lambda: webbrowser.open(f'http://localhost:{self.web_port}/login')),
-                        item('Quit', lambda: self.quit_app())
-                    )
-                else:
-                    tracking_status = "Stop Tracking" if self.tracking_active else "Start Tracking"
-                    return pystray.Menu(
-                        item('Dashboard', lambda: webbrowser.open(f'http://localhost:{self.web_port}/dashboard')),
-                        item(tracking_status, 
-                             lambda: self.stop_tracking() if self.tracking_active else self.start_tracking()),
-                        item('Quit', lambda: self.quit_app())
-                    )
-            
-            self.tray = pystray.Icon("BRD Time Tracker", icon_image, menu=create_menu())
+            # Create menu - Show current user or "Login"
+            users_action = lambda: webbrowser.open(
+                f'http://localhost:{self.web_port}/login' if not self.current_user
+                else f'http://localhost:{self.web_port}/dashboard'
+            )
+
+            # Create static menu (pystray will call visible/enabled functions dynamically)
+            menu = pystray.Menu(
+                item(
+                    lambda text: f"👤 {self.current_user.get('email', 'User')}" if self.current_user else "Login",
+                    users_action
+                ),
+                item(
+                    lambda text: "Resume" if (self.current_user and self.running and not self.tracking_active) else "Pause",
+                    lambda: self.resume_tracking() if (self.current_user and self.running and not self.tracking_active) else self.pause_tracking() if (self.current_user and self.running and self.tracking_active) else None,
+                    enabled=lambda item: self.current_user and self.running
+                )
+            )
+
+            self.tray = pystray.Icon("BRD Time Tracker", icon_image, menu=menu)
             
             # Start a thread to periodically update the icon
             def update_icon_periodically():
@@ -1030,10 +1049,25 @@ class BRDTimeTracker:
                     'orange': '#FF9800'
                 }
                 icon_image = PILImage.new('RGB', (16, 16), color=color_map.get(state, '#0052CC'))
-                menu = pystray.Menu(
-                    item('Dashboard', lambda: webbrowser.open(f'http://localhost:{self.web_port}/dashboard')),
-                    item('Quit', lambda: self.quit_app())
+                
+                # Create fallback menu
+                users_action = lambda: webbrowser.open(
+                    f'http://localhost:{self.web_port}/login' if not self.current_user
+                    else f'http://localhost:{self.web_port}/dashboard'
                 )
+
+                menu = pystray.Menu(
+                    item(
+                        lambda text: f"👤 {self.current_user.get('email', 'User')}" if self.current_user else "Login",
+                        users_action
+                    ),
+                    item(
+                        lambda text: "Resume" if (self.current_user and self.running and not self.tracking_active) else "Pause",
+                        lambda: self.resume_tracking() if (self.current_user and self.running and not self.tracking_active) else self.pause_tracking() if (self.current_user and self.running and self.tracking_active) else None,
+                        enabled=lambda item: self.current_user and self.running
+                    )
+                )
+
                 self.tray = pystray.Icon("BRD Time Tracker", icon_image, menu=menu)
                 self.tray.run()
             except Exception as e2:
