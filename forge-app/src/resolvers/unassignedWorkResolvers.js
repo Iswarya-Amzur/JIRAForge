@@ -5,7 +5,7 @@
 
 import api, { route } from '@forge/api';
 import { fetch } from '@forge/api';
-import { getSupabaseConfig, getOrCreateUser, supabaseRequest } from '../utils/supabase.js';
+import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, supabaseRequest } from '../utils/supabase.js';
 import { getAllUserAssignedIssues as getAllUserAssignedIssuesUtil, formatIssuesData, getIssueTransitions, transitionIssue } from '../utils/jira.js';
 
 /**
@@ -13,7 +13,7 @@ import { getAllUserAssignedIssues as getAllUserAssignedIssuesUtil, formatIssuesD
  */
 async function getUnassignedWork(req) {
   try {
-    const { accountId } = req.context;
+    const { accountId, cloudId } = req.context;
     const { limit, offset, dateFrom, dateTo } = req.payload || {};
 
     const supabaseConfig = await getSupabaseConfig(accountId);
@@ -21,10 +21,16 @@ async function getUnassignedWork(req) {
       return { success: false, error: 'Supabase not configured' };
     }
 
-    const userId = await getOrCreateUser(accountId, supabaseConfig);
+    // Get or create organization first (multi-tenancy)
+    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+    if (!organization) {
+      return { success: false, error: 'Unable to get organization information' };
+    }
 
-    // Build query string
-    let query = `analysis_results?select=*,screenshots(id,window_title,application_name,timestamp,thumbnail_url,storage_path)&user_id=eq.${userId}&active_task_key=is.null&order=created_at.desc`;
+    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+
+    // Build query string - filter by organization_id for multi-tenancy
+    let query = `analysis_results?select=*,screenshots(id,window_title,application_name,timestamp,thumbnail_url,storage_path)&user_id=eq.${userId}&organization_id=eq.${organization.id}&active_task_key=is.null&order=created_at.desc`;
 
     if (limit) query += `&limit=${limit}`;
     if (offset) query += `&offset=${offset}`;
@@ -98,19 +104,25 @@ function formatJiraDate(date = new Date()) {
  */
 async function getUnassignedGroups(req) {
   try {
-    const { accountId } = req.context;
+    const { accountId, cloudId } = req.context;
 
     const supabaseConfig = await getSupabaseConfig(accountId);
     if (!supabaseConfig) {
       return { success: false, error: 'Supabase not configured' };
     }
 
-    const userId = await getOrCreateUser(accountId, supabaseConfig);
+    // Get or create organization first (multi-tenancy)
+    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+    if (!organization) {
+      return { success: false, error: 'Unable to get organization information' };
+    }
 
-    // Fetch unassigned groups for this user
+    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+
+    // Fetch unassigned groups for this user - filter by organization_id for multi-tenancy
     const groups = await supabaseRequest(
       supabaseConfig,
-      `unassigned_work_groups?user_id=eq.${userId}&is_assigned=eq.false&order=created_at.desc`
+      `unassigned_work_groups?user_id=eq.${userId}&organization_id=eq.${organization.id}&is_assigned=eq.false&order=created_at.desc`
     );
 
     if (!groups || groups.length === 0) {
@@ -252,7 +264,7 @@ async function getUnassignedGroups(req) {
  */
 async function assignToExistingIssue(req) {
   try {
-    const { accountId } = req.context;
+    const { accountId, cloudId } = req.context;
     const { sessionIds, issueKey, groupId, totalSeconds } = req.payload;
 
     if (!sessionIds || !Array.isArray(sessionIds) || sessionIds.length === 0) {
@@ -268,7 +280,13 @@ async function assignToExistingIssue(req) {
       return { success: false, error: 'Supabase not configured' };
     }
 
-    const userId = await getOrCreateUser(accountId, supabaseConfig);
+    // Get or create organization first (multi-tenancy)
+    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+    if (!organization) {
+      return { success: false, error: 'Unable to get organization information' };
+    }
+
+    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
 
     // 1. Update unassigned_activity records and fetch analysis_result_ids
     // PostgREST in operator doesn't need quotes around UUIDs - just comma-separated values
@@ -402,7 +420,7 @@ async function assignToExistingIssue(req) {
  */
 async function createIssueAndAssign(req) {
   try {
-    const { accountId } = req.context;
+    const { accountId, cloudId } = req.context;
     const { sessionIds, issueSummary, issueDescription, projectKey, issueType, totalSeconds, groupId, assigneeAccountId, statusName } = req.payload;
 
     if (!sessionIds || sessionIds.length === 0) {
@@ -422,7 +440,13 @@ async function createIssueAndAssign(req) {
       return { success: false, error: 'Supabase not configured' };
     }
 
-    const userId = await getOrCreateUser(accountId, supabaseConfig);
+    // Get or create organization first (multi-tenancy)
+    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+    if (!organization) {
+      return { success: false, error: 'Unable to get organization information' };
+    }
+
+    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
 
     // Build issue fields
     const issueFields = {
@@ -595,7 +619,7 @@ async function createIssueAndAssign(req) {
       worklog = await worklogResponse.json();
     }
 
-    // Cache the new issue for future AI analysis
+    // Cache the new issue for future AI analysis - include organization_id for multi-tenancy
     await supabaseRequest(
       supabaseConfig,
       'user_jira_issues_cache',
@@ -604,6 +628,7 @@ async function createIssueAndAssign(req) {
         headers: { 'Prefer': 'return=representation' },
         body: {
           user_id: userId,
+          organization_id: organization.id,
           issue_key: newIssueKey,
           summary: issueSummary,
           status: 'To Do',
@@ -612,20 +637,21 @@ async function createIssueAndAssign(req) {
       }
     );
 
-    // Log created issue
+    // Log created issue - include organization_id for multi-tenancy
     const logBody = {
       user_id: userId,
+      organization_id: organization.id,
       issue_key: newIssueKey,
       issue_summary: issueSummary,
       session_count: sessionIds.length,
       total_time_seconds: totalSeconds
     };
-    
+
     // Only include assignment_group_id if groupId is a valid UUID
     if (groupId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(groupId)) {
       logBody.assignment_group_id = groupId;
     }
-    
+
     await supabaseRequest(
       supabaseConfig,
       'created_issues_log',
@@ -776,7 +802,7 @@ async function getProjectStatuses(req) {
  */
 async function getGroupScreenshots(req) {
   try {
-    const { accountId } = req.context;
+    const { accountId, cloudId } = req.context;
     const { sessionIds } = req.payload;
 
     console.log(`[getGroupScreenshots] Received ${sessionIds?.length || 0} session IDs`);
@@ -790,7 +816,13 @@ async function getGroupScreenshots(req) {
       return { success: false, error: 'Supabase not configured' };
     }
 
-    const userId = await getOrCreateUser(accountId, supabaseConfig);
+    // Get or create organization first (multi-tenancy)
+    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+    if (!organization) {
+      return { success: false, error: 'Unable to get organization information' };
+    }
+
+    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
 
     // Get unassigned_activity records with their screenshot information
     const sessionIdsParam = sessionIds.join(',');

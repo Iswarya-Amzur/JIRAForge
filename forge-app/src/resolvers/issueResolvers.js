@@ -43,9 +43,10 @@ export function registerIssueResolvers(resolver) {
   resolver.define('updateUserAssignedIssuesCache', async (req) => {
     const { context } = req;
     const accountId = context.accountId;
+    const cloudId = context.cloudId;  // Multi-tenancy: Get Jira Cloud ID from context
 
     try {
-      const result = await updateAssignedIssuesCache(accountId);
+      const result = await updateAssignedIssuesCache(accountId, cloudId);
       return {
         success: true,
         cached: result.cached,
@@ -67,9 +68,10 @@ export function registerIssueResolvers(resolver) {
   resolver.define('getActiveIssuesWithTime', async (req) => {
     const { context } = req;
     const accountId = context.accountId;
+    const cloudId = context.cloudId;  // Multi-tenancy: Get Jira Cloud ID from context
 
     try {
-      const result = await getActiveIssuesWithTime(accountId);
+      const result = await getActiveIssuesWithTime(accountId, cloudId);
       return {
         success: true,
         issues: result.issues,

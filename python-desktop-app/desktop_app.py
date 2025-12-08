@@ -284,6 +284,11 @@ class BRDTimeTracker:
         self.issues_cache_time = None  # Last time issues were fetched
         self.issues_cache_ttl = 300  # 5 minutes cache TTL
         self.jira_cloud_id = None  # Cached Jira cloud ID
+
+        # Multi-tenancy: Organization info
+        self.organization_id = None  # UUID from public.organizations table
+        self.organization_name = None  # Organization name (Jira site name)
+        self.jira_instance_url = None  # Jira instance URL
         
         # AI analysis is handled by the separate AI server
         # Desktop app only captures and uploads screenshots
@@ -470,40 +475,100 @@ class BRDTimeTracker:
                 return jsonify({'error': str(e)}), 500
     
     def ensure_user_exists(self, atlassian_user):
-        """Ensure user exists in Supabase users table"""
+        """Ensure user exists in Supabase users table and is linked to organization"""
         account_id = atlassian_user.get('account_id')
         email = atlassian_user.get('email')
         name = atlassian_user.get('name', email.split('@')[0] if email else 'User')
-        
+
         if not account_id:
             raise ValueError("No account_id in Atlassian user info")
-        
+
+        # First, ensure we have organization info
+        if not self.organization_id:
+            self.get_jira_cloud_id()  # This will also register the organization
+
         # Use service client to bypass RLS
         client = self.supabase_service if self.supabase_service else self.supabase
-        
+
         # Check if user exists
-        result = client.table('users').select('id').eq(
+        result = client.table('users').select('id, organization_id').eq(
             'atlassian_account_id', account_id
         ).execute()
-        
+
         if result.data:
             user_id = result.data[0]['id']
+            existing_org_id = result.data[0].get('organization_id')
             print(f"[OK] Found existing user: {user_id}")
+
+            # Update user's organization if not set or different
+            if self.organization_id and existing_org_id != self.organization_id:
+                client.table('users').update({
+                    'organization_id': self.organization_id,
+                    'display_name': name,
+                    'email': email
+                }).eq('id', user_id).execute()
+                print(f"[OK] Updated user organization to: {self.organization_id}")
+
+                # Ensure organization membership exists
+                self._ensure_organization_membership(user_id)
         else:
-            # Create new user
+            # Create new user with organization
             user_data = {
                 'atlassian_account_id': account_id,
                 'email': email,
-                'display_name': name
+                'display_name': name,
+                'organization_id': self.organization_id
             }
             create_result = client.table('users').insert(user_data).execute()
             if create_result.data:
                 user_id = create_result.data[0]['id']
                 print(f"[OK] Created new user: {user_id}")
+
+                # Create organization membership
+                self._ensure_organization_membership(user_id)
             else:
                 raise Exception("Failed to create user")
-        
+
         return user_id
+
+    def _ensure_organization_membership(self, user_id):
+        """Ensure user has membership entry in organization_members table"""
+        if not self.organization_id or not user_id:
+            return
+
+        try:
+            client = self.supabase_service if self.supabase_service else self.supabase
+
+            # Check if membership exists
+            result = client.table('organization_members').select('id').eq(
+                'user_id', user_id
+            ).eq('organization_id', self.organization_id).execute()
+
+            if not result.data:
+                # Create membership - first user becomes owner, others are members
+                # Check if org has any members
+                member_count = client.table('organization_members').select('id', count='exact').eq(
+                    'organization_id', self.organization_id
+                ).execute()
+
+                is_first_user = member_count.count == 0 if hasattr(member_count, 'count') else len(member_count.data) == 0
+                role = 'owner' if is_first_user else 'member'
+
+                membership_data = {
+                    'user_id': user_id,
+                    'organization_id': self.organization_id,
+                    'role': role,
+                    'can_manage_settings': role in ['owner', 'admin'],
+                    'can_view_team_analytics': role in ['owner', 'admin', 'manager'],
+                    'can_manage_members': role in ['owner', 'admin'],
+                    'can_delete_screenshots': role in ['owner', 'admin'],
+                    'can_manage_billing': role == 'owner'
+                }
+                client.table('organization_members').insert(membership_data).execute()
+                print(f"[OK] Created organization membership with role: {role}")
+
+        except Exception as e:
+            print(f"[WARN] Failed to create organization membership: {e}")
     
     def get_jira_cloud_id(self):
         """Get Jira cloud ID for API calls with automatic token refresh on 401"""
@@ -540,8 +605,19 @@ class BRDTimeTracker:
                 resources = response.json()
                 print(f"[INFO] Found {len(resources)} accessible resources")
                 if resources:
-                    self.jira_cloud_id = resources[0]['id']
+                    # Get the first (selected during OAuth) resource
+                    selected_resource = resources[0]
+                    self.jira_cloud_id = selected_resource['id']
+                    self.organization_name = selected_resource.get('name', 'Unknown Organization')
+                    self.jira_instance_url = selected_resource.get('url', '')
+
                     print(f"[OK] Using Jira Cloud ID: {self.jira_cloud_id}")
+                    print(f"[OK] Organization: {self.organization_name}")
+                    print(f"[OK] Jira URL: {self.jira_instance_url}")
+
+                    # Register organization in database
+                    self.register_organization()
+
                     return self.jira_cloud_id
             else:
                 print(f"[ERROR] Failed to get resources: {response.status_code} - {response.text}")
@@ -549,6 +625,64 @@ class BRDTimeTracker:
             print(f"[ERROR] Failed to get Jira cloud ID: {e}")
 
         return None
+
+    def register_organization(self):
+        """Register or update organization in Supabase database"""
+        if not self.jira_cloud_id:
+            print("[WARN] Cannot register organization: No Jira Cloud ID")
+            return None
+
+        try:
+            # Use service client to bypass RLS
+            client = self.supabase_service if self.supabase_service else self.supabase
+
+            # Check if organization already exists
+            result = client.table('organizations').select('id').eq(
+                'jira_cloud_id', self.jira_cloud_id
+            ).execute()
+
+            if result.data:
+                # Organization exists
+                self.organization_id = result.data[0]['id']
+                print(f"[OK] Found existing organization: {self.organization_id}")
+
+                # Update organization info if changed
+                client.table('organizations').update({
+                    'org_name': self.organization_name,
+                    'jira_instance_url': self.jira_instance_url
+                }).eq('id', self.organization_id).execute()
+            else:
+                # Create new organization
+                org_data = {
+                    'jira_cloud_id': self.jira_cloud_id,
+                    'org_name': self.organization_name,
+                    'jira_instance_url': self.jira_instance_url,
+                    'subscription_status': 'active',
+                    'subscription_tier': 'free'
+                }
+                create_result = client.table('organizations').insert(org_data).execute()
+
+                if create_result.data:
+                    self.organization_id = create_result.data[0]['id']
+                    print(f"[OK] Created new organization: {self.organization_id}")
+
+                    # Create default organization settings
+                    settings_data = {
+                        'organization_id': self.organization_id,
+                        'screenshot_interval': self.capture_interval,
+                        'auto_worklog_enabled': True
+                    }
+                    client.table('organization_settings').insert(settings_data).execute()
+                    print(f"[OK] Created organization settings")
+                else:
+                    raise Exception("Failed to create organization")
+
+            return self.organization_id
+
+        except Exception as e:
+            print(f"[ERROR] Failed to register organization: {e}")
+            traceback.print_exc()
+            return None
 
     def fetch_jira_issues(self):
         """Fetch user's In Progress Jira issues with automatic token refresh on 401"""
@@ -756,6 +890,7 @@ class BRDTimeTracker:
                 # Save metadata to database (use service client to bypass RLS)
                 screenshot_data = {
                     'user_id': self.current_user_id,
+                    'organization_id': self.organization_id,  # Multi-tenancy support
                     'timestamp': timestamp.isoformat(),
                     'storage_url': screenshot_url,
                     'storage_path': storage_path,

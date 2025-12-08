@@ -16,7 +16,7 @@ This document describes the complete database architecture for implementing mult
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         MULTI-TENANT ARCHITECTURE                            │
+│                         MULTI-TENANT ARCHITECTURE                           │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────┐

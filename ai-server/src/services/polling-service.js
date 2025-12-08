@@ -147,6 +147,7 @@ class PollingService {
     const {
       id: screenshot_id,
       user_id,
+      organization_id,  // Multi-tenancy: Get organization_id from screenshot
       storage_url,
       storage_path,
       window_title,
@@ -176,8 +177,9 @@ class PollingService {
     }
 
     // If no assigned issues in screenshot metadata, fetch from cache
+    // Pass organization_id for multi-tenancy filtering
     if (!parsedAssignedIssues || parsedAssignedIssues.length === 0) {
-      const cachedIssues = await supabaseService.getUserCachedIssues(user_id);
+      const cachedIssues = await supabaseService.getUserCachedIssues(user_id, organization_id);
       parsedAssignedIssues = cachedIssues.map(issue => ({
         key: issue.issue_key,
         summary: issue.summary,
@@ -199,10 +201,11 @@ class PollingService {
       userAssignedIssues: parsedAssignedIssues || []
     });
 
-    // Save analysis results to Supabase
+    // Save analysis results to Supabase - include organization_id for multi-tenancy
     await supabaseService.saveAnalysisResult({
       screenshot_id,
       user_id,
+      organization_id,  // Multi-tenancy: Pass organization_id from screenshot
       time_spent_seconds: analysis.timeSpentSeconds,
       active_task_key: analysis.taskKey,
       active_project_key: analysis.projectKey,

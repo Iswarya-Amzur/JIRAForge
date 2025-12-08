@@ -16,10 +16,11 @@ export function registerScreenshotResolvers(resolver) {
   resolver.define('getScreenshots', async (req) => {
     const { context, payload } = req;
     const accountId = context.accountId;
+    const cloudId = context.cloudId;  // Multi-tenancy: Get Jira Cloud ID from context
     const { limit = 50, offset = 0 } = payload || {};
 
     try {
-      const data = await fetchScreenshots(accountId, limit, offset);
+      const data = await fetchScreenshots(accountId, cloudId, limit, offset);
       return {
         success: true,
         data
@@ -40,9 +41,10 @@ export function registerScreenshotResolvers(resolver) {
     const { payload, context } = req;
     const { screenshotId } = payload;
     const accountId = context.accountId;
+    const cloudId = context.cloudId;  // Multi-tenancy: Get Jira Cloud ID from context
 
     try {
-      await deleteScreenshot(accountId, screenshotId);
+      await deleteScreenshot(accountId, cloudId, screenshotId);
       return {
         success: true,
         message: 'Screenshot deleted successfully'

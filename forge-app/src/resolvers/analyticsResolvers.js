@@ -16,9 +16,10 @@ export function registerAnalyticsResolvers(resolver) {
   resolver.define('getTimeAnalytics', async (req) => {
     const { context } = req;
     const accountId = context.accountId;
+    const cloudId = context.cloudId;  // Multi-tenancy: Get Jira Cloud ID from context
 
     try {
-      const data = await fetchTimeAnalytics(accountId);
+      const data = await fetchTimeAnalytics(accountId, cloudId);
       return {
         success: true,
         data
@@ -38,9 +39,10 @@ export function registerAnalyticsResolvers(resolver) {
   resolver.define('getAllAnalytics', async (req) => {
     const { context } = req;
     const accountId = context.accountId;
+    const cloudId = context.cloudId;  // Multi-tenancy: Get Jira Cloud ID from context
 
     try {
-      const data = await fetchAllAnalytics(accountId);
+      const data = await fetchAllAnalytics(accountId, cloudId);
       return {
         success: true,
         data
@@ -61,9 +63,10 @@ export function registerAnalyticsResolvers(resolver) {
     const { payload, context } = req;
     const { projectKey } = payload;
     const accountId = context.accountId;
+    const cloudId = context.cloudId;  // Multi-tenancy: Get Jira Cloud ID from context
 
     try {
-      const data = await fetchProjectAnalytics(accountId, projectKey);
+      const data = await fetchProjectAnalytics(accountId, cloudId, projectKey);
       return {
         success: true,
         data
@@ -85,9 +88,10 @@ export function registerAnalyticsResolvers(resolver) {
     const { payload, context } = req;
     const { projectKey } = payload;
     const accountId = context.accountId;
+    const cloudId = context.cloudId;  // Multi-tenancy: Get Jira Cloud ID from context
 
     try {
-      const data = await fetchProjectTeamAnalytics(accountId, projectKey);
+      const data = await fetchProjectTeamAnalytics(accountId, cloudId, projectKey);
       return {
         success: true,
         data

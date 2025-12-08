@@ -4,32 +4,39 @@
  */
 
 import { fetch } from '@forge/api';
-import { getSupabaseConfig, getOrCreateUser, supabaseRequest, generateSignedUrl } from '../utils/supabase.js';
+import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, supabaseRequest, generateSignedUrl } from '../utils/supabase.js';
 import { DEFAULT_PAGINATION_LIMIT, DEFAULT_PAGINATION_OFFSET } from '../config/constants.js';
 
 /**
  * Fetch screenshots for a user with pagination
  * @param {string} accountId - Atlassian account ID
+ * @param {string} cloudId - Jira Cloud ID for organization filtering
  * @param {number} limit - Number of screenshots to fetch
  * @param {number} offset - Pagination offset
  * @returns {Promise<Object>} Screenshots data with pagination info
  */
-export async function fetchScreenshots(accountId, limit = DEFAULT_PAGINATION_LIMIT, offset = DEFAULT_PAGINATION_OFFSET) {
+export async function fetchScreenshots(accountId, cloudId, limit = DEFAULT_PAGINATION_LIMIT, offset = DEFAULT_PAGINATION_OFFSET) {
   const supabaseConfig = await getSupabaseConfig(accountId);
   if (!supabaseConfig) {
     throw new Error('Supabase not configured. Please configure in Settings.');
   }
 
-  const userId = await getOrCreateUser(accountId, supabaseConfig);
+  // Get or create organization first
+  const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+  if (!organization) {
+    throw new Error('Unable to get organization information');
+  }
+
+  const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
   if (!userId) {
     throw new Error('Unable to get user information');
   }
 
   // Fetch screenshots with analysis results (to get issue info)
-  // Join with analysis_results to get active_task_key and time_spent_seconds
+  // Filter by both user_id AND organization_id for multi-tenancy
   const screenshots = await supabaseRequest(
     supabaseConfig,
-    `screenshots?user_id=eq.${userId}&deleted_at=is.null&select=*,analysis_results(active_task_key,active_project_key,time_spent_seconds)&order=timestamp.desc&limit=${limit}&offset=${offset}`
+    `screenshots?user_id=eq.${userId}&organization_id=eq.${organization.id}&deleted_at=is.null&select=*,analysis_results(active_task_key,active_project_key,time_spent_seconds)&order=timestamp.desc&limit=${limit}&offset=${offset}`
   );
 
   // Generate signed URLs for private storage images
@@ -79,9 +86,9 @@ export async function fetchScreenshots(accountId, limit = DEFAULT_PAGINATION_LIM
     })
   );
 
-  // Get total count for pagination
+  // Get total count for pagination (include organization filter)
   const countResponse = await fetch(
-    `${supabaseConfig.url}/rest/v1/screenshots?user_id=eq.${userId}&deleted_at=is.null&select=id`,
+    `${supabaseConfig.url}/rest/v1/screenshots?user_id=eq.${userId}&organization_id=eq.${organization.id}&deleted_at=is.null&select=id`,
     {
       method: 'HEAD',
       headers: {
@@ -105,24 +112,31 @@ export async function fetchScreenshots(accountId, limit = DEFAULT_PAGINATION_LIM
 /**
  * Delete a screenshot (soft delete)
  * @param {string} accountId - Atlassian account ID
+ * @param {string} cloudId - Jira Cloud ID for organization filtering
  * @param {string} screenshotId - Screenshot ID to delete
  * @returns {Promise<void>}
  */
-export async function deleteScreenshot(accountId, screenshotId) {
+export async function deleteScreenshot(accountId, cloudId, screenshotId) {
   const supabaseConfig = await getSupabaseConfig(accountId);
   if (!supabaseConfig) {
     throw new Error('Supabase not configured. Please configure in Settings.');
   }
 
-  const userId = await getOrCreateUser(accountId, supabaseConfig);
+  // Get organization
+  const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+  if (!organization) {
+    throw new Error('Unable to get organization information');
+  }
+
+  const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
   if (!userId) {
     throw new Error('Unable to get user information');
   }
 
-  // Verify screenshot belongs to user
+  // Verify screenshot belongs to user AND organization
   const screenshot = await supabaseRequest(
     supabaseConfig,
-    `screenshots?id=eq.${screenshotId}&user_id=eq.${userId}&select=id,storage_path`
+    `screenshots?id=eq.${screenshotId}&user_id=eq.${userId}&organization_id=eq.${organization.id}&select=id,storage_path`
   );
 
   if (!screenshot || screenshot.length === 0) {

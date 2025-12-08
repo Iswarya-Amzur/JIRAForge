@@ -3,7 +3,7 @@
  * Resolver definitions for debugging and diagnosing data issues
  */
 
-import { getSupabaseConfig, getOrCreateUser, supabaseRequest } from '../utils/supabase.js';
+import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, supabaseRequest } from '../utils/supabase.js';
 
 /**
  * Register diagnostic resolvers
@@ -18,6 +18,7 @@ export function registerDiagnosticResolvers(resolver) {
     const { payload, context } = req;
     const { targetDate } = payload; // Expected format: 'YYYY-MM-DD'
     const accountId = context.accountId;
+    const cloudId = context.cloudId;  // Multi-tenancy: Get Jira Cloud ID from context
 
     try {
       const supabaseConfig = await getSupabaseConfig(accountId);
@@ -28,7 +29,16 @@ export function registerDiagnosticResolvers(resolver) {
         };
       }
 
-      const userId = await getOrCreateUser(accountId, supabaseConfig);
+      // Get or create organization first (multi-tenancy)
+      const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+      if (!organization) {
+        return {
+          success: false,
+          error: 'Unable to get organization information'
+        };
+      }
+
+      const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
       if (!userId) {
         return {
           success: false,
@@ -36,11 +46,11 @@ export function registerDiagnosticResolvers(resolver) {
         };
       }
 
-      // Get all screenshots for the target date (checking both user-specific and all users)
+      // Get all screenshots for the target date - filter by organization_id for multi-tenancy
       // Use PostgreSQL date conversion to match the view logic
       const allScreenshots = await supabaseRequest(
         supabaseConfig,
-        `screenshots?select=id,timestamp,window_title,application_name,status,analysis_results(id,time_spent_seconds,active_task_key,work_type,created_at)&order=timestamp.asc&limit=1000`
+        `screenshots?organization_id=eq.${organization.id}&select=id,timestamp,window_title,application_name,status,analysis_results(id,time_spent_seconds,active_task_key,work_type,created_at)&order=timestamp.asc&limit=1000`
       );
 
       // Filter screenshots that match the target date when converted to UTC
@@ -50,8 +60,8 @@ export function registerDiagnosticResolvers(resolver) {
         return utcDate === targetDate;
       });
 
-      // Get daily_time_summary data for comparison
-      const dailySummaryQuery = `daily_time_summary?work_date=eq.${targetDate}`;
+      // Get daily_time_summary data for comparison - filter by organization_id
+      const dailySummaryQuery = `daily_time_summary?work_date=eq.${targetDate}&organization_id=eq.${organization.id}`;
       const dailySummary = await supabaseRequest(supabaseConfig, dailySummaryQuery);
 
       // Get user info for context

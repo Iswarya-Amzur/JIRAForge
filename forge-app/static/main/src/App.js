@@ -497,12 +497,6 @@ function App() {
 
   return (
     <div className="App">
-      <div className="App-top-bar">
-        <div className="App-top-bar-content">
-          <span className="App-brand">BRD & Time Tracker</span>
-          <span className="App-brand-badge">DEV</span>
-        </div>
-      </div>
       <div className="App-layout">
         <aside className={`App-sidebar ${sidebarOpen ? '' : 'collapsed'}`}>
           <div className="sidebar-header">
@@ -517,7 +511,7 @@ function App() {
               <span className="hamburger-line"></span>
             </button>
             {sidebarOpen && (
-              <h3 className="sidebar-title">BRD & Time Tracker</h3>
+              <h3 className="sidebar-title">Time Tracker</h3>
             )}
           </div>
           <nav className="sidebar-nav">

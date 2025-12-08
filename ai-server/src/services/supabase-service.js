@@ -239,14 +239,22 @@ exports.getPendingScreenshots = async (limit = 10) => {
 /**
  * Fetch user's cached Jira issues
  * @param {string} userId - User ID
+ * @param {string} organizationId - Organization ID for multi-tenancy filtering (optional)
  * @returns {Array} Array of cached Jira issues
  */
-exports.getUserCachedIssues = async (userId) => {
+exports.getUserCachedIssues = async (userId, organizationId = null) => {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('user_jira_issues_cache')
       .select('*')
       .eq('user_id', userId);
+
+    // Filter by organization if provided
+    if (organizationId) {
+      query = query.eq('organization_id', organizationId);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       throw error;
@@ -262,12 +270,12 @@ exports.getUserCachedIssues = async (userId) => {
 /**
  * Fetch unassigned work sessions for a user
  * @param {string} userId - User ID
- * @param {Object} options - Query options (limit, offset, dateFrom, dateTo)
+ * @param {Object} options - Query options (limit, offset, dateFrom, dateTo, organizationId)
  * @returns {Array} Array of unassigned work sessions with screenshot data
  */
 exports.getUnassignedWork = async (userId, options = {}) => {
   try {
-    const { limit = 100, offset = 0, dateFrom = null, dateTo = null } = options;
+    const { limit = 100, offset = 0, dateFrom = null, dateTo = null, organizationId = null } = options;
 
     let query = supabase
       .from('analysis_results')
@@ -288,6 +296,11 @@ exports.getUnassignedWork = async (userId, options = {}) => {
       .order('created_at', { ascending: false })
       .limit(limit)
       .range(offset, offset + limit - 1);
+
+    // Filter by organization if provided (multi-tenancy)
+    if (organizationId) {
+      query = query.eq('organization_id', organizationId);
+    }
 
     // Add date filters if provided
     if (dateFrom) {
@@ -358,15 +371,23 @@ exports.assignWorkGroup = async (sessionIds, issueKey, metadata = {}) => {
 /**
  * Get count of unassigned work sessions
  * @param {string} userId - User ID
+ * @param {string} organizationId - Organization ID for multi-tenancy filtering (optional)
  * @returns {Promise<number>} Count of unassigned sessions
  */
-exports.getUnassignedWorkCount = async (userId) => {
+exports.getUnassignedWorkCount = async (userId, organizationId = null) => {
   try {
-    const { count, error } = await supabase
+    let query = supabase
       .from('analysis_results')
       .select('id', { count: 'exact', head: true })
       .eq('user_id', userId)
       .is('active_task_key', null);
+
+    // Filter by organization if provided (multi-tenancy)
+    if (organizationId) {
+      query = query.eq('organization_id', organizationId);
+    }
+
+    const { count, error } = await query;
 
     if (error) {
       throw error;
@@ -384,14 +405,14 @@ exports.getUnassignedWorkCount = async (userId) => {
  */
 
 /**
- * Get all users who have unassigned activities
- * @returns {Promise<Array>} Array of user objects with unassigned work
+ * Get all users who have unassigned activities (grouped by user and organization)
+ * @returns {Promise<Array>} Array of user objects with unassigned work and their organization
  */
 exports.getUsersWithUnassignedWork = async () => {
   try {
     const { data, error } = await supabase
       .from('unassigned_activity')
-      .select('user_id')
+      .select('user_id, organization_id')
       .eq('manually_assigned', false)
       .order('timestamp', { ascending: false });
 
@@ -399,10 +420,16 @@ exports.getUsersWithUnassignedWork = async () => {
       throw error;
     }
 
-    // Get unique user IDs
-    const uniqueUserIds = [...new Set(data.map(item => item.user_id))];
+    // Get unique user_id + organization_id combinations
+    const uniqueCombos = new Map();
+    data.forEach(item => {
+      const key = `${item.user_id}_${item.organization_id}`;
+      if (!uniqueCombos.has(key)) {
+        uniqueCombos.set(key, { id: item.user_id, organization_id: item.organization_id });
+      }
+    });
 
-    return uniqueUserIds.map(id => ({ id }));
+    return Array.from(uniqueCombos.values());
   } catch (error) {
     logger.error('Error fetching users with unassigned work:', error);
     return [];
@@ -410,13 +437,14 @@ exports.getUsersWithUnassignedWork = async () => {
 };
 
 /**
- * Get unassigned activities for a specific user
+ * Get unassigned activities for a specific user within an organization
  * @param {string} userId - User ID
+ * @param {string} organizationId - Organization ID for multi-tenancy filtering
  * @returns {Promise<Array>} Array of unassigned activity sessions
  */
-exports.getUnassignedActivities = async (userId) => {
+exports.getUnassignedActivities = async (userId, organizationId) => {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('unassigned_activity')
       .select(`
         id,
@@ -429,11 +457,19 @@ exports.getUnassignedActivities = async (userId) => {
         reason,
         confidence_score,
         metadata,
-        analysis_result_id
+        analysis_result_id,
+        organization_id
       `)
       .eq('user_id', userId)
       .eq('manually_assigned', false)
       .order('timestamp', { ascending: false });
+
+    // Filter by organization if provided
+    if (organizationId) {
+      query = query.eq('organization_id', organizationId);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       throw error;
@@ -465,17 +501,24 @@ exports.getUnassignedActivities = async (userId) => {
 /**
  * Get user's active Jira issues for better AI recommendations
  * @param {string} userId - User ID
+ * @param {string} organizationId - Organization ID for multi-tenancy filtering
  * @returns {Promise<Array>} Array of user's active issues with summaries
  */
-exports.getUserActiveIssues = async (userId) => {
+exports.getUserActiveIssues = async (userId, organizationId) => {
   try {
-    // First try to get from cache (has summaries)
-    const { data: cachedIssues, error: cacheError } = await supabase
+    // First try to get from cache (has summaries) - filter by organization
+    let cacheQuery = supabase
       .from('user_jira_issues_cache')
       .select('issue_key, summary, project_key, status')
       .eq('user_id', userId)
       .order('updated_at', { ascending: false })
       .limit(50);
+
+    if (organizationId) {
+      cacheQuery = cacheQuery.eq('organization_id', organizationId);
+    }
+
+    const { data: cachedIssues, error: cacheError } = await cacheQuery;
 
     if (!cacheError && cachedIssues && cachedIssues.length > 0) {
       return cachedIssues.map(issue => ({
@@ -517,17 +560,25 @@ exports.getUserActiveIssues = async (userId) => {
  * Check if user has recent groups (to avoid re-clustering too frequently)
  * @param {string} userId - User ID
  * @param {number} hoursAgo - How many hours ago to check
+ * @param {string} organizationId - Organization ID for multi-tenancy filtering
  * @returns {Promise<Array>} Recent groups
  */
-exports.getRecentGroups = async (userId, hoursAgo = 24) => {
+exports.getRecentGroups = async (userId, hoursAgo = 24, organizationId = null) => {
   try {
     const cutoffTime = new Date(Date.now() - hoursAgo * 60 * 60 * 1000).toISOString();
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('unassigned_work_groups')
       .select('id, created_at')
       .eq('user_id', userId)
       .gte('created_at', cutoffTime);
+
+    // Filter by organization if provided
+    if (organizationId) {
+      query = query.eq('organization_id', organizationId);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       throw error;
@@ -542,7 +593,7 @@ exports.getRecentGroups = async (userId, hoursAgo = 24) => {
 
 /**
  * Create a new unassigned work group
- * @param {Object} groupData - Group data from AI clustering
+ * @param {Object} groupData - Group data from AI clustering (should include organization_id)
  * @returns {Promise<Object>} Created group record
  */
 exports.createUnassignedGroup = async (groupData) => {
@@ -551,6 +602,7 @@ exports.createUnassignedGroup = async (groupData) => {
       .from('unassigned_work_groups')
       .insert({
         user_id: groupData.user_id,
+        organization_id: groupData.organization_id,  // Multi-tenancy: Include organization_id
         group_label: groupData.group_label,
         group_description: groupData.group_description,
         confidence_level: groupData.confidence_level,
@@ -568,7 +620,7 @@ exports.createUnassignedGroup = async (groupData) => {
       throw error;
     }
 
-    logger.info(`Created unassigned group: ${data.id} for user ${groupData.user_id}`);
+    logger.info(`Created unassigned group: ${data.id} for user ${groupData.user_id} in org ${groupData.organization_id}`);
     return data;
   } catch (error) {
     logger.error('Error creating unassigned group:', error);

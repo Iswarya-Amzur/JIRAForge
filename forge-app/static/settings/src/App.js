@@ -121,7 +121,7 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
-        <h1>BRD Automate & Time Tracker - Settings</h1>
+        <h1>Time Tracker - Settings</h1>
         <p className="subtitle">Configure global application settings (Administrator Only)</p>
         <div className="admin-badge">Jira Administrator</div>
       </header>

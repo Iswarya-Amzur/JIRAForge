@@ -31,10 +31,10 @@ async function pollAndClusterUnassigned() {
 
     logger.info(`[Clustering Polling] Found ${usersWithUnassigned.length} users with unassigned work`);
 
-    // 2. Process each user separately
+    // 2. Process each user separately (user now includes organization_id)
     for (const user of usersWithUnassigned) {
       try {
-        await processUserUnassignedWork(user.id);
+        await processUserUnassignedWork(user.id, user.organization_id);
       } catch (error) {
         logger.error(`[Clustering Polling] Error processing user ${user.id}:`, error);
         // Continue with next user even if one fails
@@ -48,21 +48,22 @@ async function pollAndClusterUnassigned() {
 }
 
 /**
- * Process unassigned work for a single user
+ * Process unassigned work for a single user within an organization
  * @param {string} userId - User ID to process
+ * @param {string} organizationId - Organization ID for multi-tenancy filtering
  */
-async function processUserUnassignedWork(userId) {
-  logger.info(`[Clustering Polling] Processing user ${userId}`);
+async function processUserUnassignedWork(userId, organizationId) {
+  logger.info(`[Clustering Polling] Processing user ${userId} in org ${organizationId}`);
 
   // 1. Check if user already has recent groups (avoid re-clustering too frequently)
-  const recentGroups = await supabaseService.getRecentGroups(userId, CLUSTERING_COOLDOWN_HOURS);
+  const recentGroups = await supabaseService.getRecentGroups(userId, CLUSTERING_COOLDOWN_HOURS, organizationId);
   if (recentGroups.length > 0) {
     logger.info(`[Clustering Polling] User ${userId} already has groups from last ${CLUSTERING_COOLDOWN_HOURS}h, skipping`);
     return;
   }
 
-  // 2. Get unassigned activities for this user
-  const sessions = await supabaseService.getUnassignedActivities(userId);
+  // 2. Get unassigned activities for this user - filter by organization
+  const sessions = await supabaseService.getUnassignedActivities(userId, organizationId);
 
   if (sessions.length < MIN_SESSIONS_FOR_CLUSTERING) {
     logger.info(`[Clustering Polling] User ${userId} has only ${sessions.length} unassigned sessions (need ${MIN_SESSIONS_FOR_CLUSTERING}), skipping`);
@@ -71,8 +72,8 @@ async function processUserUnassignedWork(userId) {
 
   logger.info(`[Clustering Polling] User ${userId} has ${sessions.length} unassigned sessions, starting clustering...`);
 
-  // 3. Get user's active Jira issues for better AI recommendations
-  const userIssues = await supabaseService.getUserActiveIssues(userId);
+  // 3. Get user's active Jira issues for better AI recommendations - filter by organization
+  const userIssues = await supabaseService.getUserActiveIssues(userId, organizationId);
   logger.info(`[Clustering Polling] Found ${userIssues.length} active issues for user ${userId}`);
 
   // 4. Cluster sessions using GPT-4
@@ -86,9 +87,9 @@ async function processUserUnassignedWork(userId) {
 
     logger.info(`[Clustering Polling] Created ${clusteringResult.groups.length} groups for user ${userId}`);
 
-    // 5. Save each group to database
+    // 5. Save each group to database - include organizationId
     for (const group of clusteringResult.groups) {
-      await saveGroupToDatabase(userId, group);
+      await saveGroupToDatabase(userId, organizationId, group);
     }
 
     logger.info(`[Clustering Polling] Successfully saved ${clusteringResult.groups.length} groups for user ${userId}`);
@@ -101,15 +102,17 @@ async function processUserUnassignedWork(userId) {
 /**
  * Save a clustered group to the database
  * @param {string} userId - User ID
+ * @param {string} organizationId - Organization ID for multi-tenancy
  * @param {Object} group - Group data from AI clustering
  */
-async function saveGroupToDatabase(userId, group) {
+async function saveGroupToDatabase(userId, organizationId, group) {
   try {
     logger.info(`[Clustering Polling] Saving group "${group.label}" with ${group.session_count} sessions`);
 
-    // 1. Create the group record
+    // 1. Create the group record - include organization_id for multi-tenancy
     const groupRecord = await supabaseService.createUnassignedGroup({
       user_id: userId,
+      organization_id: organizationId,
       group_label: group.label,
       group_description: group.description,
       confidence_level: group.confidence,

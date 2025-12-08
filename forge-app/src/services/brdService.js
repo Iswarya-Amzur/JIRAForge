@@ -3,26 +3,33 @@
  * Business logic for BRD document upload and issue creation
  */
 
-import { getSupabaseConfig, getOrCreateUser, supabaseRequest, uploadToSupabaseStorage } from '../utils/supabase.js';
+import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, supabaseRequest, uploadToSupabaseStorage } from '../utils/supabase.js';
 import { createJiraIssue } from '../utils/jira.js';
 import { ALLOWED_BRD_FILE_TYPES } from '../config/constants.js';
 
 /**
  * Upload BRD document to Supabase
  * @param {string} accountId - Atlassian account ID
+ * @param {string} cloudId - Jira Cloud ID for organization filtering
  * @param {string} fileName - Original file name
  * @param {string} fileType - MIME type
  * @param {string} fileData - Base64 encoded file data
  * @param {number} fileSize - File size in bytes
  * @returns {Promise<Object>} Document metadata with ID
  */
-export async function uploadBRDDocument(accountId, fileName, fileType, fileData, fileSize) {
+export async function uploadBRDDocument(accountId, cloudId, fileName, fileType, fileData, fileSize) {
   const supabaseConfig = await getSupabaseConfig(accountId);
   if (!supabaseConfig) {
     throw new Error('Supabase not configured. Please configure in Settings.');
   }
 
-  const userId = await getOrCreateUser(accountId, supabaseConfig);
+  // Get or create organization first (multi-tenancy)
+  const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+  if (!organization) {
+    throw new Error('Unable to get organization information');
+  }
+
+  const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
   if (!userId) {
     throw new Error('Unable to get user information');
   }
@@ -48,7 +55,7 @@ export async function uploadBRDDocument(accountId, fileName, fileType, fileData,
 
   const storageUrl = `${supabaseConfig.url}/storage/v1/object/public/documents/${storagePath}`;
 
-  // Save document metadata to database
+  // Save document metadata to database - include organization_id for multi-tenancy
   const documentRecord = await supabaseRequest(
     supabaseConfig,
     'documents',
@@ -56,6 +63,7 @@ export async function uploadBRDDocument(accountId, fileName, fileType, fileData,
       method: 'POST',
       body: {
         user_id: userId,
+        organization_id: organization.id,
         file_name: fileName,
         file_type: fileExtension,
         file_size_bytes: fileSize,
@@ -213,23 +221,31 @@ export async function createIssuesFromBRD(accountId, documentId, projectKey) {
 /**
  * Get BRD document status and created issues
  * @param {string} accountId - Atlassian account ID
+ * @param {string} cloudId - Jira Cloud ID for organization filtering
  * @param {string} documentId - Document ID
  * @returns {Promise<Object>} Document data
  */
-export async function getBRDStatus(accountId, documentId) {
+export async function getBRDStatus(accountId, cloudId, documentId) {
   const supabaseConfig = await getSupabaseConfig(accountId);
   if (!supabaseConfig) {
     throw new Error('Supabase not configured. Please configure in Settings.');
   }
 
-  const userId = await getOrCreateUser(accountId, supabaseConfig);
+  // Get or create organization first (multi-tenancy)
+  const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+  if (!organization) {
+    throw new Error('Unable to get organization information');
+  }
+
+  const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
   if (!userId) {
     throw new Error('Unable to get user information');
   }
 
+  // Filter by organization_id for multi-tenancy
   const documents = await supabaseRequest(
     supabaseConfig,
-    `documents?id=eq.${documentId}&user_id=eq.${userId}&select=*`
+    `documents?id=eq.${documentId}&user_id=eq.${userId}&organization_id=eq.${organization.id}&select=*`
   );
 
   if (!documents || documents.length === 0) {

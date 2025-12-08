@@ -17,9 +17,10 @@ export function registerBRDResolvers(resolver) {
     const { payload, context } = req;
     const { fileName, fileType, fileData, fileSize } = payload; // fileData is base64
     const accountId = context.accountId;
+    const cloudId = context.cloudId;  // Multi-tenancy: Get Jira Cloud ID from context
 
     try {
-      const result = await uploadBRDDocument(accountId, fileName, fileType, fileData, fileSize);
+      const result = await uploadBRDDocument(accountId, cloudId, fileName, fileType, fileData, fileSize);
       return {
         success: true,
         documentId: result.documentId,
@@ -65,9 +66,10 @@ export function registerBRDResolvers(resolver) {
     const { payload, context } = req;
     const { documentId } = payload;
     const accountId = context.accountId;
+    const cloudId = context.cloudId;  // Multi-tenancy: Get Jira Cloud ID from context
 
     try {
-      const document = await getBRDStatus(accountId, documentId);
+      const document = await getBRDStatus(accountId, cloudId, documentId);
       return {
         success: true,
         document
