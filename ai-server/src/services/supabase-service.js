@@ -81,6 +81,36 @@ exports.updateScreenshotStatus = async (screenshotId, status, errorMessage = nul
 };
 
 /**
+ * Update screenshot with duration data for event-based tracking
+ * @param {string} screenshotId - Screenshot ID
+ * @param {Object} durationData - Duration data object
+ * @param {number} durationData.duration_seconds - Duration in seconds
+ * @param {string} durationData.start_time - Start time (ISO string)
+ * @param {string} durationData.end_time - End time (ISO string, defaults to now if not provided)
+ */
+exports.updateScreenshotDuration = async (screenshotId, { duration_seconds, start_time, end_time }) => {
+  try {
+    const updateData = {
+      duration_seconds,
+      start_time,
+      end_time: end_time || new Date().toISOString()  // Default to now if not provided
+    };
+
+    const { error } = await supabase
+      .from('screenshots')
+      .update(updateData)
+      .eq('id', screenshotId);
+
+    if (error) {
+      throw error;
+    }
+  } catch (error) {
+    logger.error('Error updating screenshot duration:', error);
+    throw new Error(`Failed to update screenshot duration: ${error.message}`);
+  }
+};
+
+/**
  * Update document status
  */
 exports.updateDocumentStatus = async (documentId, status, errorMessage = null) => {
@@ -631,7 +661,7 @@ exports.createUnassignedGroup = async (groupData) => {
 /**
  * Add a member to an unassigned work group
  * @param {Object} memberData - Member data
- * @returns {Promise<Object>} Created member record
+ * @returns {Promise<Object>} Created member record or null if duplicate
  */
 exports.addGroupMember = async (memberData) => {
   try {
@@ -645,6 +675,11 @@ exports.addGroupMember = async (memberData) => {
       .single();
 
     if (error) {
+      // Handle duplicate key errors gracefully - activity may already be in a group
+      if (error.code === '23505') { // PostgreSQL unique violation code
+        logger.warn(`Activity ${memberData.unassigned_activity_id} already assigned to a group, skipping`);
+        return null;
+      }
       throw error;
     }
 
@@ -652,5 +687,80 @@ exports.addGroupMember = async (memberData) => {
   } catch (error) {
     logger.error('Error adding group member:', error);
     throw new Error(`Failed to add group member: ${error.message}`);
+  }
+};
+
+/**
+ * Get the timestamp of the most recent clustering run
+ * Uses the latest unassigned_work_groups created_at as a proxy
+ * @returns {Promise<Date|null>} Last clustering run time or null if never run
+ */
+exports.getLastClusteringRunTime = async () => {
+  try {
+    const { data, error } = await supabase
+      .from('unassigned_work_groups')
+      .select('created_at')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error) {
+      // No groups exist yet - clustering has never run
+      if (error.code === 'PGRST116') {
+        return null;
+      }
+      throw error;
+    }
+
+    return data ? new Date(data.created_at) : null;
+  } catch (error) {
+    logger.error('Error getting last clustering run time:', error);
+    return null;
+  }
+};
+
+/**
+ * Check if clustering has run within the specified hours
+ * @param {number} hours - Number of hours to check
+ * @returns {Promise<boolean>} True if clustering has run within the specified hours
+ */
+exports.hasClusteringRunRecently = async (hours = 24) => {
+  try {
+    const lastRunTime = await exports.getLastClusteringRunTime();
+
+    if (!lastRunTime) {
+      return false; // Never run
+    }
+
+    const cutoffTime = new Date();
+    cutoffTime.setHours(cutoffTime.getHours() - hours);
+
+    return lastRunTime > cutoffTime;
+  } catch (error) {
+    logger.error('Error checking clustering run time:', error);
+    return false; // Assume not run recently on error
+  }
+};
+
+/**
+ * Get count of unassigned activities that haven't been grouped yet
+ * @returns {Promise<number>} Count of ungrouped unassigned activities
+ */
+exports.getUngroupedActivityCount = async () => {
+  try {
+    // Get activities that are not manually assigned and not in any group
+    const { count, error } = await supabase
+      .from('unassigned_activity')
+      .select('id', { count: 'exact', head: true })
+      .eq('manually_assigned', false);
+
+    if (error) {
+      throw error;
+    }
+
+    return count || 0;
+  } catch (error) {
+    logger.error('Error getting ungrouped activity count:', error);
+    return 0;
   }
 };

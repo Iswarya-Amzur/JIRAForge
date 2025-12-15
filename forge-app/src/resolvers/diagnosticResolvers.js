@@ -48,9 +48,10 @@ export function registerDiagnosticResolvers(resolver) {
 
       // Get all screenshots for the target date - filter by organization_id for multi-tenancy
       // Use PostgreSQL date conversion to match the view logic
+      // Updated to use screenshots.duration_seconds instead of analysis_results.time_spent_seconds
       const allScreenshots = await supabaseRequest(
         supabaseConfig,
-        `screenshots?organization_id=eq.${organization.id}&select=id,timestamp,window_title,application_name,status,analysis_results(id,time_spent_seconds,active_task_key,work_type,created_at)&order=timestamp.asc&limit=1000`
+        `screenshots?organization_id=eq.${organization.id}&select=id,timestamp,duration_seconds,window_title,application_name,status,analysis_results(id,active_task_key,work_type,created_at)&order=timestamp.asc&limit=1000`
       );
 
       // Filter screenshots that match the target date when converted to UTC
@@ -85,7 +86,7 @@ export function registerDiagnosticResolvers(resolver) {
             status: s.status,
             analysisResults: s.analysis_results?.map(ar => ({
               id: ar.id,
-              timeSpent: ar.time_spent_seconds,
+              timeSpent: s.duration_seconds,  // Use from screenshot, not analysis_result
               taskKey: ar.active_task_key,
               workType: ar.work_type,
               createdAt: ar.created_at,

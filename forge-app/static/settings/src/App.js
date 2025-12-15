@@ -26,9 +26,16 @@ function App() {
     setPermissionLoading(true);
     try {
       const result = await invoke('getUserPermissions');
-      if (result.success && result.permissions.isJiraAdmin) {
-        setIsAdmin(true);
-        loadSettings();
+      if (result.success) {
+        const jiraAdmin = result.permissions.isJiraAdmin;
+        
+        setIsAdmin(jiraAdmin);
+        
+        if (jiraAdmin) {
+          loadSettings();
+        } else {
+          setPermissionLoading(false);
+        }
       } else {
         setIsAdmin(false);
         setPermissionLoading(false);
@@ -96,13 +103,14 @@ function App() {
     );
   }
 
+  // Check if user is Jira Admin
   if (!isAdmin) {
     return (
       <div className="App">
         <div className="access-denied">
           <h1>Access Denied</h1>
           <p>Only Jira Administrators can access global settings.</p>
-          <p className="help-text">If you need to configure settings, please contact your Jira Administrator.</p>
+          <p className="help-text">Project Administrators can configure Timesheet Settings from the main app.</p>
         </div>
       </div>
     );

@@ -49,6 +49,107 @@ app.get('/health', (req, res) => {
 // Routes
 app.post('/api/analyze-screenshot', authMiddleware, screenshotController.analyzeScreenshot);
 app.post('/api/process-brd', authMiddleware, brdController.processBRD);
+
+// Manual trigger for clustering - called by organization admins from Forge app
+app.post('/api/trigger-clustering', authMiddleware, async (req, res, next) => {
+  try {
+    const { userId, organizationId } = req.body;
+
+    if (!userId || !organizationId) {
+      return res.status(400).json({
+        success: false,
+        error: 'userId and organizationId are required'
+      });
+    }
+
+    // Check if clustering is already running
+    if (clusteringPollingService.isClusteringRunning()) {
+      return res.status(409).json({
+        success: false,
+        error: 'Clustering is already in progress. Please wait for it to complete.'
+      });
+    }
+
+    logger.info(`[API] Manual clustering triggered for user ${userId} in org ${organizationId}`);
+
+    // Process the specific user's unassigned work
+    await clusteringPollingService.processUserUnassignedWork(userId, organizationId);
+
+    res.json({
+      success: true,
+      message: 'Clustering completed successfully'
+    });
+  } catch (error) {
+    logger.error('[API] Error in manual clustering:', error);
+    next(error);
+  }
+});
+
+// Trigger clustering for entire organization (admin only)
+app.post('/api/trigger-org-clustering', authMiddleware, async (req, res, next) => {
+  try {
+    const { organizationId } = req.body;
+
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        error: 'organizationId is required'
+      });
+    }
+
+    // Check if clustering is already running
+    if (clusteringPollingService.isClusteringRunning()) {
+      return res.status(409).json({
+        success: false,
+        error: 'Clustering is already in progress. Please wait for it to complete.'
+      });
+    }
+
+    logger.info(`[API] Manual organization-wide clustering triggered for org ${organizationId}`);
+
+    // Get all users with unassigned work in this organization
+    const supabaseService = require('./services/supabase-service');
+    const usersWithUnassigned = await supabaseService.getUsersWithUnassignedWork();
+    
+    // Filter to only users in this organization
+    const orgUsers = usersWithUnassigned.filter(u => u.organization_id === organizationId);
+
+    if (orgUsers.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No users with unassigned work found in this organization',
+        usersProcessed: 0
+      });
+    }
+
+    logger.info(`[API] Found ${orgUsers.length} users with unassigned work in org ${organizationId}`);
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    // Process each user
+    for (const user of orgUsers) {
+      try {
+        await clusteringPollingService.processUserUnassignedWork(user.id, organizationId);
+        successCount++;
+      } catch (error) {
+        errorCount++;
+        logger.error(`[API] Error processing user ${user.id}:`, error);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Clustering completed. ${successCount} users processed, ${errorCount} errors.`,
+      usersProcessed: successCount,
+      errors: errorCount
+    });
+  } catch (error) {
+    logger.error('[API] Error in organization clustering:', error);
+    next(error);
+  }
+});
+
 app.post('/api/cluster-unassigned-work', async (req, res, next) => {
   try {
     const { sessions, userIssues } = req.body;
@@ -88,18 +189,33 @@ app.use((req, res) => {
   });
 });
 
-// Start server
-app.listen(PORT, () => {
-  logger.info(`AI Analysis Server running on port ${PORT}`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+// Start server with async initialization
+async function startServer() {
+  return new Promise((resolve) => {
+    app.listen(PORT, async () => {
+      logger.info(`AI Analysis Server running on port ${PORT}`);
+      logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
 
-  // Start polling service to process pending screenshots
-  pollingService.start();
-  logger.info('Screenshot analysis polling service started - will process pending screenshots automatically');
+      // Step 1: Start clustering service first (includes startup clustering if needed)
+      // This runs any missed clustering before we start processing new screenshots
+      logger.info('Initializing clustering service...');
+      await clusteringPollingService.start();
+      logger.info('Clustering service initialized - daily clustering scheduled');
 
-  // Start clustering polling service to group unassigned work
-  clusteringPollingService.start();
-  logger.info('Unassigned work clustering service started - will cluster similar sessions automatically');
+      // Step 2: Start screenshot analysis polling AFTER clustering is ready
+      // This ensures we don't have race conditions between analysis and clustering
+      pollingService.start();
+      logger.info('Screenshot analysis polling service started - will process pending screenshots automatically');
+
+      resolve();
+    });
+  });
+}
+
+// Initialize server
+startServer().catch((error) => {
+  logger.error('Failed to start server:', error);
+  process.exit(1);
 });
 
 // Graceful shutdown

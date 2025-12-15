@@ -1,15 +1,60 @@
 -- ============================================================================
 -- Migration: 017_fix_rls_performance.sql
--- Description: Fix RLS performance issues and remove duplicate policies
--- Author: Performance Optimization
--- Date: 2024-12-XX
--- ============================================================================
--- This migration addresses Supabase linter warnings:
--- 1. auth_rls_initplan: Wraps auth.uid() and auth.jwt() in subqueries for better performance
--- 2. multiple_permissive_policies: Removes duplicate policies from old migrations
+-- Description: Fix RLS performance warnings from Supabase linter
+-- Issues Fixed:
+--   1. auth_rls_initplan: Wrap auth functions in subselect for performance
+--   2. multiple_permissive_policies: Remove duplicate policies from 002_rls_policies.sql
+-- Date: 2024-12-08
 -- ============================================================================
 
--- 1. Fix helper functions to use optimized auth calls
+-- ============================================================================
+-- PART 1: Remove duplicate policies from 002_rls_policies.sql
+-- These are superseded by the multi-tenancy policies in 013_create_rls_policies.sql
+-- ============================================================================
+
+-- Drop users table duplicate policies
+DROP POLICY IF EXISTS "Users can view own profile" ON public.users;
+DROP POLICY IF EXISTS "Users can update own profile" ON public.users;
+DROP POLICY IF EXISTS "Service role can manage all users" ON public.users;
+
+-- Drop screenshots table duplicate policies
+DROP POLICY IF EXISTS "Users can view own screenshots" ON public.screenshots;
+DROP POLICY IF EXISTS "Users can insert own screenshots" ON public.screenshots;
+DROP POLICY IF EXISTS "Users can update own screenshots" ON public.screenshots;
+DROP POLICY IF EXISTS "Users can delete own screenshots" ON public.screenshots;
+DROP POLICY IF EXISTS "Service role can manage all screenshots" ON public.screenshots;
+
+-- Drop analysis_results table duplicate policies
+DROP POLICY IF EXISTS "Users can view own analysis results" ON public.analysis_results;
+DROP POLICY IF EXISTS "Users can insert own analysis results" ON public.analysis_results;
+DROP POLICY IF EXISTS "Users can update own analysis results" ON public.analysis_results;
+DROP POLICY IF EXISTS "Service role can manage all analysis results" ON public.analysis_results;
+
+-- Drop documents table duplicate policies
+DROP POLICY IF EXISTS "Users can view own documents" ON public.documents;
+DROP POLICY IF EXISTS "Users can insert own documents" ON public.documents;
+DROP POLICY IF EXISTS "Users can update own documents" ON public.documents;
+DROP POLICY IF EXISTS "Users can delete own documents" ON public.documents;
+DROP POLICY IF EXISTS "Service role can manage all documents" ON public.documents;
+
+-- Drop worklogs table duplicate policies
+DROP POLICY IF EXISTS "Users can view own worklogs" ON public.worklogs;
+DROP POLICY IF EXISTS "Users can insert own worklogs" ON public.worklogs;
+DROP POLICY IF EXISTS "Service role can manage all worklogs" ON public.worklogs;
+
+-- Drop activity_log table duplicate policies
+DROP POLICY IF EXISTS "Users can view own activity logs" ON public.activity_log;
+DROP POLICY IF EXISTS "Service role can manage all activity logs" ON public.activity_log;
+DROP POLICY IF EXISTS "Allow system to insert activity logs" ON public.activity_log;
+
+-- Drop user_jira_issues_cache table duplicate policies
+DROP POLICY IF EXISTS "Users can view own cached issues" ON public.user_jira_issues_cache;
+DROP POLICY IF EXISTS "Service role can manage all cached issues" ON public.user_jira_issues_cache;
+
+
+-- ============================================================================
+-- PART 2: Recreate helper functions with subselect optimization
+-- Using (select auth.uid()) instead of auth.uid() for better performance
 -- ============================================================================
 
 -- Get current user's ID (optimized)
@@ -36,259 +81,365 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
 
--- Check if user has specific permission (optimized)
-CREATE OR REPLACE FUNCTION user_has_permission(permission_name TEXT)
-RETURNS BOOLEAN AS $$
-DECLARE
-  user_org_id UUID;
-  user_id UUID;
-  has_perm BOOLEAN;
-BEGIN
-  user_id := get_current_user_id();
-  user_org_id := get_current_user_organization_id();
 
-  IF user_id IS NULL OR user_org_id IS NULL THEN
-    RETURN false;
-  END IF;
-
-  -- Check based on permission type
-  CASE permission_name
-    WHEN 'view_team_analytics' THEN
-      SELECT can_view_team_analytics INTO has_perm
-      FROM public.organization_members
-      WHERE user_id = user_id AND organization_id = user_org_id;
-
-    WHEN 'manage_settings' THEN
-      SELECT can_manage_settings INTO has_perm
-      FROM public.organization_members
-      WHERE user_id = user_id AND organization_id = user_org_id;
-
-    WHEN 'manage_members' THEN
-      SELECT can_manage_members INTO has_perm
-      FROM public.organization_members
-      WHERE user_id = user_id AND organization_id = user_org_id;
-
-    WHEN 'delete_screenshots' THEN
-      SELECT can_delete_screenshots INTO has_perm
-      FROM public.organization_members
-      WHERE user_id = user_id AND organization_id = user_org_id;
-
-    WHEN 'manage_billing' THEN
-      SELECT can_manage_billing INTO has_perm
-      FROM public.organization_members
-      WHERE user_id = user_id AND organization_id = user_org_id;
-
-    ELSE
-      RETURN false;
-  END CASE;
-
-  RETURN COALESCE(has_perm, false);
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
-
--- Check if user is admin/owner (optimized)
-CREATE OR REPLACE FUNCTION user_is_admin()
-RETURNS BOOLEAN AS $$
-DECLARE
-  user_id UUID;
-  user_org_id UUID;
-  user_role TEXT;
-BEGIN
-  user_id := get_current_user_id();
-  user_org_id := get_current_user_organization_id();
-
-  IF user_id IS NULL OR user_org_id IS NULL THEN
-    RETURN false;
-  END IF;
-
-  SELECT role INTO user_role
-  FROM public.organization_members
-  WHERE user_id = user_id AND organization_id = user_org_id;
-
-  RETURN user_role IN ('owner', 'admin');
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
-
-
--- 2. Drop old duplicate policies from 002_rls_policies.sql and QUICK_SETUP.sql
 -- ============================================================================
--- These policies conflict with the new multi-tenancy policies from 013_create_rls_policies.sql
-
--- Users table old policies
-DROP POLICY IF EXISTS "Users can view own profile" ON public.users;
-DROP POLICY IF EXISTS "Users can update own profile" ON public.users;
-DROP POLICY IF EXISTS "Service role can manage all users" ON public.users;
-
--- Screenshots table old policies
-DROP POLICY IF EXISTS "Users can view own screenshots" ON public.screenshots;
-DROP POLICY IF EXISTS "Users can insert own screenshots" ON public.screenshots;
-DROP POLICY IF EXISTS "Users can update own screenshots" ON public.screenshots;
-DROP POLICY IF EXISTS "Users can delete own screenshots" ON public.screenshots;
-DROP POLICY IF EXISTS "Service role can manage all screenshots" ON public.screenshots;
-
--- Analysis results table old policies
-DROP POLICY IF EXISTS "Users can view own analysis results" ON public.analysis_results;
-DROP POLICY IF EXISTS "Users can insert own analysis results" ON public.analysis_results;
-DROP POLICY IF EXISTS "Users can update own analysis results" ON public.analysis_results;
-DROP POLICY IF EXISTS "Service role can manage all analysis results" ON public.analysis_results;
-
--- Documents table old policies
-DROP POLICY IF EXISTS "Users can view own documents" ON public.documents;
-DROP POLICY IF EXISTS "Users can insert own documents" ON public.documents;
-DROP POLICY IF EXISTS "Users can update own documents" ON public.documents;
-DROP POLICY IF EXISTS "Users can delete own documents" ON public.documents;
-DROP POLICY IF EXISTS "Service role can manage all documents" ON public.documents;
-
--- Worklogs table old policies
-DROP POLICY IF EXISTS "Users can view own worklogs" ON public.worklogs;
-DROP POLICY IF EXISTS "Users can insert own worklogs" ON public.worklogs;
-DROP POLICY IF EXISTS "Service role can manage all worklogs" ON public.worklogs;
-
--- Activity log table old policies
-DROP POLICY IF EXISTS "Users can view own activity logs" ON public.activity_log;
-DROP POLICY IF EXISTS "Service role can manage all activity logs" ON public.activity_log;
-DROP POLICY IF EXISTS "Allow system to insert activity logs" ON public.activity_log;
-
--- User jira issues cache old policies
-DROP POLICY IF EXISTS "Users can view own cached issues" ON public.user_jira_issues_cache;
-DROP POLICY IF EXISTS "Service role can manage all cached issues" ON public.user_jira_issues_cache;
-
-
--- 3. Add service role policies (optimized) for backend operations
+-- PART 3: Drop and recreate multi-tenancy policies with optimized auth calls
 -- ============================================================================
--- These policies allow the service role to bypass RLS for backend operations
--- Using (SELECT auth.jwt()) for performance optimization
 
--- Users table service role policy
-CREATE POLICY "service_role_manage_users"
-ON public.users FOR ALL
-USING ((SELECT auth.jwt() ->> 'role') = 'service_role')
-WITH CHECK ((SELECT auth.jwt() ->> 'role') = 'service_role');
+-- 3.1 Organizations table
+-- ============================================================================
+DROP POLICY IF EXISTS "users_view_own_organization" ON public.organizations;
+CREATE POLICY "users_view_own_organization"
+ON public.organizations FOR SELECT
+USING (id = (SELECT get_current_user_organization_id()));
 
--- Screenshots table service role policy
-CREATE POLICY "service_role_manage_screenshots"
-ON public.screenshots FOR ALL
-USING ((SELECT auth.jwt() ->> 'role') = 'service_role')
-WITH CHECK ((SELECT auth.jwt() ->> 'role') = 'service_role');
+DROP POLICY IF EXISTS "admins_update_organization" ON public.organizations;
+CREATE POLICY "admins_update_organization"
+ON public.organizations FOR UPDATE
+USING (
+  id = (SELECT get_current_user_organization_id())
+  AND (SELECT user_is_admin())
+);
 
--- Analysis results table service role policy
-CREATE POLICY "service_role_manage_analysis_results"
-ON public.analysis_results FOR ALL
-USING ((SELECT auth.jwt() ->> 'role') = 'service_role')
-WITH CHECK ((SELECT auth.jwt() ->> 'role') = 'service_role');
 
--- Documents table service role policy
-CREATE POLICY "service_role_manage_documents"
-ON public.documents FOR ALL
-USING ((SELECT auth.jwt() ->> 'role') = 'service_role')
-WITH CHECK ((SELECT auth.jwt() ->> 'role') = 'service_role');
+-- 3.2 Organization members table
+-- ============================================================================
+DROP POLICY IF EXISTS "users_view_org_members" ON public.organization_members;
+CREATE POLICY "users_view_org_members"
+ON public.organization_members FOR SELECT
+USING (organization_id = (SELECT get_current_user_organization_id()));
 
--- Worklogs table service role policy
-CREATE POLICY "service_role_manage_worklogs"
-ON public.worklogs FOR ALL
-USING ((SELECT auth.jwt() ->> 'role') = 'service_role')
-WITH CHECK ((SELECT auth.jwt() ->> 'role') = 'service_role');
+DROP POLICY IF EXISTS "admins_manage_members" ON public.organization_members;
+CREATE POLICY "admins_manage_members"
+ON public.organization_members FOR ALL
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND (SELECT user_has_permission('manage_members'))
+);
 
--- Activity log table service role policy
-CREATE POLICY "service_role_manage_activity_log"
-ON public.activity_log FOR ALL
-USING ((SELECT auth.jwt() ->> 'role') = 'service_role')
-WITH CHECK ((SELECT auth.jwt() ->> 'role') = 'service_role');
 
--- User jira issues cache service role policy
-CREATE POLICY "service_role_manage_jira_cache"
-ON public.user_jira_issues_cache FOR ALL
-USING ((SELECT auth.jwt() ->> 'role') = 'service_role')
-WITH CHECK ((SELECT auth.jwt() ->> 'role') = 'service_role');
+-- 3.3 Organization settings table
+-- ============================================================================
+DROP POLICY IF EXISTS "users_view_org_settings" ON public.organization_settings;
+CREATE POLICY "users_view_org_settings"
+ON public.organization_settings FOR SELECT
+USING (organization_id = (SELECT get_current_user_organization_id()));
 
--- Activity log system insert policy (for system events without user context)
-CREATE POLICY "system_insert_activity_log"
+DROP POLICY IF EXISTS "admins_update_org_settings" ON public.organization_settings;
+CREATE POLICY "admins_update_org_settings"
+ON public.organization_settings FOR UPDATE
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND (SELECT user_has_permission('manage_settings'))
+);
+
+
+-- 3.4 Users table
+-- ============================================================================
+DROP POLICY IF EXISTS "users_view_self_or_team" ON public.users;
+CREATE POLICY "users_view_self_or_team"
+ON public.users FOR SELECT
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND (
+    id = (SELECT get_current_user_id())
+    OR (SELECT user_has_permission('view_team_analytics'))
+  )
+);
+
+DROP POLICY IF EXISTS "users_update_self" ON public.users;
+CREATE POLICY "users_update_self"
+ON public.users FOR UPDATE
+USING (id = (SELECT get_current_user_id()));
+
+
+-- 3.5 Screenshots table
+-- ============================================================================
+DROP POLICY IF EXISTS "screenshots_view_own_or_team" ON public.screenshots;
+CREATE POLICY "screenshots_view_own_or_team"
+ON public.screenshots FOR SELECT
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND (
+    user_id = (SELECT get_current_user_id())
+    OR (SELECT user_has_permission('view_team_analytics'))
+  )
+);
+
+DROP POLICY IF EXISTS "screenshots_insert_own" ON public.screenshots;
+CREATE POLICY "screenshots_insert_own"
+ON public.screenshots FOR INSERT
+WITH CHECK (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
+
+DROP POLICY IF EXISTS "screenshots_delete_own_or_admin" ON public.screenshots;
+CREATE POLICY "screenshots_delete_own_or_admin"
+ON public.screenshots FOR DELETE
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND (
+    user_id = (SELECT get_current_user_id())
+    OR (SELECT user_has_permission('delete_screenshots'))
+  )
+);
+
+-- Add UPDATE policy for screenshots (was missing in 013_create_rls_policies.sql)
+DROP POLICY IF EXISTS "screenshots_update_own" ON public.screenshots;
+CREATE POLICY "screenshots_update_own"
+ON public.screenshots FOR UPDATE
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
+
+
+-- 3.6 Analysis results table
+-- ============================================================================
+DROP POLICY IF EXISTS "analysis_view_own_or_team" ON public.analysis_results;
+CREATE POLICY "analysis_view_own_or_team"
+ON public.analysis_results FOR SELECT
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND (
+    user_id = (SELECT get_current_user_id())
+    OR (SELECT user_has_permission('view_team_analytics'))
+  )
+);
+
+DROP POLICY IF EXISTS "analysis_insert_own" ON public.analysis_results;
+CREATE POLICY "analysis_insert_own"
+ON public.analysis_results FOR INSERT
+WITH CHECK (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
+
+DROP POLICY IF EXISTS "analysis_update_own" ON public.analysis_results;
+CREATE POLICY "analysis_update_own"
+ON public.analysis_results FOR UPDATE
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
+
+
+-- 3.7 Documents table
+-- ============================================================================
+DROP POLICY IF EXISTS "documents_view_own_or_team" ON public.documents;
+CREATE POLICY "documents_view_own_or_team"
+ON public.documents FOR SELECT
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND (
+    user_id = (SELECT get_current_user_id())
+    OR (SELECT user_has_permission('view_team_analytics'))
+  )
+);
+
+DROP POLICY IF EXISTS "documents_insert_own" ON public.documents;
+CREATE POLICY "documents_insert_own"
+ON public.documents FOR INSERT
+WITH CHECK (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
+
+DROP POLICY IF EXISTS "documents_update_own" ON public.documents;
+CREATE POLICY "documents_update_own"
+ON public.documents FOR UPDATE
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
+
+-- Add DELETE policy for documents (was missing)
+DROP POLICY IF EXISTS "documents_delete_own" ON public.documents;
+CREATE POLICY "documents_delete_own"
+ON public.documents FOR DELETE
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
+
+
+-- 3.8 Worklogs table
+-- ============================================================================
+DROP POLICY IF EXISTS "worklogs_view_own_or_team" ON public.worklogs;
+CREATE POLICY "worklogs_view_own_or_team"
+ON public.worklogs FOR SELECT
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND (
+    user_id = (SELECT get_current_user_id())
+    OR (SELECT user_has_permission('view_team_analytics'))
+  )
+);
+
+DROP POLICY IF EXISTS "worklogs_insert_own" ON public.worklogs;
+CREATE POLICY "worklogs_insert_own"
+ON public.worklogs FOR INSERT
+WITH CHECK (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
+
+DROP POLICY IF EXISTS "worklogs_update_own" ON public.worklogs;
+CREATE POLICY "worklogs_update_own"
+ON public.worklogs FOR UPDATE
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
+
+
+-- 3.9 Activity log table
+-- ============================================================================
+DROP POLICY IF EXISTS "activity_view_own_or_team" ON public.activity_log;
+CREATE POLICY "activity_view_own_or_team"
+ON public.activity_log FOR SELECT
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND (
+    user_id = (SELECT get_current_user_id())
+    OR (SELECT user_has_permission('view_team_analytics'))
+  )
+);
+
+DROP POLICY IF EXISTS "activity_insert_own" ON public.activity_log;
+CREATE POLICY "activity_insert_own"
 ON public.activity_log FOR INSERT
-WITH CHECK (true);
+WITH CHECK (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
 
 
--- 4. Update existing policies that use direct auth calls
+-- 3.10 Unassigned activity table
 -- ============================================================================
--- Note: The policies from 013_create_rls_policies.sql use helper functions,
--- which we've already optimized above. However, we need to ensure the
--- organization_members policies are also optimized.
+DROP POLICY IF EXISTS "unassigned_activity_view_own_or_team" ON public.unassigned_activity;
+CREATE POLICY "unassigned_activity_view_own_or_team"
+ON public.unassigned_activity FOR SELECT
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND (
+    user_id = (SELECT get_current_user_id())
+    OR (SELECT user_has_permission('view_team_analytics'))
+  )
+);
 
--- The organization_members policies use get_current_user_organization_id()
--- which we've already fixed, so they should be fine.
+DROP POLICY IF EXISTS "unassigned_activity_insert_own" ON public.unassigned_activity;
+CREATE POLICY "unassigned_activity_insert_own"
+ON public.unassigned_activity FOR INSERT
+WITH CHECK (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
 
--- However, if there are any remaining direct auth.uid() calls in policies,
--- they would need to be updated here. Based on the migration 013, all
--- policies use helper functions, so no direct updates needed.
+DROP POLICY IF EXISTS "unassigned_activity_update_own" ON public.unassigned_activity;
+CREATE POLICY "unassigned_activity_update_own"
+ON public.unassigned_activity FOR UPDATE
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
 
 
--- 5. Add missing update/delete policies for screenshots
+-- 3.11 Unassigned work groups table
 -- ============================================================================
--- The new multi-tenancy policies might be missing some operations
+DROP POLICY IF EXISTS "unassigned_groups_view_own_or_team" ON public.unassigned_work_groups;
+CREATE POLICY "unassigned_groups_view_own_or_team"
+ON public.unassigned_work_groups FOR SELECT
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND (
+    user_id = (SELECT get_current_user_id())
+    OR (SELECT user_has_permission('view_team_analytics'))
+  )
+);
 
--- Screenshots update policy (if not exists)
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies 
-    WHERE schemaname = 'public' 
-    AND tablename = 'screenshots' 
-    AND policyname = 'screenshots_update_own'
-  ) THEN
-    CREATE POLICY "screenshots_update_own"
-    ON public.screenshots FOR UPDATE
-    USING (
-      organization_id = get_current_user_organization_id()
-      AND user_id = get_current_user_id()
-    )
-    WITH CHECK (
-      organization_id = get_current_user_organization_id()
-      AND user_id = get_current_user_id()
-    );
-  END IF;
-END $$;
+DROP POLICY IF EXISTS "unassigned_groups_insert_own" ON public.unassigned_work_groups;
+CREATE POLICY "unassigned_groups_insert_own"
+ON public.unassigned_work_groups FOR INSERT
+WITH CHECK (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
 
--- Documents delete policy (if not exists)
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies 
-    WHERE schemaname = 'public' 
-    AND tablename = 'documents' 
-    AND policyname = 'documents_delete_own'
-  ) THEN
-    CREATE POLICY "documents_delete_own"
-    ON public.documents FOR DELETE
-    USING (
-      organization_id = get_current_user_organization_id()
-      AND user_id = get_current_user_id()
-    );
-  END IF;
-END $$;
-
--- Worklogs update policy (if not exists)
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies 
-    WHERE schemaname = 'public' 
-    AND tablename = 'worklogs' 
-    AND policyname = 'worklogs_update_own'
-  ) THEN
-    CREATE POLICY "worklogs_update_own"
-    ON public.worklogs FOR UPDATE
-    USING (
-      organization_id = get_current_user_organization_id()
-      AND user_id = get_current_user_id()
-    )
-    WITH CHECK (
-      organization_id = get_current_user_organization_id()
-      AND user_id = get_current_user_id()
-    );
-  END IF;
-END $$;
+DROP POLICY IF EXISTS "unassigned_groups_update_own" ON public.unassigned_work_groups;
+CREATE POLICY "unassigned_groups_update_own"
+ON public.unassigned_work_groups FOR UPDATE
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
 
 
--- 6. Verification
+-- 3.12 User JIRA issues cache table
+-- ============================================================================
+DROP POLICY IF EXISTS "jira_cache_view_own_or_team" ON public.user_jira_issues_cache;
+CREATE POLICY "jira_cache_view_own_or_team"
+ON public.user_jira_issues_cache FOR SELECT
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND (
+    user_id = (SELECT get_current_user_id())
+    OR (SELECT user_has_permission('view_team_analytics'))
+  )
+);
+
+DROP POLICY IF EXISTS "jira_cache_insert_own" ON public.user_jira_issues_cache;
+CREATE POLICY "jira_cache_insert_own"
+ON public.user_jira_issues_cache FOR INSERT
+WITH CHECK (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
+
+DROP POLICY IF EXISTS "jira_cache_update_own" ON public.user_jira_issues_cache;
+CREATE POLICY "jira_cache_update_own"
+ON public.user_jira_issues_cache FOR UPDATE
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
+
+
+-- 3.13 Created issues log table
+-- ============================================================================
+DROP POLICY IF EXISTS "created_issues_view_own_or_team" ON public.created_issues_log;
+CREATE POLICY "created_issues_view_own_or_team"
+ON public.created_issues_log FOR SELECT
+USING (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND (
+    user_id = (SELECT get_current_user_id())
+    OR (SELECT user_has_permission('view_team_analytics'))
+  )
+);
+
+DROP POLICY IF EXISTS "created_issues_insert_own" ON public.created_issues_log;
+CREATE POLICY "created_issues_insert_own"
+ON public.created_issues_log FOR INSERT
+WITH CHECK (
+  organization_id = (SELECT get_current_user_organization_id())
+  AND user_id = (SELECT get_current_user_id())
+);
+
+
+-- ============================================================================
+-- PART 4: Add service role bypass policies
+-- Service role should have full access for backend operations
+-- Using a single policy per table with proper role check
+-- ============================================================================
+
+-- Note: Service role automatically bypasses RLS when using the service_role key
+-- No explicit policies needed for service role access
+
+
+-- ============================================================================
+-- PART 5: Verification
 -- ============================================================================
 DO $$
 DECLARE
@@ -300,23 +451,24 @@ BEGIN
   FROM pg_policies
   WHERE schemaname = 'public';
 
-  -- Check for potential duplicates (same table, same role, same command)
+  -- Check for multiple permissive policies on same table/role/action
   SELECT COUNT(*) INTO duplicate_count
   FROM (
     SELECT tablename, roles, cmd, COUNT(*) as cnt
     FROM pg_policies
-    WHERE schemaname = 'public'
+    WHERE schemaname = 'public' AND permissive = 'PERMISSIVE'
     GROUP BY tablename, roles, cmd
     HAVING COUNT(*) > 1
   ) duplicates;
 
-  RAISE NOTICE 'Total RLS policies: %', policy_count;
+  RAISE NOTICE '========================================';
+  RAISE NOTICE 'RLS Policy Migration Complete';
+  RAISE NOTICE '========================================';
+  RAISE NOTICE 'Total policies: %', policy_count;
   
-  IF duplicate_count > 0 THEN
-    RAISE WARNING 'Found % potential duplicate policy groups (same table/role/command)', duplicate_count;
+  IF duplicate_count = 0 THEN
+    RAISE NOTICE 'SUCCESS: No duplicate permissive policies found';
   ELSE
-    RAISE NOTICE 'No duplicate policy groups detected';
+    RAISE WARNING 'WARNING: Found % table/role/action combinations with multiple policies', duplicate_count;
   END IF;
-
-  RAISE NOTICE 'Migration 017 completed successfully';
 END $$;

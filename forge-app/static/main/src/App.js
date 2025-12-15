@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 import './App.css';
 import UnassignedWork from './components/UnassignedWork';
+import TimesheetSettings from './components/TimesheetSettings';
 
 // Helper function to navigate to Jira issues (works within Forge iframe)
 const navigateToIssue = (issueKey) => {
@@ -100,6 +101,9 @@ function App() {
   const [error, setError] = useState(null);
   const [selectedScreenshots, setSelectedScreenshots] = useState(new Set());
 
+  // Month Navigation State
+  const [selectedMonth, setSelectedMonth] = useState(new Date());
+
   // User Permissions State
   const [userPermissions, setUserPermissions] = useState({
     isJiraAdmin: false,
@@ -123,6 +127,23 @@ function App() {
   // Status Update State
   const [statusUpdating, setStatusUpdating] = useState(null); // Issue key being updated
   const [issueTransitions, setIssueTransitions] = useState({}); // Cache of transitions by issue key
+
+  // Session Reassignment State
+  const [reassignModalOpen, setReassignModalOpen] = useState(false);
+  const [sessionToReassign, setSessionToReassign] = useState(null); // { session, fromIssueKey }
+  const [reassigning, setReassigning] = useState(false);
+
+  // Screenshot Preview State
+  const [screenshotPreviewOpen, setScreenshotPreviewOpen] = useState(false);
+  const [previewSession, setPreviewSession] = useState(null); // { session, issueKey }
+  const [previewImageIndex, setPreviewImageIndex] = useState(0);
+  const [previewScreenshots, setPreviewScreenshots] = useState([]); // Screenshots with signed URLs
+  const [loadingScreenshots, setLoadingScreenshots] = useState(false);
+  const [expandedScreenshot, setExpandedScreenshot] = useState(false); // Fullscreen view
+
+  // Gallery Fullscreen State (for Screenshots tab)
+  const [galleryFullscreen, setGalleryFullscreen] = useState(false);
+  const [galleryIndex, setGalleryIndex] = useState(0);
 
   // BRD Upload State
   const [selectedFile, setSelectedFile] = useState(null);
@@ -148,6 +169,7 @@ function App() {
     } else if (activeTab === 'org-analytics') {
       loadOrgAnalytics();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, selectedProjectKey]);
 
   const loadUserPermissions = async () => {
@@ -276,6 +298,120 @@ function App() {
       alert(`Error updating status: ${err.message}`);
     } finally {
       setStatusUpdating(null);
+    }
+  };
+
+  // Session Reassignment Handlers
+  const openReassignModal = (session, fromIssueKey) => {
+    setSessionToReassign({ session, fromIssueKey });
+    setReassignModalOpen(true);
+  };
+
+  const closeReassignModal = () => {
+    setReassignModalOpen(false);
+    setSessionToReassign(null);
+  };
+
+  const handleReassignSession = async (toIssueKey) => {
+    if (!sessionToReassign || reassigning) return;
+
+    setReassigning(true);
+    try {
+      const result = await invoke('reassignSession', {
+        analysisResultIds: sessionToReassign.session.analysisResultIds,
+        fromIssueKey: sessionToReassign.fromIssueKey,
+        toIssueKey: toIssueKey,
+        totalSeconds: sessionToReassign.session.duration
+      });
+
+      if (result.success) {
+        // Refresh issues list to show updated time
+        await loadActiveIssues();
+        closeReassignModal();
+      } else {
+        alert(`Failed to reassign session: ${result.error}`);
+      }
+    } catch (err) {
+      console.error('Error reassigning session:', err);
+      alert(`Error reassigning session: ${err.message}`);
+    } finally {
+      setReassigning(false);
+    }
+  };
+
+  // Screenshot Preview Handlers
+  const openScreenshotPreview = async (session, issueKey) => {
+    setPreviewSession({ session, issueKey });
+    setPreviewImageIndex(0);
+    setScreenshotPreviewOpen(true);
+    setLoadingScreenshots(true);
+    setPreviewScreenshots([]);
+
+    try {
+      // Use getSessionScreenshots resolver to get signed URLs for session screenshots
+      const result = await invoke('getSessionScreenshots', {
+        analysisResultIds: session.analysisResultIds
+      });
+
+      if (result.success && result.screenshots) {
+        setPreviewScreenshots(result.screenshots);
+      } else {
+        console.error('Failed to load screenshots:', result.error);
+      }
+    } catch (err) {
+      console.error('Error loading screenshots:', err);
+    } finally {
+      setLoadingScreenshots(false);
+    }
+  };
+
+  const closeScreenshotPreview = () => {
+    setScreenshotPreviewOpen(false);
+    setPreviewSession(null);
+    setPreviewImageIndex(0);
+    setPreviewScreenshots([]);
+    setExpandedScreenshot(false);
+  };
+
+  const toggleExpandedScreenshot = () => {
+    setExpandedScreenshot(!expandedScreenshot);
+  };
+
+  // Gallery Fullscreen Handlers (for Screenshots tab)
+  const openGalleryFullscreen = (index) => {
+    setGalleryIndex(index);
+    setGalleryFullscreen(true);
+  };
+
+  const closeGalleryFullscreen = () => {
+    setGalleryFullscreen(false);
+  };
+
+  const nextGalleryImage = () => {
+    if (screenshots.length > 0) {
+      setGalleryIndex((prev) => (prev < screenshots.length - 1 ? prev + 1 : 0));
+    }
+  };
+
+  const prevGalleryImage = () => {
+    if (screenshots.length > 0) {
+      setGalleryIndex((prev) => (prev > 0 ? prev - 1 : screenshots.length - 1));
+    }
+  };
+
+  const nextPreviewImage = () => {
+    if (previewScreenshots.length > 0) {
+      setPreviewImageIndex((prev) =>
+        prev < previewScreenshots.length - 1 ? prev + 1 : 0
+      );
+    }
+  };
+
+  const prevPreviewImage = () => {
+    if (previewScreenshots.length > 0) {
+      setPreviewImageIndex((prev) =>
+        prev > 0 ? prev - 1 : previewScreenshots.length - 1
+      );
     }
   };
 
@@ -531,6 +667,7 @@ function App() {
               <span className="sidebar-icon">📈</span>
               {sidebarOpen && <span className="sidebar-label">Time Analytics</span>}
             </button>
+            {/* Hidden for now - Screenshots page
             <button
               className={`sidebar-item ${activeTab === 'screenshots' ? 'active' : ''}`}
               onClick={() => setActiveTab('screenshots')}
@@ -539,6 +676,7 @@ function App() {
               <span className="sidebar-icon">🖼️</span>
               {sidebarOpen && <span className="sidebar-label">My Screenshots</span>}
             </button>
+            */}
             <button
               className={`sidebar-item ${activeTab === 'unassigned-work' ? 'active' : ''}`}
               onClick={() => setActiveTab('unassigned-work')}
@@ -567,6 +705,18 @@ function App() {
                 {sidebarOpen && <span className="sidebar-label">Organization Analytics</span>}
               </button>
             )}
+            {/* Timesheet Settings - visible to Jira Admins and Project Admins */}
+            {(userPermissions.isJiraAdmin || userPermissions.projectAdminProjects?.length > 0) && (
+              <button
+                className={`sidebar-item ${activeTab === 'timesheet-settings' ? 'active' : ''}`}
+                onClick={() => setActiveTab('timesheet-settings')}
+                title="Timesheet Settings"
+              >
+                <span className="sidebar-icon">⚙️</span>
+                {sidebarOpen && <span className="sidebar-label">Timesheet Settings</span>}
+              </button>
+            )}
+            {/* Hidden for now - BRD Upload page
             <button
               className={`sidebar-item ${activeTab === 'brd-upload' ? 'active' : ''}`}
               onClick={() => setActiveTab('brd-upload')}
@@ -575,6 +725,7 @@ function App() {
               <span className="sidebar-icon">📄</span>
               {sidebarOpen && <span className="sidebar-label">BRD Upload</span>}
             </button>
+            */}
           </nav>
         </aside>
 
@@ -734,7 +885,7 @@ function App() {
                                                     {dateSessions.map((session, sessionIdx) => {
                                                       const start = new Date(session.startTime);
                                                       const end = new Date(session.endTime);
-                                                      // Use stored duration (which is the sum of time_spent_seconds)
+                                                      // Use stored duration (which is the sum of duration_seconds from screenshots)
                                                       // This ensures accuracy when sessions are merged
                                                       const sessionDuration = session.duration || Math.round((end - start) / 1000);
                                                       return (
@@ -747,6 +898,32 @@ function App() {
                                                           <span className="session-duration">
                                                             {formatTime(sessionDuration)}
                                                           </span>
+                                                          <div className="session-actions">
+                                                            {session.screenshots && session.screenshots.length > 0 && (
+                                                              <button
+                                                                className="view-screenshots-button"
+                                                                onClick={(e) => {
+                                                                  e.stopPropagation();
+                                                                  openScreenshotPreview(session, issue.key);
+                                                                }}
+                                                                title={`View ${session.screenshots.length} screenshot${session.screenshots.length > 1 ? 's' : ''}`}
+                                                              >
+                                                                🖼️ {session.screenshots.length}
+                                                              </button>
+                                                            )}
+                                                            {session.analysisResultIds && session.analysisResultIds.length > 0 && (
+                                                              <button
+                                                                className="reassign-button"
+                                                                onClick={(e) => {
+                                                                  e.stopPropagation();
+                                                                  openReassignModal(session, issue.key);
+                                                                }}
+                                                                title="Reassign this session to a different issue"
+                                                              >
+                                                                ✏️
+                                                              </button>
+                                                            )}
+                                                          </div>
                                                         </div>
                                                       );
                                                     })}
@@ -788,15 +965,28 @@ function App() {
                   <div className="cumulative-stat">
                     <div className="stat-value">
                       {(() => {
+                        // Helper to normalize work_date to YYYY-MM-DD string
+                        const normalizeDate = (workDate) => {
+                          if (!workDate) return '';
+                          if (typeof workDate === 'string') {
+                            return workDate.split('T')[0];
+                          } else if (workDate instanceof Date) {
+                            return workDate.toISOString().split('T')[0];
+                          }
+                          return String(workDate).split('T')[0];
+                        };
+
                         // Use LOCAL time formatting (no UTC conversion)
                         const today = new Date();
                         const y = today.getFullYear();
                         const m = String(today.getMonth() + 1).padStart(2, '0');
                         const d = String(today.getDate()).padStart(2, '0');
                         const todayStr = `${y}-${m}-${d}`;
-                        const totalSeconds = timeData?.dailySummary?.filter(day =>
-                          day.work_date?.startsWith(todayStr)
-                        ).reduce((sum, day) => sum + (day.total_seconds || 0), 0) || 0;
+                        
+                        const totalSeconds = timeData?.dailySummary?.filter(day => {
+                          const workDateStr = normalizeDate(day.work_date);
+                          return workDateStr === todayStr;
+                        }).reduce((sum, day) => sum + (day.total_seconds || 0), 0) || 0;
                         return formatTime(totalSeconds);
                       })()}
                     </div>
@@ -863,13 +1053,27 @@ function App() {
                   <div className="cumulative-stat">
                     <div className="stat-value">
                       {(() => {
+                        // Helper to normalize work_date to YYYY-MM-DD string
+                        const normalizeDate = (workDate) => {
+                          if (!workDate) return '';
+                          if (typeof workDate === 'string') {
+                            return workDate.split('T')[0];
+                          } else if (workDate instanceof Date) {
+                            return workDate.toISOString().split('T')[0];
+                          }
+                          return String(workDate).split('T')[0];
+                        };
+
                         const today = new Date();
-                        const currentMonth = today.toISOString().slice(0, 7); // YYYY-MM
+                        const y = today.getFullYear();
+                        const m = String(today.getMonth() + 1).padStart(2, '0');
+                        const currentMonth = `${y}-${m}`; // YYYY-MM in local time
 
                         // Use dailySummary and filter for all days in current month
-                        const totalSeconds = timeData?.dailySummary?.filter(day =>
-                          day.work_date?.startsWith(currentMonth)
-                        ).reduce((sum, day) => sum + (day.total_seconds || 0), 0) || 0;
+                        const totalSeconds = timeData?.dailySummary?.filter(day => {
+                          const workDateStr = normalizeDate(day.work_date);
+                          return workDateStr.startsWith(currentMonth);
+                        }).reduce((sum, day) => sum + (day.total_seconds || 0), 0) || 0;
                         return formatTime(totalSeconds);
                       })()}
                     </div>
@@ -916,13 +1120,28 @@ function App() {
                   ) : (
                     <div className="team-members-list">
                       {(() => {
+                        // Helper to normalize work_date to YYYY-MM-DD string
+                        const normalizeDate = (workDate) => {
+                          if (!workDate) return '';
+                          if (typeof workDate === 'string') {
+                            return workDate.split('T')[0];
+                          } else if (workDate instanceof Date) {
+                            return workDate.toISOString().split('T')[0];
+                          }
+                          return String(workDate).split('T')[0];
+                        };
+
                         // Use LOCAL time to match database date parsing
                         const today = new Date();
-                        today.setHours(0, 0, 0, 0);
-                        const todayStr = today.toISOString().split('T')[0];
-                        const todayData = timeData?.dailySummary?.filter(day =>
-                          day.work_date?.startsWith(todayStr)
-                        ) || [];
+                        const y = today.getFullYear();
+                        const m = String(today.getMonth() + 1).padStart(2, '0');
+                        const d = String(today.getDate()).padStart(2, '0');
+                        const todayStr = `${y}-${m}-${d}`;
+                        
+                        const todayData = timeData?.dailySummary?.filter(day => {
+                          const workDateStr = normalizeDate(day.work_date);
+                          return workDateStr === todayStr;
+                        }) || [];
 
                         // Initialize all users with 0 time
                         const tasksByUser = {};
@@ -1163,38 +1382,75 @@ function App() {
 
               {timesheetView === 'month' && (
                 <div className="timesheet-month-view">
-                  <div className="timesheet-header">
-                    <h3>{timeData?.canViewAllUsers ? 'Monthly Timesheet' : 'My Monthly Timesheet'} - {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
+                  <div className="month-header-container">
+                    <div className="month-nav">
+                      <button 
+                        className="month-nav-btn"
+                        onClick={() => setSelectedMonth(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() - 1, 1))}
+                      >
+                        <span className="nav-arrow">‹</span>
+                      </button>
+                      <div className="month-title-wrapper">
+                        <h3 className="month-title">
+                          {selectedMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                        </h3>
+                        <span className="month-subtitle">
+                          {timeData?.canViewAllUsers ? 'Team Timesheet' : 'My Timesheet'}
+                        </span>
+                      </div>
+                      <button 
+                        className="month-nav-btn"
+                        onClick={() => setSelectedMonth(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 1))}
+                      >
+                        <span className="nav-arrow">›</span>
+                      </button>
+                    </div>
+                    <button 
+                      className="today-btn"
+                      onClick={() => setSelectedMonth(new Date())}
+                    >
+                      Today
+                    </button>
                   </div>
 
                   {loading ? (
-                    <p>Loading...</p>
+                    <div className="loading-state">
+                      <div className="loading-spinner"></div>
+                      <p>Loading timesheet...</p>
+                    </div>
                   ) : (
                     <div className="month-layout">
-                      <div className="month-calendar">
-                        <div className="calendar-grid">
-                          <div className="calendar-header">
-                            <div className="day-name">Sun</div>
-                            <div className="day-name">Mon</div>
-                            <div className="day-name">Tue</div>
-                            <div className="day-name">Wed</div>
-                            <div className="day-name">Thu</div>
-                            <div className="day-name">Fri</div>
-                            <div className="day-name">Sat</div>
-                          </div>
-                          <div className="calendar-days">
+                      <div className="month-calendar-card">
+                        <div className="calendar-card-header">
+                          <h4>Calendar View</h4>
+                        </div>
+                        <table className="calendar-table">
+                          <thead>
+                            <tr>
+                              <th>Mon</th>
+                              <th>Tue</th>
+                              <th>Wed</th>
+                              <th>Thu</th>
+                              <th>Fri</th>
+                              <th className="weekend">Sat</th>
+                              <th className="weekend">Sun</th>
+                            </tr>
+                          </thead>
+                          <tbody>
                             {(() => {
                               const today = new Date();
-                              const year = today.getFullYear();
-                              const month = today.getMonth();
-                              const firstDay = new Date(year, month, 1).getDay();
+                              const year = selectedMonth.getFullYear();
+                              const month = selectedMonth.getMonth();
+                              const firstDayOfMonth = new Date(year, month, 1);
+                              // Adjust for Monday start (0 = Monday, 6 = Sunday)
+                              let firstDay = firstDayOfMonth.getDay() - 1;
+                              if (firstDay < 0) firstDay = 6;
                               const daysInMonth = new Date(year, month + 1, 0).getDate();
-                              const currentMonthStr = today.toISOString().slice(0, 7); // "2025-11"
+                              const selectedMonthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
 
                               // Create time map by date
                               const timeByDate = {};
                               timeData?.dailySummary?.forEach(day => {
-                                // Normalize work_date to string format (handle both DATE and string types)
                                 let workDateStr;
                                 if (typeof day.work_date === 'string') {
                                   workDateStr = day.work_date.split('T')[0];
@@ -1204,8 +1460,7 @@ function App() {
                                   workDateStr = String(day.work_date);
                                 }
                                 
-                                // Check if date is in current month
-                                if (workDateStr.startsWith(currentMonthStr)) {
+                                if (workDateStr.startsWith(selectedMonthStr)) {
                                   const date = new Date(workDateStr + 'T00:00:00');
                                   if (date.getMonth() === month && date.getFullYear() === year) {
                                     const dayNum = date.getDate();
@@ -1214,32 +1469,43 @@ function App() {
                                 }
                               });
 
-                              const cells = [];
+                              const rows = [];
+                              let day = 1;
+                              const totalWeeks = Math.ceil((firstDay + daysInMonth) / 7);
 
-                              // Empty cells before first day
-                              for (let i = 0; i < firstDay; i++) {
-                                cells.push(<div key={`empty-${i}`} className="calendar-day empty"></div>);
+                              for (let week = 0; week < totalWeeks; week++) {
+                                const cells = [];
+                                for (let weekDay = 0; weekDay < 7; weekDay++) {
+                                  const dayIndex = week * 7 + weekDay;
+                                  if (dayIndex < firstDay || day > daysInMonth) {
+                                    cells.push(<td key={weekDay} className="calendar-cell empty"></td>);
+                                  } else {
+                                    const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
+                                    const isWeekend = weekDay >= 5;
+                                    const timeTracked = timeByDate[day] || 0;
+                                    const currentDay = day;
+                                    
+                                    cells.push(
+                                      <td 
+                                        key={weekDay} 
+                                        className={`calendar-cell ${isToday ? 'today' : ''} ${timeTracked > 0 ? 'has-time' : ''} ${isWeekend ? 'weekend' : ''}`}
+                                      >
+                                        <div className="cell-day">{currentDay}</div>
+                                        {timeTracked > 0 && (
+                                          <div className="cell-time">{formatTime(timeTracked)}</div>
+                                        )}
+                                      </td>
+                                    );
+                                    day++;
+                                  }
+                                }
+                                rows.push(<tr key={week}>{cells}</tr>);
                               }
 
-                              // Days of the month
-                              for (let day = 1; day <= daysInMonth; day++) {
-                                const isToday = day === today.getDate();
-                                const timeTracked = timeByDate[day] || 0;
-
-                                cells.push(
-                                  <div key={day} className={`calendar-day ${isToday ? 'today' : ''} ${timeTracked > 0 ? 'has-time' : ''}`}>
-                                    <div className="day-number">{day}</div>
-                                    {timeTracked > 0 && (
-                                      <div className="day-time">{formatTime(timeTracked)}</div>
-                                    )}
-                                  </div>
-                                );
-                              }
-
-                              return cells;
+                              return rows;
                             })()}
-                          </div>
-                        </div>
+                          </tbody>
+                        </table>
                       </div>
 
                       {/* Team Summary - Only visible to Admins and Project Admins */}
@@ -1248,8 +1514,9 @@ function App() {
                           <h4>Team Summary</h4>
                         <div className="team-summary-list">
                           {(() => {
-                            const today = new Date();
-                            const currentMonth = today.toISOString().slice(0, 7);
+                            const year = selectedMonth.getFullYear();
+                            const month = selectedMonth.getMonth();
+                            const selectedMonthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
 
                             // Initialize all users with 0 time
                             const userMonthlyTime = {};
@@ -1275,8 +1542,8 @@ function App() {
                                 workDateStr = String(day.work_date);
                               }
                               
-                              // Check if date is in current month
-                              if (workDateStr && workDateStr.startsWith(currentMonth)) {
+                              // Check if date is in selected month
+                              if (workDateStr && workDateStr.startsWith(selectedMonthStr)) {
                                 const userId = day.user_id || 'current_user';
                                 if (!userMonthlyTime[userId]) {
                                   // User exists in time data but not in allUsers list
@@ -1372,9 +1639,9 @@ function App() {
                   )}
                 </div>
                 <div className="screenshot-grid">
-                  {screenshots.map(screenshot => (
-                    <div 
-                      key={screenshot.id} 
+                  {screenshots.map((screenshot, index) => (
+                    <div
+                      key={screenshot.id}
                       className={`screenshot-item ${selectedScreenshots.has(screenshot.id) ? 'selected' : ''}`}
                     >
                       <input
@@ -1396,18 +1663,26 @@ function App() {
                         title="Delete screenshot"
                         aria-label="Delete screenshot"
                       />
-                      {(screenshot.signed_thumbnail_url || screenshot.thumbnail_url) ? (
-                        <img 
-                          src={screenshot.signed_thumbnail_url || screenshot.thumbnail_url} 
-                          alt={screenshot.window_title || 'Screenshot'} 
-                          onError={(e) => {
-                            e.target.style.display = 'none';
-                            e.target.nextSibling.style.display = 'block';
-                          }}
-                        />
-                      ) : null}
-                      <div className="screenshot-placeholder" style={{ display: (screenshot.signed_thumbnail_url || screenshot.thumbnail_url) ? 'none' : 'block' }}>
-                        No Preview
+                      <div
+                        className="screenshot-image-wrapper"
+                        onClick={() => openGalleryFullscreen(index)}
+                        title="Click to expand"
+                      >
+                        {(screenshot.signed_thumbnail_url || screenshot.thumbnail_url) ? (
+                          <img
+                            src={screenshot.signed_thumbnail_url || screenshot.thumbnail_url}
+                            alt={screenshot.window_title || 'Screenshot'}
+                            className="gallery-thumbnail"
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                              e.target.nextSibling.style.display = 'block';
+                            }}
+                          />
+                        ) : null}
+                        <div className="screenshot-placeholder" style={{ display: (screenshot.signed_thumbnail_url || screenshot.thumbnail_url) ? 'none' : 'block' }}>
+                          No Preview
+                        </div>
+                        <div className="gallery-expand-hint">🔍</div>
                       </div>
                       <div className="screenshot-info">
                         <p className="window-title" title={screenshot.window_title}>
@@ -1416,8 +1691,8 @@ function App() {
                         {screenshot.analysis_results && screenshot.analysis_results.length > 0 && screenshot.analysis_results[0].active_task_key && (
                           <p className="issue-key">
                             <strong>Issue:</strong> {screenshot.analysis_results[0].active_task_key}
-                            {screenshot.analysis_results[0].time_spent_seconds &&
-                              ` (${formatTime(screenshot.analysis_results[0].time_spent_seconds)})`
+                            {screenshot.duration_seconds &&
+                              ` (${formatTime(screenshot.duration_seconds)})`
                             }
                           </p>
                         )}
@@ -1674,8 +1949,217 @@ function App() {
         {activeTab === 'unassigned-work' && (
           <UnassignedWork />
         )}
+
+        {/* Timesheet Settings - Admin/Project Admin Only */}
+        {activeTab === 'timesheet-settings' && (userPermissions.isJiraAdmin || userPermissions.projectAdminProjects?.length > 0) && (
+          <TimesheetSettings />
+        )}
       </main>
       </div>
+
+      {/* Session Reassignment Modal */}
+      {reassignModalOpen && sessionToReassign && (
+        <div className="modal-overlay" onClick={closeReassignModal}>
+          <div className="modal-content reassign-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Reassign Session</h3>
+              <button className="modal-close" onClick={closeReassignModal}>&times;</button>
+            </div>
+            <div className="modal-body">
+              <p className="reassign-info">
+                Moving <strong>{formatTime(sessionToReassign.session.duration)}</strong> from <strong>{sessionToReassign.fromIssueKey}</strong>
+              </p>
+              <p className="reassign-prompt">Select the issue to reassign this time to:</p>
+              <div className="issue-list-modal">
+                {activeIssues
+                  .filter(issue => issue.key !== sessionToReassign.fromIssueKey)
+                  .map(issue => (
+                    <button
+                      key={issue.key}
+                      className="issue-option"
+                      onClick={() => handleReassignSession(issue.key)}
+                      disabled={reassigning}
+                    >
+                      <span className="issue-key">{issue.key}</span>
+                      <span className="issue-summary">{issue.summary}</span>
+                      <span className={`status-badge status-${issue.statusCategory}`}>{issue.status}</span>
+                    </button>
+                  ))
+                }
+                {activeIssues.filter(issue => issue.key !== sessionToReassign.fromIssueKey).length === 0 && (
+                  <p className="empty-state">No other issues available for reassignment.</p>
+                )}
+              </div>
+            </div>
+            {reassigning && (
+              <div className="modal-footer">
+                <span className="reassigning-text">Reassigning...</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Screenshot Preview Modal */}
+      {screenshotPreviewOpen && previewSession && (
+        <div className="modal-overlay" onClick={closeScreenshotPreview}>
+          <div className="modal-content screenshot-preview-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Session Screenshots - {previewSession.issueKey}</h3>
+              <button className="modal-close" onClick={closeScreenshotPreview}>&times;</button>
+            </div>
+            <div className="modal-body screenshot-preview-body">
+              {loadingScreenshots ? (
+                <div className="loading-screenshots">
+                  <div className="spinner"></div>
+                  <p>Loading screenshots...</p>
+                </div>
+              ) : previewScreenshots.length === 0 ? (
+                <div className="no-screenshots">
+                  <p>No screenshots available for this session.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="screenshot-viewer">
+                    <div
+                      className="screenshot-image-container"
+                      onClick={toggleExpandedScreenshot}
+                      title="Click to expand"
+                    >
+                      <img
+                        src={previewScreenshots[previewImageIndex]?.signed_url}
+                        alt={`Screenshot ${previewImageIndex + 1}`}
+                        className="screenshot-preview-image clickable"
+                      />
+                      <div className="expand-hint">
+                        <span>🔍 Click to expand</span>
+                      </div>
+                    </div>
+                    <div className="screenshot-info">
+                      <p className="screenshot-app">
+                        <strong>Application:</strong> {previewScreenshots[previewImageIndex]?.application_name || 'Unknown'}
+                      </p>
+                      <p className="screenshot-window">
+                        <strong>Window:</strong> {previewScreenshots[previewImageIndex]?.window_title || 'Unknown'}
+                      </p>
+                      <p className="screenshot-time">
+                        <strong>Time:</strong> {previewScreenshots[previewImageIndex]?.timestamp
+                          ? new Date(previewScreenshots[previewImageIndex].timestamp).toLocaleString()
+                          : 'Unknown'}
+                      </p>
+                    </div>
+                  </div>
+                  {previewScreenshots.length > 1 && (
+                    <div className="screenshot-navigation">
+                      <button className="nav-button prev" onClick={prevPreviewImage}>
+                        ◀ Previous
+                      </button>
+                      <span className="screenshot-counter">
+                        {previewImageIndex + 1} of {previewScreenshots.length}
+                      </span>
+                      <button className="nav-button next" onClick={nextPreviewImage}>
+                        Next ▶
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="modal-footer screenshot-footer">
+              <p className="session-summary">
+                Session: {new Date(previewSession.session.startTime).toLocaleTimeString()} - {new Date(previewSession.session.endTime).toLocaleTimeString()}
+                {' | '}Duration: {formatTime(previewSession.session.duration)}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Expanded Screenshot Fullscreen View */}
+      {expandedScreenshot && previewScreenshots.length > 0 && (
+        <div className="fullscreen-overlay" onClick={toggleExpandedScreenshot}>
+          <div className="fullscreen-content">
+            <button className="fullscreen-close" onClick={toggleExpandedScreenshot}>
+              ✕ Close
+            </button>
+            <img
+              src={previewScreenshots[previewImageIndex]?.signed_url}
+              alt={`Screenshot ${previewImageIndex + 1}`}
+              className="fullscreen-image"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <div className="fullscreen-info">
+              <span>{previewScreenshots[previewImageIndex]?.application_name || 'Unknown'}</span>
+              <span> | </span>
+              <span>{previewScreenshots[previewImageIndex]?.timestamp
+                ? new Date(previewScreenshots[previewImageIndex].timestamp).toLocaleString()
+                : 'Unknown'}</span>
+              <span> | </span>
+              <span>{previewImageIndex + 1} of {previewScreenshots.length}</span>
+            </div>
+            {previewScreenshots.length > 1 && (
+              <>
+                <button
+                  className="fullscreen-nav fullscreen-prev"
+                  onClick={(e) => { e.stopPropagation(); prevPreviewImage(); }}
+                >
+                  ◀
+                </button>
+                <button
+                  className="fullscreen-nav fullscreen-next"
+                  onClick={(e) => { e.stopPropagation(); nextPreviewImage(); }}
+                >
+                  ▶
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Gallery Fullscreen View (for Screenshots tab) */}
+      {galleryFullscreen && screenshots.length > 0 && (
+        <div className="fullscreen-overlay" onClick={closeGalleryFullscreen}>
+          <div className="fullscreen-content">
+            <button className="fullscreen-close" onClick={closeGalleryFullscreen}>
+              ✕ Close
+            </button>
+            <img
+              src={screenshots[galleryIndex]?.signed_full_url || screenshots[galleryIndex]?.signed_thumbnail_url || screenshots[galleryIndex]?.thumbnail_url}
+              alt={`Screenshot ${galleryIndex + 1}`}
+              className="fullscreen-image"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <div className="fullscreen-info">
+              <span>{screenshots[galleryIndex]?.application_name || 'Unknown App'}</span>
+              <span> | </span>
+              <span>{screenshots[galleryIndex]?.window_title || 'Unknown Window'}</span>
+              <span> | </span>
+              <span>{screenshots[galleryIndex]?.timestamp
+                ? new Date(screenshots[galleryIndex].timestamp).toLocaleString()
+                : 'Unknown'}</span>
+              <span> | </span>
+              <span>{galleryIndex + 1} of {screenshots.length}</span>
+            </div>
+            {screenshots.length > 1 && (
+              <>
+                <button
+                  className="fullscreen-nav fullscreen-prev"
+                  onClick={(e) => { e.stopPropagation(); prevGalleryImage(); }}
+                >
+                  ◀
+                </button>
+                <button
+                  className="fullscreen-nav fullscreen-next"
+                  onClick={(e) => { e.stopPropagation(); nextGalleryImage(); }}
+                >
+                  ▶
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -34,12 +34,13 @@ export async function fetchScreenshots(accountId, cloudId, limit = DEFAULT_PAGIN
 
   // Fetch screenshots with analysis results (to get issue info)
   // Filter by both user_id AND organization_id for multi-tenancy
+  // Updated to use screenshots.duration_seconds instead of analysis_results.time_spent_seconds
   const screenshots = await supabaseRequest(
     supabaseConfig,
-    `screenshots?user_id=eq.${userId}&organization_id=eq.${organization.id}&deleted_at=is.null&select=*,analysis_results(active_task_key,active_project_key,time_spent_seconds)&order=timestamp.desc&limit=${limit}&offset=${offset}`
+    `screenshots?user_id=eq.${userId}&organization_id=eq.${organization.id}&deleted_at=is.null&select=*,duration_seconds,analysis_results(active_task_key,active_project_key)&order=timestamp.desc&limit=${limit}&offset=${offset}`
   );
 
-  // Generate signed URLs for private storage images
+  // Generate signed URLs for private storage images (both thumbnail and full-size)
   const screenshotsWithUrls = await Promise.all(
     (screenshots || []).map(async (screenshot) => {
       const screenshotWithUrl = { ...screenshot };
@@ -71,14 +72,25 @@ export async function fetchScreenshots(accountId, cloudId, limit = DEFAULT_PAGIN
             throw new Error('Could not determine thumbnail path');
           }
 
-          // Generate signed URL (valid for 1 hour)
+          // Generate signed URL for thumbnail (valid for 1 hour)
           const signedUrl = await generateSignedUrl(supabaseConfig, 'screenshots', thumbPath, 3600);
           screenshotWithUrl.signed_thumbnail_url = signedUrl;
-          console.log('[Screenshot Service] Generated signed URL for:', thumbPath);
+          console.log('[Screenshot Service] Generated signed thumbnail URL for:', thumbPath);
         } catch (err) {
-          console.error('[Screenshot Service] Error generating signed URL for', thumbPath, ':', err);
+          console.error('[Screenshot Service] Error generating signed thumbnail URL:', err);
           // Fallback to original URL
           screenshotWithUrl.signed_thumbnail_url = screenshot.thumbnail_url;
+        }
+      }
+
+      // Generate signed URL for full-size screenshot
+      if (screenshot.storage_path) {
+        try {
+          const signedFullUrl = await generateSignedUrl(supabaseConfig, 'screenshots', screenshot.storage_path, 3600);
+          screenshotWithUrl.signed_full_url = signedFullUrl;
+          console.log('[Screenshot Service] Generated signed full URL for:', screenshot.storage_path);
+        } catch (err) {
+          console.error('[Screenshot Service] Error generating signed full URL:', err);
         }
       }
 

@@ -53,30 +53,12 @@ exports.analyzeActivity = async ({ imageBuffer, windowTitle, applicationName, ti
       logger.info('Falling back to OCR-based analysis');
       const extractedText = await extractText(imageBuffer);
 
-      // Extract potential Jira issue keys from text and window title
-      const detectedJiraKeys = extractJiraKeys(extractedText, windowTitle);
-
-      // Filter detected keys to only include user's assigned issues
-      let validDetectedKeys = detectedJiraKeys;
-      if (userAssignedIssues && userAssignedIssues.length > 0) {
-        const assignedIssueKeys = userAssignedIssues.map(issue => issue.key);
-        validDetectedKeys = detectedJiraKeys.filter(key => assignedIssueKeys.includes(key));
-
-        if (detectedJiraKeys.length > 0 && validDetectedKeys.length === 0) {
-          logger.warn('Detected Jira keys not in user\'s assigned issues', {
-            detectedKeys: detectedJiraKeys,
-            assignedKeys: assignedIssueKeys
-          });
-        }
-      }
-
-      // Use AI for enhanced analysis
+      // Use AI for enhanced analysis of OCR text
       try {
         visionAnalysis = await analyzeWithAI({
           extractedText,
           windowTitle,
           applicationName,
-          detectedJiraKeys: validDetectedKeys,
           userAssignedIssues
         });
         logger.info('OCR + AI analysis completed', {
@@ -88,14 +70,13 @@ exports.analyzeActivity = async ({ imageBuffer, windowTitle, applicationName, ti
         visionAnalysis.extractedText = extractedText;
       } catch (aiError) {
         logger.error('Both Vision and OCR+AI analysis failed', { error: aiError.message });
-        // Last fallback: basic heuristics
+        // Last fallback: basic heuristics - default to office work with no specific task
         visionAnalysis = {
-          taskKey: validDetectedKeys.length > 0 ? validDetectedKeys[0] : null,
-          projectKey: validDetectedKeys.length > 0 ? validDetectedKeys[0].split('-')[0] : null,
+          taskKey: null,
+          projectKey: null,
           workType: 'office', // Default to office work
-          confidenceScore: validDetectedKeys.length > 0 ? 0.7 : 0.3,
-          detectedJiraKeys: validDetectedKeys,
-          reasoning: 'Fallback to basic heuristics',
+          confidenceScore: 0.3,
+          reasoning: 'Fallback to basic heuristics - AI analysis failed',
           extractedText
         };
       }
@@ -106,16 +87,14 @@ exports.analyzeActivity = async ({ imageBuffer, windowTitle, applicationName, ti
     const projectKey = visionAnalysis?.projectKey || (taskKey ? taskKey.split('-')[0] : null);
     const workType = visionAnalysis?.workType || 'office';
     const confidenceScore = visionAnalysis?.confidenceScore || 0.0;
-    const detectedJiraKeys = visionAnalysis?.detectedJiraKeys || [];
 
     return {
       taskKey,
       projectKey,
       timeSpentSeconds,
       confidenceScore,
-      detectedJiraKeys,
       workType, // 'office' or 'non-office'
-      modelVersion: visionAnalysis?.modelVersion || 'v3.0-vision',
+      modelVersion: visionAnalysis?.modelVersion || 'v3.1-vision-thorough',
       metadata: {
         application: applicationName,
         windowTitle,
@@ -173,9 +152,7 @@ async function analyzeWithVision({ imageBuffer, windowTitle, applicationName, us
       .join('\n');
   }
 
-  const prompt = `You are analyzing a screenshot to determine:
-1. What Jira task the user is working on (if any)
-2. Whether this is office work or non-office work
+  const prompt = `You are an expert screenshot analyzer. Your job is to THOROUGHLY examine this screenshot and determine what task the user is working on.
 
 Context:
 - Application: ${applicationName}
@@ -184,65 +161,79 @@ Context:
 User's Assigned Issues (from Jira):
 ${assignedIssuesText}
 
-Analyze the screenshot and determine:
+## STEP 1: DEEPLY ANALYZE THE SCREENSHOT
 
-1. **Work Type Classification:**
-   - 'office': Work-related activities including:
-     * Coding, development, debugging
-     * Jira, project management tools
-     * Documentation, technical writing
-     * Meetings, Slack, Teams, Zoom
-     * Work-related research (Stack Overflow, documentation, work-related YouTube tutorials)
-     * Email, calendar, work communication
-   - 'non-office': Personal/non-work activities including:
-     * Entertainment (Netflix, personal YouTube, gaming)
-     * Social media (Facebook, Twitter, Instagram - unless for work)
-     * Personal browsing, shopping
-     * Any clearly non-work-related activity
+Carefully examine EVERYTHING visible in the screenshot:
 
-2. **Task Detection:**
-   - Look for Jira issue keys in the screenshot (format: PROJECT-123)
-   - Match the screenshot content to the user's assigned issues
-   - Consider: window content, visible text, code comments, browser tabs, file names, visible issue keys, etc.
-   - ONLY return task keys that are in the "User's Assigned Issues" list above
-   - **Matching Rules:**
-     * If you see a Jira key (e.g., "SCRUM-5") visible in the screenshot, use that key
-     * If the screenshot content (code, text, file names) clearly relates to an issue's summary/description, match to that issue
-     * If working in a code editor and the code/file names match an issue's context, use that issue
-     * If you cannot determine which specific task the user is working on, return null
-   - **Return null when:**
-     * No Jira key is visible AND the work doesn't clearly match any specific issue
-     * The work is too generic to associate with a particular task
-     * You cannot confidently determine which assigned issue is being worked on
+**If it's a CODE EDITOR (VS Code, Cursor, IntelliJ, etc.):**
+- READ the actual code visible on screen - function names, variable names, class names
+- Look at file names in tabs, sidebar, or title bar
+- Read code comments that might mention features or tasks
+- Identify what the code is doing (e.g., "implementing login", "fixing bug in API", "adding validation")
+- Check terminal/console output for clues
+- Look at git branch names if visible
 
-3. **Confidence Score:**
-   - High (0.9+): Clear Jira key visible or exact match to issue summary
-   - Medium (0.6-0.8): Good contextual match (e.g., code matches issue description, working in relevant app)
-   - Low (0.4-0.5): Weak match but reasonable assumption (e.g., coding with only 1-2 assigned issues)
-   - Very Low (0.0-0.3): No clear task association or multiple unrelated tasks
+**If it's a BROWSER:**
+- Read the page title, URL, and content
+- Look at tab names
+- Identify if it's documentation, Stack Overflow, API docs, etc.
+- What topic is being researched?
 
-IMPORTANT RULES:
-- Track EVERYTHING - don't skip any activities
-- Let AI decide dynamically what is office vs non-office work
-- Work-related YouTube tutorials = 'office'
-- Entertainment YouTube = 'non-office'
-- Be smart about context - coding tutorial = office, cat videos = non-office
-- ONLY return task keys from the assigned issues list
-- **Task Matching:**
-  * Match when you can see a Jira key in the screenshot OR when the work clearly relates to a specific issue
-  * If you cannot determine which specific task is being worked on, return null (this is correct behavior)
-  * Do NOT guess or force a match - only match when there's clear evidence
-  * When multiple issues could match, choose based on visible context (visible keys, file names, code content)
-- When in doubt, return null - it's better to have no task than an incorrect one
+**If it's a DESIGN TOOL (Figma, Photoshop, etc.):**
+- What is being designed? (e.g., "login page", "dashboard", "mobile app")
+- Look at layer names, artboard names
 
-Return ONLY valid JSON in this exact format:
+**If it's a TERMINAL/COMMAND LINE:**
+- Read the commands being run
+- Check git commits, branch names
+- Look at build/test output
+
+**If it's COMMUNICATION (Slack, Teams, Email):**
+- What project/feature is being discussed?
+- Are there any issue references?
+
+## STEP 2: MATCH TO ASSIGNED ISSUES
+
+Now compare what you found in Step 1 to the user's assigned issues:
+
+- If an issue says "Implement user authentication" and you see code with login/auth functions → MATCH
+- If an issue says "Fix dashboard loading bug" and you see dashboard-related code/debugging → MATCH
+- If an issue says "Add export to PDF feature" and you see PDF generation code → MATCH
+- If an issue says "Update API endpoints" and you see REST API code → MATCH
+
+**Match based on MEANING, not just keywords.** For example:
+- Issue: "Add dark mode support" + Screenshot shows: theme switching code, CSS variables for colors → MATCH
+- Issue: "Improve performance" + Screenshot shows: profiling tools, optimization code → MATCH
+
+## STEP 3: WORK TYPE CLASSIFICATION
+
+- 'office': Coding, debugging, documentation, Jira, meetings, Slack/Teams, work research, technical tutorials
+- 'non-office': Entertainment, social media, personal browsing, gaming, shopping
+
+## CONFIDENCE SCORING
+
+- 0.9-1.0: The screenshot content DIRECTLY relates to the issue (e.g., exact feature being implemented)
+- 0.7-0.8: Strong contextual match (same area of codebase, related functionality)
+- 0.5-0.6: Reasonable match (working in the right project/module)
+- 0.3-0.4: Weak match (only general similarity)
+- 0.0-0.2: Cannot determine or no match
+
+## RULES
+
+1. ALWAYS try to match to an issue by understanding the CONTENT, not just looking for Jira keys
+2. READ the code/text in the screenshot thoroughly
+3. ONLY return task keys from the assigned issues list above
+4. If you truly cannot determine which task (content is too generic or unrelated), return null
+5. When there's a reasonable match based on content analysis, USE IT - don't default to null
+
+Return ONLY valid JSON:
 {
   "workType": "office" or "non-office",
   "taskKey": "PROJECT-123" or null,
   "projectKey": "PROJECT" or null,
   "confidenceScore": 0.0-1.0,
-  "detectedJiraKeys": ["KEY1", "KEY2"],
-  "reasoning": "Brief explanation of your analysis"
+  "contentAnalysis": "What I see: [describe the main content - code functions, file names, what's being worked on]",
+  "reasoning": "Why I matched to this issue: [explain the connection between screenshot content and the issue]"
 }`;
 
   try {
@@ -251,7 +242,7 @@ Return ONLY valid JSON in this exact format:
       messages: [
         {
           role: 'system',
-          content: 'You are an expert at analyzing work activity from screenshots. You classify work as office or non-office and identify Jira tasks dynamically without hardcoded rules.'
+          content: 'You are an expert screenshot analyzer with exceptional attention to detail. Your specialty is reading and understanding code, text, and visual content in screenshots to determine what task a developer is working on. You thoroughly examine every element - code syntax, function names, file names, comments, terminal output, browser content - to match the work to Jira issues. You understand that Jira keys are rarely visible, so you focus on understanding the CONTENT and matching it semantically to issue descriptions.'
         },
         {
           role: 'user',
@@ -271,7 +262,7 @@ Return ONLY valid JSON in this exact format:
         }
       ],
       temperature: 0.3, // Lower temperature for more consistent results
-      max_tokens: 500
+      max_tokens: 800 // Increased for more detailed content analysis
     });
 
     const content = response.choices[0].message.content.trim();
@@ -296,7 +287,6 @@ Return ONLY valid JSON in this exact format:
 
     // Validate task key is in user's assigned issues (if provided)
     let validatedTaskKey = aiResult.taskKey || null;
-    let detectedJiraKeys = aiResult.detectedJiraKeys || [];
 
     if (validatedTaskKey && userAssignedIssues && userAssignedIssues.length > 0) {
       const assignedIssueKeys = userAssignedIssues.map(issue => issue.key);
@@ -307,9 +297,6 @@ Return ONLY valid JSON in this exact format:
         });
         validatedTaskKey = null;
       }
-
-      // Filter detected keys to only assigned issues
-      detectedJiraKeys = detectedJiraKeys.filter(key => assignedIssueKeys.includes(key));
     }
 
     // Return validated analysis
@@ -318,9 +305,9 @@ Return ONLY valid JSON in this exact format:
       taskKey: validatedTaskKey,
       projectKey: aiResult.projectKey || (validatedTaskKey ? validatedTaskKey.split('-')[0] : null),
       confidenceScore: Math.min(Math.max(aiResult.confidenceScore || 0.5, 0), 1), // Clamp between 0 and 1
-      detectedJiraKeys,
+      contentAnalysis: aiResult.contentAnalysis || '', // What the AI saw in the screenshot
       reasoning: aiResult.reasoning || '',
-      modelVersion: 'v3.0-vision'
+      modelVersion: 'v3.1-vision-thorough'
     };
   } catch (error) {
     logger.error('GPT-4 Vision analysis error:', error);
@@ -331,7 +318,7 @@ Return ONLY valid JSON in this exact format:
 /**
  * Analyze screenshot using GPT-4 text model with OCR (fallback method)
  */
-async function analyzeWithAI({ extractedText, windowTitle, applicationName, detectedJiraKeys, userAssignedIssues = [] }) {
+async function analyzeWithAI({ extractedText, windowTitle, applicationName, userAssignedIssues = [] }) {
   if (!openai) {
     throw new Error('OpenAI client not initialized');
   }
@@ -363,34 +350,33 @@ async function analyzeWithAI({ extractedText, windowTitle, applicationName, dete
       .join('\n');
   }
 
-  const prompt = `You are analyzing a screenshot to determine what Jira task the user is working on and classify work type.
+  const prompt = `You are analyzing extracted text from a screenshot to determine what Jira task the user is working on.
 
 Context:
 - Application: ${applicationName}
 - Window Title: ${windowTitle}
 - Extracted Text (from OCR): ${extractedText.substring(0, 1000)}${extractedText.length > 1000 ? '...' : ''}
-- Detected Jira Keys: ${detectedJiraKeys.length > 0 ? detectedJiraKeys.join(', ') : 'None found'}
 
 User's Assigned Issues (from Jira):
 ${assignedIssuesText}
 
-Analyze this information and determine:
+Analyze the extracted text and determine which assigned issue the user is working on based on the content.
 
 1. Work Type: 'office' (work-related) or 'non-office' (personal/entertainment)
-2. Task Key: Which Jira issue from the assigned list (or null)
+2. Task Key: Match the content to one of the assigned issues (or null if no match)
 3. Confidence Score: 0.0 to 1.0
 
 Rules:
-- Track EVERYTHING - classify as office or non-office
-- Work-related YouTube = office, entertainment = non-office
+- Analyze the text content to understand what work is being done
+- Match to an issue based on content similarity, not just keywords
 - ONLY return task keys from the assigned issues list
-- Return ONLY valid JSON in this exact format:
+- Return ONLY valid JSON:
 {
   "workType": "office" or "non-office",
   "taskKey": "PROJECT-123" or null,
   "projectKey": "PROJECT" or null,
   "confidenceScore": 0.0-1.0,
-  "reasoning": "Brief explanation"
+  "reasoning": "Brief explanation of why this matches the issue"
 }`;
 
   try {
@@ -446,7 +432,6 @@ Rules:
       taskKey: validatedTaskKey,
       projectKey: aiResult.projectKey || (validatedTaskKey ? validatedTaskKey.split('-')[0] : null),
       confidenceScore: Math.min(Math.max(aiResult.confidenceScore || 0.5, 0), 1),
-      detectedJiraKeys,
       reasoning: aiResult.reasoning || '',
       modelVersion: 'v2.1-ocr-ai'
     };
@@ -485,17 +470,6 @@ async function extractText(imageBuffer) {
     logger.error('OCR extraction error:', error);
     throw new Error(`Failed to extract text from screenshot: ${error.message}`);
   }
-}
-
-/**
- * Extract Jira issue keys from text (e.g., PROJ-123)
- */
-function extractJiraKeys(text, windowTitle = '') {
-  const jiraKeyPattern = /\b([A-Z]{2,10}-\d+)\b/g;
-  const combinedText = `${text} ${windowTitle}`;
-
-  const matches = combinedText.match(jiraKeyPattern);
-  return matches ? [...new Set(matches)] : [];
 }
 
 /**

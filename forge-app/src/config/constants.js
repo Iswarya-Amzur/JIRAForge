@@ -48,6 +48,25 @@ export const DEFAULT_SETTINGS = {
   autoWorklogEnabled: true
 };
 
+// Default Tracking/Timesheet Settings (for screenshot monitoring, app lists, etc.)
+export const DEFAULT_TRACKING_SETTINGS = {
+  screenshotMonitoringEnabled: true,
+  screenshotIntervalSeconds: 900, // 15 minutes
+  intervalTrackingEnabled: true, // Capture at fixed intervals
+  eventTrackingEnabled: false, // Capture on activity changes
+  trackWindowChanges: true,
+  trackIdleTime: true,
+  idleThresholdSeconds: 300, // 5 minutes
+  whitelistEnabled: true,
+  whitelistedApps: ['vscode', 'code', 'chrome', 'slack', 'jira', 'github', 'zoom', 'teams', 'postman'],
+  blacklistEnabled: true,
+  blacklistedApps: ['netflix', 'youtube', 'spotify', 'facebook', 'instagram', 'twitter', 'tiktok'],
+  nonWorkThresholdPercent: 30,
+  flagExcessiveNonWork: true,
+  privateSitesEnabled: true,
+  privateSites: []
+};
+
 // Pagination
 export const DEFAULT_PAGINATION_LIMIT = 50;
 export const DEFAULT_PAGINATION_OFFSET = 0;

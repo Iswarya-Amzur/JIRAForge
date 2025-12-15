@@ -372,3 +372,80 @@
     opacity: 0.5;
   }
 }
+
+/* Settings Tabs */
+.settings-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: var(--ds-space-300);
+  padding-bottom: var(--ds-space-200);
+  border-bottom: 2px solid var(--ds-border);
+}
+
+.tab-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--ds-text-subtle);
+  border: none;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.tab-button:hover {
+  background: var(--ds-background-neutral);
+  color: var(--ds-text);
+}
+
+.tab-button.active {
+  background: var(--ds-background-default);
+  color: var(--ds-text-brand);
+  box-shadow: 0 2px 0 0 var(--ds-background-brand-bold);
+}
+
+.tab-button.active::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--ds-background-brand-bold);
+}
+
+/* Project Admin Notice */
+.project-admin-notice {
+  background: #DEEBFF;
+  border-left: 4px solid var(--ds-background-brand-bold);
+  padding: var(--ds-space-200);
+  border-radius: 4px;
+  margin-bottom: var(--ds-space-300);
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-200);
+  flex-wrap: wrap;
+}
+
+.project-admin-notice p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ds-text);
+}
+
+.admin-badge.project-badge {
+  background: #E3FCEF;
+  color: var(--ds-background-success-bold);
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-left: 4px solid var(--ds-background-success-bold);
+}

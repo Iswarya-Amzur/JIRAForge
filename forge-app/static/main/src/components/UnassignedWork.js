@@ -14,10 +14,20 @@ function UnassignedWork() {
   const [userIssues, setUserIssues] = useState([]);
   const [userProjects, setUserProjects] = useState([]);
 
+  // User role state
+  const [userRole, setUserRole] = useState(null);
+  const [canTriggerClustering, setCanTriggerClustering] = useState(false);
+  const [clusteringMessage, setClusteringMessage] = useState(null);
+
   // Accordion states
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [groupScreenshots, setGroupScreenshots] = useState({});
   const [loadingScreenshots, setLoadingScreenshots] = useState({});
+
+  // Fullscreen screenshot state
+  const [fullscreenOpen, setFullscreenOpen] = useState(false);
+  const [fullscreenGroupId, setFullscreenGroupId] = useState(null);
+  const [fullscreenIndex, setFullscreenIndex] = useState(0);
 
   // Form states
   const [selectedIssueKey, setSelectedIssueKey] = useState('');
@@ -31,6 +41,7 @@ function UnassignedWork() {
   const [assignToMe, setAssignToMe] = useState(true);
 
   useEffect(() => {
+    loadUserRole();
     loadUnassignedWork();
     loadUserIssues();
     loadUserProjects();
@@ -42,6 +53,57 @@ function UnassignedWork() {
       loadProjectStatuses(selectedProject);
     }
   }, [selectedProject]);
+
+  const loadUserRole = async () => {
+    console.log('[UnassignedWork] Loading user role...');
+    try {
+      const result = await invoke('getUserRole');
+      console.log('[UnassignedWork] getUserRole result:', result);
+      if (result.success) {
+        setUserRole(result.role);
+        setCanTriggerClustering(result.permissions?.canTriggerClustering || false);
+        console.log('[UnassignedWork] Role:', result.role, 'canTriggerClustering:', result.permissions?.canTriggerClustering);
+      } else {
+        console.log('[UnassignedWork] getUserRole failed:', result.error);
+      }
+    } catch (err) {
+      console.error('[UnassignedWork] Error loading user role:', err);
+    }
+  };
+
+  const handleTriggerClustering = async () => {
+    if (!canTriggerClustering) return;
+    
+    setClustering(true);
+    setClusteringMessage(null);
+    setError(null);
+
+    try {
+      const result = await invoke('triggerClustering');
+      
+      if (result.success) {
+        setClusteringMessage({
+          type: 'success',
+          text: result.message || 'Clustering completed successfully!'
+        });
+        // Reload the groups after clustering
+        await loadUnassignedWork();
+      } else {
+        setClusteringMessage({
+          type: 'error',
+          text: result.error || 'Failed to trigger clustering'
+        });
+      }
+    } catch (err) {
+      console.error('Error triggering clustering:', err);
+      setClusteringMessage({
+        type: 'error',
+        text: err.message || 'Failed to trigger clustering'
+      });
+    } finally {
+      setClustering(false);
+    }
+  };
 
   const loadUnassignedWork = async () => {
     setLoading(true);
@@ -169,6 +231,38 @@ function UnassignedWork() {
 
   // NOTE: Clustering is now done automatically by the AI server
   // Groups are fetched directly from database via getUnassignedGroups
+
+  // Fullscreen screenshot handlers
+  const openFullscreen = (groupId, index) => {
+    setFullscreenGroupId(groupId);
+    setFullscreenIndex(index);
+    setFullscreenOpen(true);
+  };
+
+  const closeFullscreen = () => {
+    setFullscreenOpen(false);
+    setFullscreenGroupId(null);
+    setFullscreenIndex(0);
+  };
+
+  const getFullscreenScreenshots = () => {
+    if (!fullscreenGroupId || !groupScreenshots[fullscreenGroupId]) return [];
+    return groupScreenshots[fullscreenGroupId];
+  };
+
+  const nextFullscreenImage = () => {
+    const screenshots = getFullscreenScreenshots();
+    if (screenshots.length > 0) {
+      setFullscreenIndex((prev) => (prev < screenshots.length - 1 ? prev + 1 : 0));
+    }
+  };
+
+  const prevFullscreenImage = () => {
+    const screenshots = getFullscreenScreenshots();
+    if (screenshots.length > 0) {
+      setFullscreenIndex((prev) => (prev > 0 ? prev - 1 : screenshots.length - 1));
+    }
+  };
 
   const handleAssignClick = (group) => {
     setSelectedGroup(group);
@@ -319,7 +413,27 @@ function UnassignedWork() {
   return (
     <div className="unassigned-work-container">
       <div className="unassigned-work-header">
-        <h2>Unassigned Work</h2>
+        <div className="header-top-row">
+          <h2>Unassigned Work</h2>
+          {canTriggerClustering && (
+            <button 
+              className="trigger-clustering-btn"
+              onClick={handleTriggerClustering}
+              disabled={clustering}
+            >
+              {clustering ? (
+                <>
+                  <span className="spinner"></span>
+                  Grouping...
+                </>
+              ) : (
+                <>
+                  🔄 Group Activities
+                </>
+              )}
+            </button>
+          )}
+        </div>
         <div className="unassigned-work-summary">
           <span className="summary-item">
             <strong>{getTotalSessions()}</strong> sessions
@@ -334,6 +448,18 @@ function UnassignedWork() {
           </span>
         </div>
       </div>
+
+      {clusteringMessage && (
+        <div className={`clustering-result-message ${clusteringMessage.type}`}>
+          {clusteringMessage.type === 'success' ? '✅' : '❌'} {clusteringMessage.text}
+          <button 
+            className="dismiss-btn"
+            onClick={() => setClusteringMessage(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {clustering && (
         <div className="clustering-message">
@@ -428,7 +554,11 @@ function UnassignedWork() {
                       <div className="screenshots-grid">
                         {screenshots.map((screenshot, idx) => (
                           <div key={screenshot.id || idx} className="screenshot-card">
-                            <div className="screenshot-thumbnail">
+                            <div
+                              className="screenshot-thumbnail clickable"
+                              onClick={() => openFullscreen(group.id, idx)}
+                              title="Click to expand"
+                            >
                               {screenshot.signed_thumbnail_url ? (
                                 <img
                                   src={screenshot.signed_thumbnail_url}
@@ -440,6 +570,7 @@ function UnassignedWork() {
                                   📷 No preview
                                 </div>
                               )}
+                              <div className="expand-icon">🔍</div>
                             </div>
                             <div className="screenshot-info">
                               <div className="screenshot-time">
@@ -635,6 +766,50 @@ function UnassignedWork() {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fullscreen Screenshot View */}
+      {fullscreenOpen && getFullscreenScreenshots().length > 0 && (
+        <div className="fullscreen-overlay" onClick={closeFullscreen}>
+          <div className="fullscreen-content">
+            <button className="fullscreen-close" onClick={closeFullscreen}>
+              ✕ Close
+            </button>
+            <img
+              src={getFullscreenScreenshots()[fullscreenIndex]?.signed_thumbnail_url}
+              alt={`Screenshot ${fullscreenIndex + 1}`}
+              className="fullscreen-image"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <div className="fullscreen-info">
+              <span>{getFullscreenScreenshots()[fullscreenIndex]?.application_name || 'Unknown App'}</span>
+              <span> | </span>
+              <span>{getFullscreenScreenshots()[fullscreenIndex]?.window_title || 'Unknown Window'}</span>
+              <span> | </span>
+              <span>{getFullscreenScreenshots()[fullscreenIndex]?.timestamp
+                ? new Date(getFullscreenScreenshots()[fullscreenIndex].timestamp).toLocaleString()
+                : 'Unknown'}</span>
+              <span> | </span>
+              <span>{fullscreenIndex + 1} of {getFullscreenScreenshots().length}</span>
+            </div>
+            {getFullscreenScreenshots().length > 1 && (
+              <>
+                <button
+                  className="fullscreen-nav fullscreen-prev"
+                  onClick={(e) => { e.stopPropagation(); prevFullscreenImage(); }}
+                >
+                  ◀
+                </button>
+                <button
+                  className="fullscreen-nav fullscreen-next"
+                  onClick={(e) => { e.stopPropagation(); nextFullscreenImage(); }}
+                >
+                  ▶
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

@@ -1,49 +1,71 @@
 /**
- * Clustering Polling Service
- * Periodically checks for unassigned activities and groups them using AI
+ * Clustering Scheduling Service
+ * Runs daily clustering of unassigned activities at a scheduled time
+ * Also runs on startup if clustering hasn't happened in the last 24 hours
  */
 
 const supabaseService = require('./supabase-service');
 const clusteringService = require('./clustering-service');
 const logger = require('../utils/logger');
 
-// Poll every 5 minutes for unassigned activities to cluster
-const CLUSTERING_INTERVAL = 5 * 60 * 1000; // 5 minutes
+// Configuration (can be overridden via environment variables)
+const CLUSTERING_SCHEDULE_HOUR = parseInt(process.env.CLUSTERING_SCHEDULE_HOUR || '2', 10); // 2 AM
+const CLUSTERING_SCHEDULE_MINUTE = parseInt(process.env.CLUSTERING_SCHEDULE_MINUTE || '0', 10); // 0 minutes
 const MIN_SESSIONS_FOR_CLUSTERING = 2; // Need at least 2 sessions to cluster
-const CLUSTERING_COOLDOWN_HOURS = 24; // Don't re-cluster if already clustered in last 24 hours
 
-let intervalId = null;
+let scheduledTimeoutId = null;
+let isRunning = false;
 
 /**
- * Main polling function - checks for unassigned activities and clusters them
+ * Main clustering function - processes all users with unassigned activities
+ * @returns {Promise<boolean>} True if clustering completed successfully
  */
-async function pollAndClusterUnassigned() {
+async function runClustering() {
+  if (isRunning) {
+    logger.warn('[Clustering] Clustering is already running, skipping');
+    return false;
+  }
+
+  isRunning = true;
+  const startTime = Date.now();
+
   try {
-    logger.info('[Clustering Polling] Starting clustering check...');
+    logger.info('[Clustering] Starting daily clustering job...');
 
     // 1. Get all users who have unassigned activities
     const usersWithUnassigned = await supabaseService.getUsersWithUnassignedWork();
 
     if (usersWithUnassigned.length === 0) {
-      logger.info('[Clustering Polling] No users with unassigned work found');
-      return;
+      logger.info('[Clustering] No users with unassigned work found');
+      return true;
     }
 
-    logger.info(`[Clustering Polling] Found ${usersWithUnassigned.length} users with unassigned work`);
+    logger.info(`[Clustering] Found ${usersWithUnassigned.length} users with unassigned work`);
 
-    // 2. Process each user separately (user now includes organization_id)
+    let successCount = 0;
+    let errorCount = 0;
+
+    // 2. Process each user separately
     for (const user of usersWithUnassigned) {
       try {
         await processUserUnassignedWork(user.id, user.organization_id);
+        successCount++;
       } catch (error) {
-        logger.error(`[Clustering Polling] Error processing user ${user.id}:`, error);
+        errorCount++;
+        logger.error(`[Clustering] Error processing user ${user.id}:`, error);
         // Continue with next user even if one fails
       }
     }
 
-    logger.info('[Clustering Polling] Clustering check completed');
+    const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+    logger.info(`[Clustering] Daily clustering completed in ${duration}s - ${successCount} users processed, ${errorCount} errors`);
+
+    return true;
   } catch (error) {
-    logger.error('[Clustering Polling] Error in clustering polling:', error);
+    logger.error('[Clustering] Error in clustering job:', error);
+    return false;
+  } finally {
+    isRunning = false;
   }
 }
 
@@ -53,50 +75,38 @@ async function pollAndClusterUnassigned() {
  * @param {string} organizationId - Organization ID for multi-tenancy filtering
  */
 async function processUserUnassignedWork(userId, organizationId) {
-  logger.info(`[Clustering Polling] Processing user ${userId} in org ${organizationId}`);
+  logger.info(`[Clustering] Processing user ${userId} in org ${organizationId}`);
 
-  // 1. Check if user already has recent groups (avoid re-clustering too frequently)
-  const recentGroups = await supabaseService.getRecentGroups(userId, CLUSTERING_COOLDOWN_HOURS, organizationId);
-  if (recentGroups.length > 0) {
-    logger.info(`[Clustering Polling] User ${userId} already has groups from last ${CLUSTERING_COOLDOWN_HOURS}h, skipping`);
-    return;
-  }
-
-  // 2. Get unassigned activities for this user - filter by organization
+  // 1. Get unassigned activities for this user - filter by organization
   const sessions = await supabaseService.getUnassignedActivities(userId, organizationId);
 
   if (sessions.length < MIN_SESSIONS_FOR_CLUSTERING) {
-    logger.info(`[Clustering Polling] User ${userId} has only ${sessions.length} unassigned sessions (need ${MIN_SESSIONS_FOR_CLUSTERING}), skipping`);
+    logger.info(`[Clustering] User ${userId} has only ${sessions.length} unassigned sessions (need ${MIN_SESSIONS_FOR_CLUSTERING}), skipping`);
     return;
   }
 
-  logger.info(`[Clustering Polling] User ${userId} has ${sessions.length} unassigned sessions, starting clustering...`);
+  logger.info(`[Clustering] User ${userId} has ${sessions.length} unassigned sessions, starting clustering...`);
 
-  // 3. Get user's active Jira issues for better AI recommendations - filter by organization
+  // 2. Get user's active Jira issues for better AI recommendations
   const userIssues = await supabaseService.getUserActiveIssues(userId, organizationId);
-  logger.info(`[Clustering Polling] Found ${userIssues.length} active issues for user ${userId}`);
+  logger.info(`[Clustering] Found ${userIssues.length} active issues for user ${userId}`);
 
-  // 4. Cluster sessions using GPT-4
-  try {
-    const clusteringResult = await clusteringService.clusterUnassignedWork(sessions, userIssues);
+  // 3. Cluster sessions using GPT-4
+  const clusteringResult = await clusteringService.clusterUnassignedWork(sessions, userIssues);
 
-    if (!clusteringResult || !clusteringResult.groups || clusteringResult.groups.length === 0) {
-      logger.warn(`[Clustering Polling] No groups created for user ${userId}`);
-      return;
-    }
-
-    logger.info(`[Clustering Polling] Created ${clusteringResult.groups.length} groups for user ${userId}`);
-
-    // 5. Save each group to database - include organizationId
-    for (const group of clusteringResult.groups) {
-      await saveGroupToDatabase(userId, organizationId, group);
-    }
-
-    logger.info(`[Clustering Polling] Successfully saved ${clusteringResult.groups.length} groups for user ${userId}`);
-  } catch (error) {
-    logger.error(`[Clustering Polling] Error clustering sessions for user ${userId}:`, error);
-    throw error;
+  if (!clusteringResult || !clusteringResult.groups || clusteringResult.groups.length === 0) {
+    logger.warn(`[Clustering] No groups created for user ${userId}`);
+    return;
   }
+
+  logger.info(`[Clustering] Created ${clusteringResult.groups.length} groups for user ${userId}`);
+
+  // 4. Save each group to database
+  for (const group of clusteringResult.groups) {
+    await saveGroupToDatabase(userId, organizationId, group);
+  }
+
+  logger.info(`[Clustering] Successfully saved ${clusteringResult.groups.length} groups for user ${userId}`);
 }
 
 /**
@@ -107,9 +117,9 @@ async function processUserUnassignedWork(userId, organizationId) {
  */
 async function saveGroupToDatabase(userId, organizationId, group) {
   try {
-    logger.info(`[Clustering Polling] Saving group "${group.label}" with ${group.session_count} sessions`);
+    logger.info(`[Clustering] Saving group "${group.label}" with ${group.session_count} sessions`);
 
-    // 1. Create the group record - include organization_id for multi-tenancy
+    // 1. Create the group record
     const groupRecord = await supabaseService.createUnassignedGroup({
       user_id: userId,
       organization_id: organizationId,
@@ -137,62 +147,128 @@ async function saveGroupToDatabase(userId, organizationId, group) {
           unassigned_activity_id: sessionId
         });
       } catch (error) {
-        logger.error(`[Clustering Polling] Error adding session ${sessionId} to group ${groupRecord.id}:`, error);
+        logger.error(`[Clustering] Error adding session ${sessionId} to group ${groupRecord.id}:`, error);
         // Continue with other sessions even if one fails
       }
     }
 
-    logger.info(`[Clustering Polling] Successfully saved group ${groupRecord.id} with ${sessionIds.length} members`);
+    logger.info(`[Clustering] Successfully saved group ${groupRecord.id} with ${sessionIds.length} members`);
     return groupRecord;
   } catch (error) {
-    logger.error(`[Clustering Polling] Error saving group to database:`, error);
+    logger.error(`[Clustering] Error saving group to database:`, error);
     throw error;
   }
 }
 
 /**
- * Start the clustering polling service
+ * Calculate milliseconds until the next scheduled time
+ * @returns {number} Milliseconds until next scheduled run
  */
-function start() {
-  if (intervalId) {
-    logger.warn('[Clustering Polling] Service already running');
-    return;
+function getMillisecondsUntilScheduledTime() {
+  const now = new Date();
+  const scheduledTime = new Date();
+
+  scheduledTime.setHours(CLUSTERING_SCHEDULE_HOUR, CLUSTERING_SCHEDULE_MINUTE, 0, 0);
+
+  // If scheduled time has passed today, schedule for tomorrow
+  if (scheduledTime <= now) {
+    scheduledTime.setDate(scheduledTime.getDate() + 1);
   }
 
-  logger.info('[Clustering Polling] Starting unassigned work clustering service...');
-  logger.info(`[Clustering Polling] Interval: ${CLUSTERING_INTERVAL / 1000 / 60} minutes`);
-  logger.info(`[Clustering Polling] Minimum sessions: ${MIN_SESSIONS_FOR_CLUSTERING}`);
-  logger.info(`[Clustering Polling] Cooldown period: ${CLUSTERING_COOLDOWN_HOURS} hours`);
-
-  // Run immediately on start
-  pollAndClusterUnassigned().catch(error => {
-    logger.error('[Clustering Polling] Error in initial clustering run:', error);
-  });
-
-  // Then run on interval
-  intervalId = setInterval(() => {
-    pollAndClusterUnassigned().catch(error => {
-      logger.error('[Clustering Polling] Error in clustering interval:', error);
-    });
-  }, CLUSTERING_INTERVAL);
-
-  logger.info('[Clustering Polling] Service started successfully');
+  return scheduledTime.getTime() - now.getTime();
 }
 
 /**
- * Stop the clustering polling service
+ * Schedule the next clustering run
+ */
+function scheduleNextRun() {
+  const msUntilNextRun = getMillisecondsUntilScheduledTime();
+  const hoursUntilNextRun = (msUntilNextRun / (1000 * 60 * 60)).toFixed(2);
+
+  const nextRunTime = new Date(Date.now() + msUntilNextRun);
+  logger.info(`[Clustering] Next scheduled run at ${nextRunTime.toLocaleString()} (in ${hoursUntilNextRun} hours)`);
+
+  scheduledTimeoutId = setTimeout(async () => {
+    await runClustering();
+    scheduleNextRun(); // Schedule the next day's run
+  }, msUntilNextRun);
+}
+
+/**
+ * Run clustering on startup if it hasn't run in the last 24 hours
+ * @returns {Promise<boolean>} True if startup clustering was needed and completed
+ */
+async function runStartupClusteringIfNeeded() {
+  try {
+    logger.info('[Clustering] Checking if startup clustering is needed...');
+
+    const hasRunRecently = await supabaseService.hasClusteringRunRecently(24);
+
+    if (hasRunRecently) {
+      const lastRunTime = await supabaseService.getLastClusteringRunTime();
+      logger.info(`[Clustering] Clustering has already run recently (last run: ${lastRunTime?.toLocaleString()}), skipping startup clustering`);
+      return false;
+    }
+
+    // Check if there are any unassigned activities to cluster
+    const ungroupedCount = await supabaseService.getUngroupedActivityCount();
+    if (ungroupedCount < MIN_SESSIONS_FOR_CLUSTERING) {
+      logger.info(`[Clustering] Only ${ungroupedCount} ungrouped activities found (need ${MIN_SESSIONS_FOR_CLUSTERING}), skipping startup clustering`);
+      return false;
+    }
+
+    logger.info(`[Clustering] Clustering hasn't run in 24 hours and ${ungroupedCount} ungrouped activities found, running startup clustering...`);
+
+    const success = await runClustering();
+    return success;
+  } catch (error) {
+    logger.error('[Clustering] Error in startup clustering check:', error);
+    return false;
+  }
+}
+
+/**
+ * Start the clustering service
+ * Runs startup clustering if needed, then schedules daily runs
+ * @returns {Promise<void>}
+ */
+async function start() {
+  logger.info('[Clustering] Starting clustering service...');
+  logger.info(`[Clustering] Scheduled time: ${CLUSTERING_SCHEDULE_HOUR}:${CLUSTERING_SCHEDULE_MINUTE.toString().padStart(2, '0')}`);
+
+  // Run startup clustering if needed (this blocks until complete)
+  await runStartupClusteringIfNeeded();
+
+  // Schedule the daily run
+  scheduleNextRun();
+
+  logger.info('[Clustering] Clustering service started successfully');
+}
+
+/**
+ * Stop the clustering service
  */
 function stop() {
-  if (intervalId) {
-    clearInterval(intervalId);
-    intervalId = null;
-    logger.info('[Clustering Polling] Service stopped');
+  if (scheduledTimeoutId) {
+    clearTimeout(scheduledTimeoutId);
+    scheduledTimeoutId = null;
+    logger.info('[Clustering] Clustering service stopped');
   }
+}
+
+/**
+ * Check if clustering is currently running
+ * @returns {boolean}
+ */
+function isClusteringRunning() {
+  return isRunning;
 }
 
 module.exports = {
   start,
   stop,
-  pollAndClusterUnassigned, // Exported for manual testing
-  processUserUnassignedWork  // Exported for manual testing
+  runClustering, // Exported for manual triggering
+  runStartupClusteringIfNeeded, // Exported for startup sequence
+  isClusteringRunning,
+  processUserUnassignedWork // Exported for testing
 };

@@ -3,7 +3,7 @@
  * Resolver definitions for Jira issue operations endpoints
  */
 
-import { getAssignedIssues, updateAssignedIssuesCache, getActiveIssuesWithTime, getAvailableTransitions, updateIssueStatus } from '../services/issueService.js';
+import { getAssignedIssues, updateAssignedIssuesCache, getActiveIssuesWithTime, getAvailableTransitions, updateIssueStatus, reassignSession, getSessionScreenshots } from '../services/issueService.js';
 
 /**
  * Register issue resolvers
@@ -145,6 +145,95 @@ export function registerIssueResolvers(resolver) {
       };
     } catch (error) {
       console.error(`Error updating status for ${issueKey}:`, error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  });
+
+  /**
+   * Resolver for reassigning a work session from one issue to another
+   * Updates analysis_results records in Supabase
+   */
+  resolver.define('reassignSession', async (req) => {
+    const { context, payload } = req;
+    const accountId = context.accountId;
+    const cloudId = context.cloudId;
+    const { analysisResultIds, fromIssueKey, toIssueKey, totalSeconds } = payload;
+
+    if (!analysisResultIds || !Array.isArray(analysisResultIds) || analysisResultIds.length === 0) {
+      return {
+        success: false,
+        error: 'No analysis results to reassign'
+      };
+    }
+
+    if (!fromIssueKey || !toIssueKey) {
+      return {
+        success: false,
+        error: 'Both fromIssueKey and toIssueKey are required'
+      };
+    }
+
+    if (fromIssueKey === toIssueKey) {
+      return {
+        success: false,
+        error: 'Cannot reassign to the same issue'
+      };
+    }
+
+    try {
+      const result = await reassignSession(
+        accountId,
+        cloudId,
+        analysisResultIds,
+        fromIssueKey,
+        toIssueKey,
+        totalSeconds || 0
+      );
+      return {
+        success: true,
+        reassigned: result.reassigned,
+        errors: result.errors,
+        message: result.message
+      };
+    } catch (error) {
+      console.error(`Error reassigning session from ${fromIssueKey} to ${toIssueKey}:`, error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  });
+
+  /**
+   * Resolver for getting screenshots for a work session
+   * Fetches screenshots with signed URLs for verification
+   */
+  resolver.define('getSessionScreenshots', async (req) => {
+    const { context, payload } = req;
+    const accountId = context.accountId;
+    const cloudId = context.cloudId;
+    const { analysisResultIds } = payload;
+
+    console.log(`[getSessionScreenshots] Received ${analysisResultIds?.length || 0} analysis result IDs`);
+
+    if (!analysisResultIds || !Array.isArray(analysisResultIds) || analysisResultIds.length === 0) {
+      return {
+        success: false,
+        error: 'No analysis result IDs provided'
+      };
+    }
+
+    try {
+      const result = await getSessionScreenshots(accountId, cloudId, analysisResultIds);
+      return {
+        success: true,
+        screenshots: result.screenshots
+      };
+    } catch (error) {
+      console.error('Error getting session screenshots:', error);
       return {
         success: false,
         error: error.message

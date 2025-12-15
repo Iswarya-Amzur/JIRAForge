@@ -57,15 +57,19 @@ export async function fetchTimeAnalytics(accountId, cloudId) {
   const weeklySummary = await supabaseRequest(supabaseConfig, weeklySummaryQuery);
 
   // Fetch project time summary
+  // Note: project_time_summary is aggregated by project (not by user), so we filter by organization only
+  // For user-specific project data, we aggregate from daily_time_summary instead
   const timeByProject = await supabaseRequest(
     supabaseConfig,
-    `project_time_summary?user_id=eq.${userId}&organization_id=eq.${organization.id}&order=total_seconds.desc`
+    `project_time_summary?organization_id=eq.${organization.id}&order=total_seconds.desc`
   );
 
-  // Fetch time by issue (from analysis_results)
+  // Fetch time by issue (from analysis_results with screenshots) - includes all work types for total
+  // Note: We include all work types here because we want total time per issue
+  // Updated to use screenshots.duration_seconds instead of analysis_results.time_spent_seconds
   const timeByIssueQuery = canViewAllUsers
-    ? `analysis_results?organization_id=eq.${organization.id}&work_type=eq.office&active_task_key=not.is.null&select=active_task_key,active_project_key,time_spent_seconds&order=created_at.desc`
-    : `analysis_results?user_id=eq.${userId}&organization_id=eq.${organization.id}&work_type=eq.office&active_task_key=not.is.null&select=active_task_key,active_project_key,time_spent_seconds&order=created_at.desc`;
+    ? `analysis_results?organization_id=eq.${organization.id}&active_task_key=not.is.null&select=active_task_key,active_project_key,work_type,screenshots(duration_seconds)&order=created_at.desc`
+    : `analysis_results?user_id=eq.${userId}&organization_id=eq.${organization.id}&active_task_key=not.is.null&select=active_task_key,active_project_key,work_type,screenshots(duration_seconds)&order=created_at.desc`;
 
   const timeByIssue = await supabaseRequest(supabaseConfig, timeByIssueQuery);
 
@@ -80,7 +84,8 @@ export async function fetchTimeAnalytics(accountId, cloudId) {
         totalSeconds: 0
       };
     }
-    issueAggregation[key].totalSeconds += result.time_spent_seconds || 0;
+    // Use screenshots.duration_seconds instead of time_spent_seconds
+    issueAggregation[key].totalSeconds += result.screenshots?.duration_seconds || 0;
   });
 
   const timeByIssueArray = Object.values(issueAggregation)
@@ -188,15 +193,17 @@ export async function fetchProjectAnalytics(accountId, cloudId, projectKey) {
   }
 
   // 2. Fetch Project Data - filter by organization_id
+  // Note: project_time_summary uses 'project_key' column (not 'active_project_key')
   const timeByProject = await supabaseRequest(
     supabaseConfig,
-    `project_time_summary?organization_id=eq.${organization.id}&active_project_key=eq.${projectKey}&order=total_seconds.desc`
+    `project_time_summary?organization_id=eq.${organization.id}&project_key=eq.${projectKey}&order=total_seconds.desc`
   );
 
   // Fetch issues for this project
+  // Updated to use screenshots.duration_seconds instead of analysis_results.time_spent_seconds
   const timeByIssue = await supabaseRequest(
     supabaseConfig,
-    `analysis_results?organization_id=eq.${organization.id}&active_project_key=eq.${projectKey}&work_type=eq.office&select=active_task_key,time_spent_seconds,user_id&order=created_at.desc&limit=100`
+    `analysis_results?organization_id=eq.${organization.id}&active_project_key=eq.${projectKey}&work_type=eq.office&select=active_task_key,user_id,screenshots(duration_seconds)&order=created_at.desc&limit=100`
   );
 
   return {
@@ -237,16 +244,17 @@ export async function fetchProjectTeamAnalytics(accountId, cloudId, projectKey) 
   }
 
   // 2. Fetch Team Data - filter by organization_id
-  // Daily summary for the project
+  // Daily summary for the project (uses 'project_key' column, not 'active_project_key')
   const teamDailySummary = await supabaseRequest(
     supabaseConfig,
-    `daily_time_summary?organization_id=eq.${organization.id}&active_project_key=eq.${projectKey}&order=work_date.desc&limit=${MAX_DAILY_SUMMARY_DAYS}`
+    `daily_time_summary?organization_id=eq.${organization.id}&project_key=eq.${projectKey}&order=work_date.desc&limit=${MAX_DAILY_SUMMARY_DAYS}`
   );
 
   // Time by issue for this project
+  // Updated to use screenshots.duration_seconds instead of analysis_results.time_spent_seconds
   const timeByIssue = await supabaseRequest(
     supabaseConfig,
-    `analysis_results?organization_id=eq.${organization.id}&active_project_key=eq.${projectKey}&work_type=eq.office&active_task_key=not.is.null&select=active_task_key,time_spent_seconds,user_id&order=created_at.desc&limit=200`
+    `analysis_results?organization_id=eq.${organization.id}&active_project_key=eq.${projectKey}&work_type=eq.office&active_task_key=not.is.null&select=active_task_key,user_id,screenshots(duration_seconds)&order=created_at.desc&limit=200`
   );
 
   // Aggregate time by issue (across all team members)
@@ -260,7 +268,8 @@ export async function fetchProjectTeamAnalytics(accountId, cloudId, projectKey) 
         userCount: new Set()
       };
     }
-    issueAggregation[key].totalSeconds += result.time_spent_seconds || 0;
+    // Use screenshots.duration_seconds instead of time_spent_seconds
+    issueAggregation[key].totalSeconds += result.screenshots?.duration_seconds || 0;
     if (result.user_id) {
       issueAggregation[key].userCount.add(result.user_id);
     }

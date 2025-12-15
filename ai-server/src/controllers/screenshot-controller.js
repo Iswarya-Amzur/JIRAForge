@@ -73,10 +73,21 @@ exports.analyzeScreenshot = async (req, res) => {
       active_project_key: analysis.projectKey,
       confidence_score: analysis.confidenceScore,
       extracted_text: analysis.metadata?.extractedText || '', // OCR text if fallback was used
-      detected_jira_keys: analysis.detectedJiraKeys,
       work_type: analysis.workType, // 'office' or 'non-office'
       ai_model_version: analysis.modelVersion,
       analysis_metadata: analysis.metadata
+    });
+
+    // Update screenshot with duration data for event-based tracking
+    // For now, use timestamp as end_time and calculate start_time from duration
+    // When desktop app sends start_time/end_time, it will override these values
+    const endTime = timestamp || new Date().toISOString();
+    const startTime = analysis.startTime || new Date(new Date(endTime).getTime() - (analysis.timeSpentSeconds * 1000)).toISOString();
+    
+    await supabaseService.updateScreenshotDuration(screenshot_id, {
+      duration_seconds: analysis.timeSpentSeconds,
+      start_time: startTime,
+      end_time: endTime
     });
 
     // Update screenshot status
