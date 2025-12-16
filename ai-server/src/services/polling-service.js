@@ -24,8 +24,11 @@ class PollingService {
     this.isRunning = true;
     logger.info(`Starting polling service (interval: ${this.pollInterval}ms, batch size: ${this.batchSize})`);
 
-    // Process immediately on start
-    this.processPendingScreenshots();
+    // Process immediately on start - handle promise rejection to prevent crash
+    this.processPendingScreenshots().catch(error => {
+      logger.error('Error in initial polling cycle:', error);
+      // Don't stop the service - the interval will retry
+    });
 
     // Then set up interval
     this.intervalId = setInterval(() => {
@@ -153,6 +156,9 @@ class PollingService {
       window_title,
       application_name,
       timestamp,
+      duration_seconds,  // Event-based tracking: Duration set by desktop app
+      start_time,        // Event-based tracking: Start time set by desktop app
+      end_time,          // Event-based tracking: End time set by desktop app
       user_assigned_issues
     } = screenshot;
 
@@ -201,12 +207,16 @@ class PollingService {
       userAssignedIssues: parsedAssignedIssues || []
     });
 
+    // Use actual duration from desktop app if available, otherwise use AI's calculated value
+    // Desktop app sets duration_seconds based on actual window tracking (event-based)
+    const actualDuration = duration_seconds || analysis.timeSpentSeconds;
+
     // Save analysis results to Supabase - include organization_id for multi-tenancy
     await supabaseService.saveAnalysisResult({
       screenshot_id,
       user_id,
       organization_id,  // Multi-tenancy: Pass organization_id from screenshot
-      time_spent_seconds: analysis.timeSpentSeconds,
+      time_spent_seconds: actualDuration,
       active_task_key: analysis.taskKey,
       active_project_key: analysis.projectKey,
       confidence_score: analysis.confidenceScore,
@@ -217,16 +227,20 @@ class PollingService {
     });
 
     // Update screenshot with duration data for event-based tracking
-    // For now, use timestamp as end_time and calculate start_time from duration
-    // When desktop app sends start_time/end_time, it will override these values
-    const endTime = timestamp || new Date().toISOString();
-    const startTime = analysis.startTime || new Date(new Date(endTime).getTime() - (analysis.timeSpentSeconds * 1000)).toISOString();
-    
-    await supabaseService.updateScreenshotDuration(screenshot_id, {
-      duration_seconds: analysis.timeSpentSeconds,
-      start_time: startTime,
-      end_time: endTime
-    });
+    // IMPORTANT: Only update if desktop app hasn't already set the values
+    // Desktop app's event-based tracking provides accurate duration based on actual window switches
+    if (!duration_seconds || !start_time || !end_time) {
+      // Fallback: Calculate duration for legacy screenshots that don't have event-based data
+      const calculatedEndTime = timestamp || new Date().toISOString();
+      const calculatedStartTime = new Date(new Date(calculatedEndTime).getTime() - (actualDuration * 1000)).toISOString();
+
+      await supabaseService.updateScreenshotDuration(screenshot_id, {
+        duration_seconds: actualDuration,
+        start_time: start_time || calculatedStartTime,  // Use desktop app's value if available
+        end_time: end_time || calculatedEndTime         // Use desktop app's value if available
+      });
+    }
+    // If desktop app already set all duration fields, no need to update - they're already accurate
 
     // Update screenshot status to analyzed
     await supabaseService.updateScreenshotStatus(screenshot_id, 'analyzed');

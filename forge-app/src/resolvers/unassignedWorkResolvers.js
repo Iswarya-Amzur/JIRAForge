@@ -1051,6 +1051,303 @@ async function getUserRole(req) {
 }
 
 /**
+ * Preview activities within a time interval for bulk reassignment
+ * Returns activities that would be affected by the bulk reassignment
+ */
+async function previewBulkReassign(req) {
+  try {
+    const { accountId, cloudId } = req.context;
+    const { selectedDate, startTime, endTime } = req.payload;
+
+    if (!selectedDate || !startTime || !endTime) {
+      return { success: false, error: 'Date and time range are required' };
+    }
+
+    const supabaseConfig = await getSupabaseConfig(accountId);
+    if (!supabaseConfig) {
+      return { success: false, error: 'Supabase not configured' };
+    }
+
+    // Get or create organization first (multi-tenancy)
+    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+    if (!organization) {
+      return { success: false, error: 'Unable to get organization information' };
+    }
+
+    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+
+    // Build datetime range from selected date and times
+    // startTime and endTime are in "HH:mm" format
+    const startDateTime = `${selectedDate}T${startTime}:00`;
+    const endDateTime = `${selectedDate}T${endTime}:00`;
+
+    console.log(`[previewBulkReassign] Previewing activities from ${startDateTime} to ${endDateTime}`);
+
+    // Query analysis_results within the time range (includes both assigned and unassigned)
+    // Use screenshots.timestamp for accurate time-based filtering
+    const analysisResults = await supabaseRequest(
+      supabaseConfig,
+      `analysis_results?select=id,active_task_key,time_spent_seconds,confidence_score,work_type,manually_assigned,screenshots(id,timestamp,window_title,application_name,thumbnail_url)&user_id=eq.${userId}&organization_id=eq.${organization.id}&work_type=eq.office&order=created_at.asc`
+    );
+
+    // Filter by screenshot timestamp within the time range
+    const startDate = new Date(startDateTime);
+    const endDate = new Date(endDateTime);
+    
+    const activitiesInRange = (analysisResults || []).filter(result => {
+      const screenshotTimestamp = result.screenshots?.timestamp;
+      if (!screenshotTimestamp) return false;
+      
+      const activityTime = new Date(screenshotTimestamp);
+      return activityTime >= startDate && activityTime <= endDate;
+    });
+
+    // Separate into currently assigned (wrongly tracked) and unassigned
+    const wronglyTracked = activitiesInRange.filter(a => a.active_task_key !== null);
+    const unassigned = activitiesInRange.filter(a => a.active_task_key === null);
+
+    // Calculate totals
+    const totalSeconds = activitiesInRange.reduce((sum, a) => sum + (a.time_spent_seconds || 0), 0);
+    
+    // Get unique issue keys that are currently assigned
+    const currentlyAssignedIssues = [...new Set(wronglyTracked.map(a => a.active_task_key).filter(Boolean))];
+
+    // Format activities for display
+    const formattedActivities = activitiesInRange.map(a => ({
+      id: a.id,
+      screenshot_id: a.screenshots?.id,
+      timestamp: a.screenshots?.timestamp,
+      window_title: a.screenshots?.window_title,
+      application_name: a.screenshots?.application_name,
+      thumbnail_url: a.screenshots?.thumbnail_url,
+      current_issue_key: a.active_task_key,
+      time_spent_seconds: a.time_spent_seconds,
+      is_unassigned: a.active_task_key === null
+    }));
+
+    return {
+      success: true,
+      preview: {
+        total_activities: activitiesInRange.length,
+        wrongly_tracked_count: wronglyTracked.length,
+        unassigned_count: unassigned.length,
+        total_seconds: totalSeconds,
+        total_time_formatted: formatDuration(totalSeconds),
+        currently_assigned_issues: currentlyAssignedIssues,
+        activities: formattedActivities,
+        time_range: {
+          start: startDateTime,
+          end: endDateTime,
+          date: selectedDate
+        }
+      }
+    };
+
+  } catch (error) {
+    console.error('Error previewing bulk reassign:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Bulk reassign all activities within a time interval to a specific issue
+ * Handles both already-tracked (wrongly assigned) and unassigned activities
+ */
+async function bulkReassignByTimeInterval(req) {
+  try {
+    const { accountId, cloudId } = req.context;
+    const { selectedDate, startTime, endTime, targetIssueKey, createWorklog = true } = req.payload;
+
+    if (!selectedDate || !startTime || !endTime) {
+      return { success: false, error: 'Date and time range are required' };
+    }
+
+    if (!targetIssueKey) {
+      return { success: false, error: 'Target issue key is required' };
+    }
+
+    const supabaseConfig = await getSupabaseConfig(accountId);
+    if (!supabaseConfig) {
+      return { success: false, error: 'Supabase not configured' };
+    }
+
+    // Get or create organization first (multi-tenancy)
+    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+    if (!organization) {
+      return { success: false, error: 'Unable to get organization information' };
+    }
+
+    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+
+    // Build datetime range
+    const startDateTime = `${selectedDate}T${startTime}:00`;
+    const endDateTime = `${selectedDate}T${endTime}:00`;
+
+    console.log(`[bulkReassignByTimeInterval] Reassigning activities from ${startDateTime} to ${endDateTime} to ${targetIssueKey}`);
+
+    // First, get all analysis_results in the time range
+    const analysisResults = await supabaseRequest(
+      supabaseConfig,
+      `analysis_results?select=id,active_task_key,time_spent_seconds,screenshot_id,screenshots(id,timestamp)&user_id=eq.${userId}&organization_id=eq.${organization.id}&work_type=eq.office`
+    );
+
+    // Filter by screenshot timestamp
+    const startDate = new Date(startDateTime);
+    const endDate = new Date(endDateTime);
+    
+    const activitiesInRange = (analysisResults || []).filter(result => {
+      const screenshotTimestamp = result.screenshots?.timestamp;
+      if (!screenshotTimestamp) return false;
+      
+      const activityTime = new Date(screenshotTimestamp);
+      return activityTime >= startDate && activityTime <= endDate;
+    });
+
+    if (activitiesInRange.length === 0) {
+      return { success: false, error: 'No activities found in the specified time range' };
+    }
+
+    const analysisResultIds = activitiesInRange.map(a => a.id);
+    const totalSeconds = activitiesInRange.reduce((sum, a) => sum + (a.time_spent_seconds || 0), 0);
+    const previouslyAssignedCount = activitiesInRange.filter(a => a.active_task_key !== null).length;
+    const previouslyUnassignedCount = activitiesInRange.filter(a => a.active_task_key === null).length;
+
+    console.log(`[bulkReassignByTimeInterval] Found ${activitiesInRange.length} activities (${previouslyAssignedCount} tracked, ${previouslyUnassignedCount} unassigned)`);
+
+    // Update all analysis_results to point to the target issue
+    const analysisIdsParam = analysisResultIds.join(',');
+    await supabaseRequest(
+      supabaseConfig,
+      `analysis_results?id=in.(${analysisIdsParam})`,
+      {
+        method: 'PATCH',
+        body: {
+          active_task_key: targetIssueKey,
+          manually_assigned: true,
+          assignment_group_id: null // Clear any previous group assignment
+        }
+      }
+    );
+
+    // Also update unassigned_activity table for any activities that exist there
+    // First, find matching unassigned_activity records
+    const unassignedActivities = await supabaseRequest(
+      supabaseConfig,
+      `unassigned_activity?analysis_result_id=in.(${analysisIdsParam})&select=id`
+    );
+
+    const unassignedArray = Array.isArray(unassignedActivities) ? unassignedActivities : (unassignedActivities ? [unassignedActivities] : []);
+    
+    if (unassignedArray.length > 0) {
+      const unassignedIds = unassignedArray.map(u => u.id).join(',');
+      await supabaseRequest(
+        supabaseConfig,
+        `unassigned_activity?id=in.(${unassignedIds})`,
+        {
+          method: 'PATCH',
+          body: {
+            manually_assigned: true,
+            assigned_task_key: targetIssueKey,
+            assigned_by: userId,
+            assigned_at: new Date().toISOString()
+          }
+        }
+      );
+      console.log(`[bulkReassignByTimeInterval] Updated ${unassignedArray.length} unassigned_activity records`);
+    }
+
+    // Mark any unassigned_work_groups that contained these activities as assigned
+    // First get group IDs from group_members table
+    const groupMembers = await supabaseRequest(
+      supabaseConfig,
+      `unassigned_group_members?unassigned_activity_id=in.(${unassignedArray.map(u => u.id).join(',') || 'null'})&select=group_id`
+    );
+
+    const groupMembersArray = Array.isArray(groupMembers) ? groupMembers : (groupMembers ? [groupMembers] : []);
+    const uniqueGroupIds = [...new Set(groupMembersArray.map(m => m.group_id).filter(Boolean))];
+
+    if (uniqueGroupIds.length > 0) {
+      const groupIdsParam = uniqueGroupIds.join(',');
+      await supabaseRequest(
+        supabaseConfig,
+        `unassigned_work_groups?id=in.(${groupIdsParam})`,
+        {
+          method: 'PATCH',
+          body: {
+            is_assigned: true,
+            assigned_to_issue_key: targetIssueKey,
+            assigned_at: new Date().toISOString(),
+            assigned_by: userId
+          }
+        }
+      );
+      console.log(`[bulkReassignByTimeInterval] Marked ${uniqueGroupIds.length} groups as assigned`);
+    }
+
+    // Create worklog in Jira if requested
+    let worklog = null;
+    if (createWorklog && totalSeconds > 0) {
+      const worklogResponse = await api.asUser().requestJira(
+        route`/rest/api/3/issue/${targetIssueKey}/worklog`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            timeSpentSeconds: totalSeconds,
+            comment: {
+              type: 'doc',
+              version: 1,
+              content: [
+                {
+                  type: 'paragraph',
+                  content: [
+                    {
+                      type: 'text',
+                      text: `Bulk time correction: ${activitiesInRange.length} activities (${formatDuration(totalSeconds)}) from ${startTime} to ${endTime} on ${selectedDate} reassigned to this issue.`
+                    }
+                  ]
+                }
+              ]
+            },
+            started: formatJiraDate(new Date(startDateTime))
+          })
+        }
+      );
+
+      if (!worklogResponse.ok) {
+        const errorText = await worklogResponse.text();
+        console.warn(`[bulkReassignByTimeInterval] Failed to create worklog: ${errorText}`);
+        // Don't fail the whole operation if worklog creation fails
+      } else {
+        worklog = await worklogResponse.json();
+        console.log(`[bulkReassignByTimeInterval] Created worklog ${worklog.id} for ${totalSeconds} seconds`);
+      }
+    }
+
+    return {
+      success: true,
+      result: {
+        total_reassigned: activitiesInRange.length,
+        previously_tracked: previouslyAssignedCount,
+        previously_unassigned: previouslyUnassignedCount,
+        total_seconds: totalSeconds,
+        total_time_formatted: formatDuration(totalSeconds),
+        target_issue_key: targetIssueKey,
+        worklog_id: worklog?.id || null,
+        time_range: {
+          start: startDateTime,
+          end: endDateTime
+        }
+      }
+    };
+
+  } catch (error) {
+    console.error('Error in bulk reassign:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
  * Get notification settings for unassigned work reminders
  */
 async function getUnassignedNotificationSettings(req) {
@@ -1227,4 +1524,6 @@ export function registerUnassignedWorkResolvers(resolver) {
   resolver.define('getUnassignedNotificationSettings', getUnassignedNotificationSettings); // Get notification settings
   resolver.define('saveUnassignedNotificationSettings', saveUnassignedNotificationSettings); // Save notification settings
   resolver.define('getUnassignedWorkSummary', getUnassignedWorkSummary); // Get summary for desktop notifications
+  resolver.define('previewBulkReassign', previewBulkReassign); // Preview activities for bulk reassignment by time interval
+  resolver.define('bulkReassignByTimeInterval', bulkReassignByTimeInterval); // Bulk reassign activities within a time interval
 }

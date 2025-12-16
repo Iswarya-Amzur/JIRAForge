@@ -14,11 +14,15 @@ exports.analyzeScreenshot = async (req, res) => {
     const {
       id: screenshot_id,
       user_id,
+      organization_id,  // Multi-tenancy: Extract organization_id from webhook payload
       storage_url,
       storage_path,
       window_title,
       application_name,
       timestamp,
+      duration_seconds,  // Event-based tracking: Duration set by desktop app
+      start_time,        // Event-based tracking: Start time set by desktop app
+      end_time,          // Event-based tracking: End time set by desktop app
       user_assigned_issues // Optional: User's assigned Jira issues from Forge app
     } = webhookData;
 
@@ -64,11 +68,16 @@ exports.analyzeScreenshot = async (req, res) => {
       userAssignedIssues: parsedAssignedIssues || [] // Pass assigned issues to analysis
     });
 
-    // Save analysis results to Supabase
+    // Use actual duration from desktop app if available, otherwise use AI's calculated value
+    // Desktop app sets duration_seconds based on actual window tracking (event-based)
+    const actualDuration = duration_seconds || analysis.timeSpentSeconds;
+
+    // Save analysis results to Supabase - include organization_id for multi-tenancy
     await supabaseService.saveAnalysisResult({
       screenshot_id,
       user_id,
-      time_spent_seconds: analysis.timeSpentSeconds,
+      organization_id,  // Multi-tenancy: Pass organization_id from webhook payload
+      time_spent_seconds: actualDuration,
       active_task_key: analysis.taskKey,
       active_project_key: analysis.projectKey,
       confidence_score: analysis.confidenceScore,
@@ -79,16 +88,20 @@ exports.analyzeScreenshot = async (req, res) => {
     });
 
     // Update screenshot with duration data for event-based tracking
-    // For now, use timestamp as end_time and calculate start_time from duration
-    // When desktop app sends start_time/end_time, it will override these values
-    const endTime = timestamp || new Date().toISOString();
-    const startTime = analysis.startTime || new Date(new Date(endTime).getTime() - (analysis.timeSpentSeconds * 1000)).toISOString();
-    
-    await supabaseService.updateScreenshotDuration(screenshot_id, {
-      duration_seconds: analysis.timeSpentSeconds,
-      start_time: startTime,
-      end_time: endTime
-    });
+    // IMPORTANT: Only update if desktop app hasn't already set the values
+    // Desktop app's event-based tracking provides accurate duration based on actual window switches
+    if (!duration_seconds || !start_time || !end_time) {
+      // Fallback: Calculate duration for legacy screenshots that don't have event-based data
+      const calculatedEndTime = timestamp || new Date().toISOString();
+      const calculatedStartTime = new Date(new Date(calculatedEndTime).getTime() - (actualDuration * 1000)).toISOString();
+
+      await supabaseService.updateScreenshotDuration(screenshot_id, {
+        duration_seconds: actualDuration,
+        start_time: start_time || calculatedStartTime,  // Use desktop app's value if available
+        end_time: end_time || calculatedEndTime         // Use desktop app's value if available
+      });
+    }
+    // If desktop app already set all duration fields, no need to update - they're already accurate
 
     // Update screenshot status
     await supabaseService.updateScreenshotStatus(screenshot_id, 'analyzed');

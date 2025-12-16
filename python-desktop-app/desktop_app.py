@@ -848,7 +848,7 @@ class BRDTimeTracker:
         # ============================================================================
         self.notification_settings = {
             'enabled': True,  # Whether desktop notifications are enabled
-            'interval_hours': 4,  # How often to check/notify (hours)
+            'interval_hours': 24,  # How often to check/notify (hours) - once a day
             'min_unassigned_minutes': 30  # Minimum unassigned time before notifying
         }
         self.last_notification_time = 0  # Timestamp of last notification
@@ -869,11 +869,13 @@ class BRDTimeTracker:
         # Event-based tracking: Window switch detection
         self.current_window_key = None  # Unique identifier for current window (app + title)
         self.current_window_start_time = None  # When current window became active (updated after each screenshot)
+        self.current_window_db_start_time = None  # Actual start_time saved to database (for accurate duration calc)
         self.current_window_screenshot_id = None  # ID of the current screenshot (to update later when switching)
         self.last_interval_time = None  # When last INTERVAL screenshot was taken (fixed 5-min clock)
         self.last_screenshot_end_time = None  # End time of last screenshot record (to ensure no gaps)
         self.previous_window_key = None  # Previous window (to capture final screenshot with full duration)
         self.previous_window_start_time = None  # When previous window became active
+        self.previous_window_db_start_time = None  # Actual start_time from database (for accurate duration calc)
         self.previous_window_info = None  # Previous window info (title, app)
         self.previous_window_screenshot_id = None  # ID of the "start" screenshot for previous window (to update)
         
@@ -1200,7 +1202,7 @@ class BRDTimeTracker:
                 'name': atlassian_user.get('name'),
                 'user_id': user_id,
                 'organization_id': self.organization_id,
-                'cached_at': datetime.now(timezone.utc).isoformat()
+                'cached_at': datetime.now().isoformat()
             }
             with open(self._get_user_cache_path(), 'w') as f:
                 json.dump(cache_data, f)
@@ -1609,7 +1611,7 @@ class BRDTimeTracker:
                 settings = result.data[0]['settings']
                 self.notification_settings = {
                     'enabled': settings.get('unassigned_work_notifications_enabled', True),
-                    'interval_hours': settings.get('notification_interval_hours', 4),
+                    'interval_hours': settings.get('notification_interval_hours', 24),
                     'min_unassigned_minutes': settings.get('min_unassigned_minutes', 30)
                 }
                 print(f"[OK] Notification settings loaded - enabled: {self.notification_settings['enabled']}, interval: {self.notification_settings['interval_hours']}h")
@@ -1692,12 +1694,18 @@ class BRDTimeTracker:
         except Exception as e:
             print(f"[WARN] Failed to show notification: {e}")
 
-    def _get_jira_app_url(self, tab='unassigned-work'):
+    def _get_jira_app_url(self, tab=None):
         """Build the URL to open the Jira Forge app (Time Tracker)
 
         Args:
-            tab: The tab to navigate to (dashboard, analytics, unassigned-work, org-analytics, timesheet-settings)
+            tab: Optional tab parameter (currently not used as Jira handles its own navigation)
         """
+        # Ensure we have issues cached (fetch if empty)
+        if not self.user_issues or len(self.user_issues) == 0:
+            print("[INFO] Fetching Jira issues for notification URL...")
+            self.user_issues = self.fetch_jira_issues()
+            self.issues_cache_time = time.time()
+
         # Get a project key from user's cached issues
         project_key = None
         if self.user_issues and len(self.user_issues) > 0:
@@ -1706,9 +1714,9 @@ class BRDTimeTracker:
 
         # If we have Jira instance URL and a project key, build the Forge app URL
         if self.jira_instance_url and project_key:
-            # URL format: {jira_url}/jira/software/projects/{PROJECT}/apps/brd-time-tracker-project-page#tab
-            base_url = f"{self.jira_instance_url}/jira/software/projects/{project_key}/apps/brd-time-tracker-project-page"
-            return f"{base_url}#{tab}" if tab else base_url
+            # URL format: {jira_url}/jira/software/projects/{PROJECT}/boards
+            # This opens the project's board page where the Time Tracker tab is accessible
+            return f"{self.jira_instance_url}/jira/software/projects/{project_key}/boards"
         elif self.jira_instance_url:
             # Fallback: just open the Jira homepage if no project key available
             return self.jira_instance_url
@@ -1727,7 +1735,7 @@ class BRDTimeTracker:
                 return
             
             # Check if enough time has passed since last notification
-            interval_seconds = self.notification_settings.get('interval_hours', 4) * 3600
+            interval_seconds = self.notification_settings.get('interval_hours', 24) * 3600
             if time.time() - self.last_notification_time < interval_seconds:
                 return
             
@@ -1889,6 +1897,7 @@ class BRDTimeTracker:
                 if self.current_window_key is not None:
                     self.previous_window_key = self.current_window_key
                     self.previous_window_start_time = self.current_window_start_time
+                    self.previous_window_db_start_time = self.current_window_db_start_time  # Actual DB start_time
                     self.previous_window_screenshot_id = self.current_window_screenshot_id  # May be None if no screenshot
                     # Parse previous window info from window_key format: "app|||title"
                     if '|||' in self.current_window_key:
@@ -1904,7 +1913,7 @@ class BRDTimeTracker:
                 # Update current window tracking
                 # IMPORTANT: Start time is set to NOW, so the next screenshot will cover from this moment
                 self.current_window_key = window_key
-                self.current_window_start_time = datetime.now(timezone.utc)
+                self.current_window_start_time = datetime.now()
                 self.current_window_screenshot_id = None  # Reset - will be set when screenshot is captured
                 if self.current_window_key and self.current_window_key != 'unknown':
                     print(f"[INFO] Window switched at {self.current_window_start_time.strftime('%H:%M:%S')}:")
@@ -1951,7 +1960,7 @@ class BRDTimeTracker:
             thumb_bytes = thumb_buffer.getvalue()
             
             # Generate filenames
-            timestamp = datetime.now(timezone.utc)
+            timestamp = datetime.now()
             filename = f"screenshot_{int(timestamp.timestamp())}.png"
             thumb_filename = f"thumb_{int(timestamp.timestamp())}.jpg"
             
@@ -2083,7 +2092,11 @@ class BRDTimeTracker:
                     # Store the screenshot ID so we can update end_time/duration later
                     # When user switches windows OR when interval is reached, this record will be updated
                     self.current_window_screenshot_id = screenshot_id
-                    
+
+                    # IMPORTANT: Track the actual start_time saved to database
+                    # This may differ from current_window_start_time due to gap-free continuity logic
+                    self.current_window_db_start_time = start_time
+
                     # Track end_time for continuity - next screenshot will start from here
                     # This ensures no gaps between records
                     self.last_screenshot_end_time = end_time
@@ -2264,43 +2277,46 @@ class BRDTimeTracker:
                 current_idle_timeout = self.tracking_settings.get('idle_threshold_seconds', self.idle_timeout)
                 if idle_duration > current_idle_timeout:
                     if not self.is_idle:
-                        idle_start_time = datetime.now(timezone.utc)
-                        last_activity = datetime.fromtimestamp(self.last_activity_time, tz=timezone.utc)
+                        idle_start_time = datetime.now()
+                        last_activity = datetime.fromtimestamp(self.last_activity_time)
                         print(f"[INFO] Entering idle mode at {idle_start_time.strftime('%H:%M:%S')}:")
                         print(f"     - Last activity: {last_activity.strftime('%H:%M:%S')}")
                         print(f"     - Idle duration: {int(idle_duration)}s (threshold: {current_idle_timeout}s)")
                         
                         # IMPORTANT: Finalize the current window's duration BEFORE going idle
                         # This prevents idle time from being counted as work time
-                        if self.current_window_screenshot_id is not None and self.current_window_start_time is not None:
+                        if self.current_window_screenshot_id is not None and self.current_window_db_start_time is not None:
                             try:
                                 # Use the last activity time as the end time, not current time
                                 # This gives us the actual work duration before user went idle
-                                end_time = datetime.fromtimestamp(self.last_activity_time, tz=timezone.utc)
-                                duration_seconds = int((end_time - self.current_window_start_time).total_seconds())
-                                
+                                end_time = datetime.fromtimestamp(self.last_activity_time)
+                                # Use the ACTUAL start_time from database for accurate duration calculation
+                                duration_seconds = int((end_time - self.current_window_db_start_time).total_seconds())
+
                                 if duration_seconds < 1:
                                     duration_seconds = 1
-                                    end_time = self.current_window_start_time + timedelta(seconds=1)
-                                
+                                    end_time = self.current_window_db_start_time + timedelta(seconds=1)
+
                                 db_client = self.supabase_service if self.supabase_service else self.supabase
                                 update_result = db_client.table('screenshots').update({
                                     'end_time': end_time.isoformat(),
                                     'timestamp': end_time.isoformat(),
                                     'duration_seconds': duration_seconds
                                 }).eq('id', self.current_window_screenshot_id).execute()
-                                
+
                                 if update_result.data:
                                     print(f"[OK] Finalized work session before idle:")
                                     print(f"     - Record ID: {self.current_window_screenshot_id}")
+                                    print(f"     - Start: {self.current_window_db_start_time.strftime('%H:%M:%S')} (from DB)")
                                     print(f"     - End (last activity): {end_time.strftime('%H:%M:%S')}")
                                     print(f"     - Duration: {duration_seconds}s")
-                                
+
                                 # Reset tracking state - will start fresh when resuming
                                 self.current_window_screenshot_id = None
                                 self.current_window_start_time = None
+                                self.current_window_db_start_time = None
                                 self.last_screenshot_end_time = end_time
-                                
+
                             except Exception as e:
                                 print(f"[ERROR] Error finalizing session before idle: {e}")
                         
@@ -2315,7 +2331,7 @@ class BRDTimeTracker:
 
                 # Resume from idle if activity was detected by pynput
                 if self.needs_idle_resume:
-                    resume_time = datetime.now(timezone.utc)
+                    resume_time = datetime.now()
                     print(f"[INFO] Activity detected at {resume_time.strftime('%H:%M:%S')}, resuming tracking from idle")
                     print(f"     - All tracking state reset - new session will start fresh")
                     self.is_idle = False
@@ -2326,11 +2342,13 @@ class BRDTimeTracker:
                     # Start fresh - next screenshot will be the start of a new work session
                     # IMPORTANT: Reset ALL tracking state so new session starts from "now"
                     self.current_window_start_time = None
+                    self.current_window_db_start_time = None
                     self.current_window_screenshot_id = None
                     self.last_screenshot_end_time = None  # Critical: prevents idle time from being counted
                     self.previous_window_key = None
                     self.previous_window_screenshot_id = None
                     self.previous_window_start_time = None
+                    self.previous_window_db_start_time = None
                     self.current_window_key = None  # Also reset current window so it's detected as "new"
 
                 # Check for window switches more frequently (every 2 seconds)
@@ -2369,27 +2387,29 @@ class BRDTimeTracker:
                     # Update existing record of previous window with actual time spent
                     # This ensures we update the screenshot record with the actual duration
                     # Only update if there's actually a screenshot ID to update
-                    if (self.previous_window_key is not None and 
-                        self.previous_window_start_time is not None and
+                    if (self.previous_window_key is not None and
+                        self.previous_window_db_start_time is not None and
                         self.previous_window_screenshot_id is not None):  # Only update if screenshot exists
                         # IMPORTANT: Capture timestamp BEFORE any operations
                         # This exact timestamp will be used for both:
                         # 1. Previous record's end_time
                         # 2. Next record's start_time (via last_screenshot_end_time)
                         # This ensures PERFECT continuity with NO gaps or overlaps
-                        end_time = datetime.now(timezone.utc)
-                        
+                        end_time = datetime.now()
+
                         # Set last_screenshot_end_time IMMEDIATELY so upload_screenshot uses this exact value
                         self.last_screenshot_end_time = end_time
-                        
-                        duration_seconds = int((end_time - self.previous_window_start_time).total_seconds())
-                        
+
+                        # Use the ACTUAL start_time from database for accurate duration calculation
+                        # This ensures log output matches what's stored in the database
+                        duration_seconds = int((end_time - self.previous_window_db_start_time).total_seconds())
+
                         # Ensure minimum duration of 1 second
                         if duration_seconds < 1:
                             duration_seconds = 1
-                            end_time = self.previous_window_start_time + timedelta(seconds=1)
+                            end_time = self.previous_window_db_start_time + timedelta(seconds=1)
                             self.last_screenshot_end_time = end_time  # Update with adjusted time
-                        
+
                         try:
                             # Update the existing record in database
                             # IMPORTANT: Only update end_time, timestamp, and duration
@@ -2400,21 +2420,22 @@ class BRDTimeTracker:
                                 'timestamp': end_time.isoformat(),
                                 'duration_seconds': duration_seconds
                             }).eq('id', self.previous_window_screenshot_id).execute()
-                            
+
                             if update_result.data:
                                 print(f"[OK] Updated previous window record (window switch):")
                                 print(f"     - Record ID: {self.previous_window_screenshot_id}")
-                                print(f"     - Start: {self.previous_window_start_time.strftime('%H:%M:%S')}")
+                                print(f"     - Start: {self.previous_window_db_start_time.strftime('%H:%M:%S')} (from DB)")
                                 print(f"     - End:   {end_time.strftime('%H:%M:%S')}")
                                 print(f"     - Duration: {duration_seconds}s")
                             else:
                                 print(f"[WARN] Failed to update previous window record")
                         except Exception as e:
                             print(f"[ERROR] Error updating previous window record: {e}")
-                        
+
                         # Reset previous window info after updating
                         self.previous_window_info = None
                         self.previous_window_screenshot_id = None
+                        self.previous_window_db_start_time = None
                 
                 # Decide whether to capture a new screenshot
                 should_capture = False
@@ -2427,23 +2448,32 @@ class BRDTimeTracker:
                 elif time_since_last_interval >= current_capture_interval:
                     # Interval reached (using dynamic interval from settings)
                     # This ensures clean, non-overlapping time periods
-                    if self.current_window_screenshot_id is not None and self.current_window_start_time is not None:
+                    if self.current_window_screenshot_id is not None and self.current_window_db_start_time is not None:
+                        # SAFEGUARD: Skip if the current record was just created (less than interval seconds ago)
+                        # This prevents the bug where delays (settings fetch, network) cause duplicate interval updates
+                        record_age = (datetime.now() - self.current_window_db_start_time).total_seconds()
+                        if record_age < current_capture_interval:
+                            print(f"[DEBUG] Skipping interval update - record only {int(record_age)}s old (need {current_capture_interval}s)")
+                            # Reset interval timer to prevent continuous triggering
+                            self.last_interval_time = time.time()
+                            continue
                         # IMPORTANT: Capture timestamp BEFORE any operations
                         # This exact timestamp will be used for both:
                         # 1. Current record's end_time
                         # 2. Next record's start_time (via last_screenshot_end_time)
-                        end_time = datetime.now(timezone.utc)
-                        
+                        end_time = datetime.now()
+
                         # Set last_screenshot_end_time IMMEDIATELY so upload_screenshot uses this exact value
                         self.last_screenshot_end_time = end_time
-                        
-                        duration_seconds = int((end_time - self.current_window_start_time).total_seconds())
-                        
+
+                        # Use the ACTUAL start_time from database for accurate duration calculation
+                        duration_seconds = int((end_time - self.current_window_db_start_time).total_seconds())
+
                         if duration_seconds < 1:
                             duration_seconds = 1
-                            end_time = self.current_window_start_time + timedelta(seconds=1)
+                            end_time = self.current_window_db_start_time + timedelta(seconds=1)
                             self.last_screenshot_end_time = end_time  # Update with adjusted time
-                        
+
                         try:
                             db_client = self.supabase_service if self.supabase_service else self.supabase
                             update_result = db_client.table('screenshots').update({
@@ -2451,18 +2481,19 @@ class BRDTimeTracker:
                                 'timestamp': end_time.isoformat(),
                                 'duration_seconds': duration_seconds
                             }).eq('id', self.current_window_screenshot_id).execute()
-                            
+
                             if update_result.data:
                                 print(f"[OK] Updated current window record (interval):")
                                 print(f"     - Record ID: {self.current_window_screenshot_id}")
-                                print(f"     - Start: {self.current_window_start_time.strftime('%H:%M:%S')}")
+                                print(f"     - Start: {self.current_window_db_start_time.strftime('%H:%M:%S')} (from DB)")
                                 print(f"     - End:   {end_time.strftime('%H:%M:%S')}")
                                 print(f"     - Duration: {duration_seconds}s")
                         except Exception as e:
                             print(f"[ERROR] Error updating record before interval: {e}")
-                        
+
                         # Reset tracking - the new screenshot will start fresh from now
                         self.current_window_start_time = end_time
+                        self.current_window_db_start_time = None  # Will be set when new screenshot is uploaded
                         self.current_window_screenshot_id = None
                     
                     should_capture = True
@@ -2478,11 +2509,14 @@ class BRDTimeTracker:
                         
                         # Update timing based on capture reason
                         if capture_reason == "interval":
-                            # Interval capture - reset the fixed 5-min interval timer
-                            self.last_interval_time = current_time
+                            # Interval capture - reset the fixed interval timer
+                            # IMPORTANT: Use fresh time.time() here, NOT the stale current_time from start of loop
+                            # This prevents the issue where blocking operations (settings fetch, Jira API calls)
+                            # cause the next iteration to think another interval has passed
+                            self.last_interval_time = time.time()
                         
                         # Always update last_screenshot_time (for min_screenshot_interval check)
-                        last_screenshot_time = current_time
+                        last_screenshot_time = time.time()  # Also use fresh time here
                         print(f"[OK] Screenshot captured ({capture_reason})")
                 
                 # Sleep for shorter interval to check for window switches more frequently
@@ -2517,11 +2551,13 @@ class BRDTimeTracker:
         # Initialize window tracking for event-based tracking
         self.current_window_key = None
         self.current_window_start_time = None
+        self.current_window_db_start_time = None
         self.current_window_screenshot_id = None
         self.last_interval_time = None  # Will be set on first screenshot
         self.last_screenshot_end_time = None  # Tracks last record's end_time for continuity
         self.previous_window_key = None
         self.previous_window_start_time = None
+        self.previous_window_db_start_time = None
         self.previous_window_info = None
         self.previous_window_screenshot_id = None
 
