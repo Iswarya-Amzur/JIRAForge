@@ -45,6 +45,14 @@ try:
 except ImportError:
     WIN32_AVAILABLE = False
 
+# Windows toast notifications
+try:
+    from winotify import Notification, audio
+    WINOTIFY_AVAILABLE = True
+except ImportError:
+    WINOTIFY_AVAILABLE = False
+    print("[WARN] winotify not available - desktop notifications disabled")
+
 # Note: AI analysis is now handled by the separate AI server
 # Desktop app only captures and uploads screenshots to Supabase
 
@@ -835,6 +843,18 @@ class BRDTimeTracker:
         self.tracking_settings_last_fetch = None
         self.tracking_settings_cache_ttl = 300  # Refresh settings every 5 minutes
         
+        # ============================================================================
+        # UNASSIGNED WORK NOTIFICATION SETTINGS
+        # ============================================================================
+        self.notification_settings = {
+            'enabled': True,  # Whether desktop notifications are enabled
+            'interval_hours': 4,  # How often to check/notify (hours)
+            'min_unassigned_minutes': 30  # Minimum unassigned time before notifying
+        }
+        self.last_notification_time = 0  # Timestamp of last notification
+        self.notification_settings_last_fetch = None
+        self.notification_settings_cache_ttl = 300  # Refresh every 5 minutes
+        
         # Tracking state
         self.running = False
         self.tracking_active = False
@@ -1564,6 +1584,170 @@ class BRDTimeTracker:
             print(f"[WARN] Failed to fetch tracking settings: {e}")
             # Continue with default settings
     
+    # ============================================================================
+    # UNASSIGNED WORK NOTIFICATION FUNCTIONS
+    # ============================================================================
+    
+    def fetch_notification_settings(self):
+        """Fetch notification settings for unassigned work reminders from Supabase"""
+        try:
+            # Check if we need to refresh settings
+            if self.notification_settings_last_fetch is not None:
+                time_since_fetch = time.time() - self.notification_settings_last_fetch
+                if time_since_fetch < self.notification_settings_cache_ttl:
+                    return  # Use cached settings
+            
+            if not self.current_user_id:
+                return  # No user logged in
+            
+            client = self.supabase_service if self.supabase_service else self.supabase
+            
+            # Fetch user's settings from users table
+            result = client.table('users').select('settings').eq('id', self.current_user_id).limit(1).execute()
+            
+            if result.data and len(result.data) > 0 and result.data[0].get('settings'):
+                settings = result.data[0]['settings']
+                self.notification_settings = {
+                    'enabled': settings.get('unassigned_work_notifications_enabled', True),
+                    'interval_hours': settings.get('notification_interval_hours', 4),
+                    'min_unassigned_minutes': settings.get('min_unassigned_minutes', 30)
+                }
+                print(f"[OK] Notification settings loaded - enabled: {self.notification_settings['enabled']}, interval: {self.notification_settings['interval_hours']}h")
+            
+            self.notification_settings_last_fetch = time.time()
+            
+        except Exception as e:
+            print(f"[WARN] Failed to fetch notification settings: {e}")
+            # Continue with default settings
+    
+    def get_unassigned_work_summary(self):
+        """Get summary of unassigned work from Supabase"""
+        try:
+            if not self.current_user_id or not self.organization_id:
+                return None
+            
+            client = self.supabase_service if self.supabase_service else self.supabase
+            
+            # Query unassigned work groups that are not yet assigned
+            result = client.table('unassigned_work_groups').select('id,total_seconds').eq(
+                'user_id', self.current_user_id
+            ).eq(
+                'organization_id', self.organization_id
+            ).eq(
+                'is_assigned', False
+            ).execute()
+            
+            if result.data:
+                total_groups = len(result.data)
+                total_seconds = sum(g.get('total_seconds', 0) for g in result.data)
+                return {
+                    'pending_groups': total_groups,
+                    'total_seconds': total_seconds,
+                    'total_minutes': total_seconds // 60,
+                    'total_hours': round(total_seconds / 3600, 1)
+                }
+            
+            return {'pending_groups': 0, 'total_seconds': 0, 'total_minutes': 0, 'total_hours': 0}
+            
+        except Exception as e:
+            print(f"[WARN] Failed to get unassigned work summary: {e}")
+            return None
+    
+    def show_unassigned_work_notification(self, summary):
+        """Show Windows toast notification for unassigned work"""
+        if not WINOTIFY_AVAILABLE:
+            print("[INFO] Notifications not available (winotify not installed)")
+            return
+
+        if not summary or summary['pending_groups'] == 0:
+            return
+
+        try:
+            # Format the notification message
+            if summary['total_hours'] >= 1:
+                time_str = f"{summary['total_hours']}h"
+            else:
+                time_str = f"{summary['total_minutes']}m"
+
+            notification = Notification(
+                app_id="BRD Time Tracker",
+                title="📋 Unassigned Work Reminder",
+                msg=f"You have {summary['pending_groups']} work session(s) ({time_str}) that need to be assigned to Jira issues.",
+                duration="long"
+            )
+
+            # Build URL to Jira Forge app's Time Tracker page
+            jira_app_url = self._get_jira_app_url()
+            notification.add_actions(label="Open in Jira", launch=jira_app_url)
+
+            # Set notification sound
+            notification.set_audio(audio.Default, loop=False)
+
+            # Show the notification
+            notification.show()
+
+            print(f"[OK] Unassigned work notification shown - {summary['pending_groups']} groups, {time_str} total")
+            print(f"[INFO] Notification URL: {jira_app_url}")
+
+        except Exception as e:
+            print(f"[WARN] Failed to show notification: {e}")
+
+    def _get_jira_app_url(self, tab='unassigned-work'):
+        """Build the URL to open the Jira Forge app (Time Tracker)
+
+        Args:
+            tab: The tab to navigate to (dashboard, analytics, unassigned-work, org-analytics, timesheet-settings)
+        """
+        # Get a project key from user's cached issues
+        project_key = None
+        if self.user_issues and len(self.user_issues) > 0:
+            # Use the project key from the first issue
+            project_key = self.user_issues[0].get('project')
+
+        # If we have Jira instance URL and a project key, build the Forge app URL
+        if self.jira_instance_url and project_key:
+            # URL format: {jira_url}/jira/software/projects/{PROJECT}/apps/brd-time-tracker-project-page#tab
+            base_url = f"{self.jira_instance_url}/jira/software/projects/{project_key}/apps/brd-time-tracker-project-page"
+            return f"{base_url}#{tab}" if tab else base_url
+        elif self.jira_instance_url:
+            # Fallback: just open the Jira homepage if no project key available
+            return self.jira_instance_url
+        else:
+            # Final fallback: open local dashboard
+            return f"http://localhost:{self.web_port}/dashboard"
+    
+    def check_and_notify_unassigned_work(self):
+        """Check for unassigned work and show notification if needed"""
+        try:
+            # Refresh notification settings
+            self.fetch_notification_settings()
+            
+            # Check if notifications are enabled
+            if not self.notification_settings.get('enabled', True):
+                return
+            
+            # Check if enough time has passed since last notification
+            interval_seconds = self.notification_settings.get('interval_hours', 4) * 3600
+            if time.time() - self.last_notification_time < interval_seconds:
+                return
+            
+            # Get unassigned work summary
+            summary = self.get_unassigned_work_summary()
+            if not summary:
+                return
+            
+            # Check if there's enough unassigned time to warrant a notification
+            min_minutes = self.notification_settings.get('min_unassigned_minutes', 30)
+            if summary['total_minutes'] < min_minutes:
+                return
+            
+            # Show the notification
+            self.show_unassigned_work_notification(summary)
+            self.last_notification_time = time.time()
+            
+        except Exception as e:
+            print(f"[WARN] Error checking unassigned work: {e}")
+    
     def normalize_app_name(self, app_name):
         """Normalize application name for comparison"""
         if not app_name:
@@ -2045,6 +2229,10 @@ class BRDTimeTracker:
         last_settings_refresh = time.time()
         settings_refresh_interval = 300  # Refresh settings every 5 minutes
         
+        # Track time for notification checks
+        last_notification_check = 0
+        notification_check_interval = 1800  # Check every 30 minutes
+        
         # Initialize interval timer on first run
         # The interval timer is FIXED - only resets on interval captures, not window switches
         if self.last_interval_time is None:
@@ -2060,6 +2248,11 @@ class BRDTimeTracker:
                 if time.time() - last_settings_refresh > settings_refresh_interval:
                     self.fetch_tracking_settings()
                     last_settings_refresh = time.time()
+                
+                # Periodically check for unassigned work and send notifications
+                if time.time() - last_notification_check > notification_check_interval:
+                    self.check_and_notify_unassigned_work()
+                    last_notification_check = time.time()
                 
                 # Check if screenshot monitoring is enabled
                 if not self.tracking_settings.get('screenshot_monitoring_enabled', True):

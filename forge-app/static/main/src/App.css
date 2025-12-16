@@ -294,23 +294,26 @@ html, body, #root {
 .brd-upload,
 .team-analytics,
 .org-analytics {
-  background: var(--ds-background-default);
-  padding: var(--ds-space-400);
-  border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(9, 30, 66, 0.08);
+  background: var(--ds-background-neutral);
+  min-height: calc(100vh - 100px);
 }
 
-/* Section Headers */
-.time-analytics h2,
-.screenshot-gallery h2,
-.brd-upload h2,
-.team-analytics h2,
-.org-analytics h2 {
-  font-size: 20px;
-  font-weight: 700;
+/* Section Headers - Page Title */
+.time-analytics > h2,
+.screenshot-gallery > h2,
+.brd-upload > h2,
+.team-analytics > h2,
+.org-analytics > h2 {
+  font-size: 24px;
+  font-weight: 600;
   color: var(--ds-text);
-  margin: 0 0 var(--ds-space-300) 0;
-  letter-spacing: -0.2px;
+  margin: 0 0 var(--ds-space-100) 0;
+  letter-spacing: -0.3px;
+  padding: var(--ds-space-300) var(--ds-space-400);
+  background: var(--ds-background-default);
+  border-bottom: 1px solid var(--ds-border);
+  margin: -24px -24px var(--ds-space-300) -24px;
+  padding-bottom: var(--ds-space-300);
 }
 
 /* Analytics Grid */
@@ -1514,84 +1517,87 @@ html, body, #root {
 /* Analytics Summary Cards (for Time Analytics page) */
 .analytics-summary-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: var(--ds-space-300);
-  margin-bottom: var(--ds-space-400);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--ds-space-200);
+  margin-bottom: var(--ds-space-300);
+  padding: 0 var(--ds-space-100);
 }
 
 .cumulative-card {
   text-align: center;
+  background: var(--ds-background-default);
+  border: 1px solid var(--ds-border);
+  border-radius: 8px;
+  padding: var(--ds-space-200) var(--ds-space-300);
+  box-shadow: 0 1px 3px rgba(9, 30, 66, 0.08);
+  border-top: 3px solid var(--ds-background-brand-bold);
+}
+
+.cumulative-card:hover {
+  box-shadow: 0 4px 8px rgba(9, 30, 66, 0.12);
+  transform: translateY(-1px);
 }
 
 .cumulative-card h3 {
-  margin-bottom: var(--ds-space-300);
+  margin-bottom: var(--ds-space-100);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--ds-text-subtle);
 }
 
 .cumulative-card .stat-value {
-  font-size: 42px;
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--ds-text-brand);
+}
+
+.cumulative-card .cumulative-stat {
+  padding: var(--ds-space-100) 0;
 }
 
 /* Timesheet Tabs */
 .timesheet-tabs {
   display: flex;
-  gap: var(--ds-space-100);
-  margin: var(--ds-space-400) 0;
-  padding: 0 var(--ds-space-400);
-  border-bottom: 3px solid var(--ds-background-neutral-subtle);
-  background: var(--ds-background-default);
-  border-radius: 12px 12px 0 0;
-  padding-top: var(--ds-space-200);
+  gap: var(--ds-space-050);
+  margin: 0 0 var(--ds-space-200) 0;
+  padding: var(--ds-space-050);
+  background: var(--ds-background-neutral-subtle);
+  border-radius: 8px;
+  width: fit-content;
 }
 
 .timesheet-tab {
-  padding: var(--ds-space-200) var(--ds-space-400);
+  padding: var(--ds-space-100) var(--ds-space-300);
   background: transparent;
   border: none;
-  border-bottom: 3px solid transparent;
-  margin-bottom: -3px;
   cursor: pointer;
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
   color: var(--ds-text-subtle);
-  transition: all 0.3s ease;
-  position: relative;
-  border-radius: 8px 8px 0 0;
-}
-
-.timesheet-tab::after {
-  content: '';
-  position: absolute;
-  bottom: -3px;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: var(--ds-background-brand-bold);
-  transform: scaleX(0);
-  transition: transform 0.3s ease;
+  transition: all 0.2s ease;
+  border-radius: 6px;
 }
 
 .timesheet-tab:hover {
   color: var(--ds-text);
-  background: var(--ds-background-neutral-subtle);
+  background: var(--ds-background-default);
 }
 
 .timesheet-tab.active {
-  color: var(--ds-text-brand);
-  background: var(--ds-background-neutral-subtle);
-  font-weight: 700;
-}
-
-.timesheet-tab.active::after {
-  transform: scaleX(1);
+  color: var(--ds-text-inverse);
+  background: var(--ds-background-brand-bold);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 82, 204, 0.3);
 }
 
 /* Timesheet Content */
 .timesheet-content {
-  padding: var(--ds-space-400);
+  padding: var(--ds-space-300);
   background: var(--ds-background-default);
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(9, 30, 66, 0.08);
-  margin-top: var(--ds-space-300);
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(9, 30, 66, 0.08);
   border: 1px solid var(--ds-border);
 }
 
@@ -1617,46 +1623,40 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: var(--ds-space-400);
-  padding-bottom: var(--ds-space-300);
-  border-bottom: 3px solid var(--ds-background-neutral-subtle);
+  margin-bottom: var(--ds-space-200);
+  padding-bottom: var(--ds-space-200);
+  border-bottom: 1px solid var(--ds-border);
 }
 
 .month-nav {
   display: flex;
   align-items: center;
-  gap: var(--ds-space-200);
+  gap: var(--ds-space-150);
 }
 
 .month-nav-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  border: 2px solid var(--ds-border);
-  border-radius: 10px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--ds-border);
+  border-radius: 6px;
   background: var(--ds-background-default);
   cursor: pointer;
   transition: all 0.2s ease;
-  color: var(--ds-text);
+  color: var(--ds-text-subtle);
 }
 
 .month-nav-btn:hover {
-  background: var(--ds-background-brand-bold);
-  border-color: var(--ds-background-brand-bold);
-  color: var(--ds-text-inverse);
-  transform: scale(1.05);
-  box-shadow: 0 4px 12px rgba(0, 82, 204, 0.25);
-}
-
-.month-nav-btn:active {
-  transform: scale(0.98);
+  background: var(--ds-background-neutral);
+  border-color: var(--ds-border-focused);
+  color: var(--ds-text);
 }
 
 .nav-arrow {
-  font-size: 24px;
-  font-weight: 300;
+  font-size: 18px;
+  font-weight: 400;
   line-height: 1;
 }
 
@@ -1664,38 +1664,31 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   align-items: center;
-  min-width: 200px;
+  min-width: 180px;
 }
 
 .month-title {
-  font-size: 26px;
-  font-weight: 700;
+  font-size: 18px;
+  font-weight: 600;
   color: var(--ds-text);
   margin: 0;
-  letter-spacing: -0.5px;
-  background: linear-gradient(135deg, var(--ds-text) 0%, var(--ds-text-subtle) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
 }
 
 .month-subtitle {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--ds-text-subtle);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
   margin-top: 2px;
 }
 
 .today-btn {
   padding: var(--ds-space-100) var(--ds-space-200);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--ds-text-brand);
-  background: linear-gradient(135deg, rgba(0, 82, 204, 0.08) 0%, rgba(76, 154, 255, 0.08) 100%);
-  border: 2px solid var(--ds-background-brand-bold);
-  border-radius: 8px;
+  background: var(--ds-background-default);
+  border: 1px solid var(--ds-background-brand-bold);
+  border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -1703,8 +1696,6 @@ html, body, #root {
 .today-btn:hover {
   background: var(--ds-background-brand-bold);
   color: var(--ds-text-inverse);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 82, 204, 0.25);
 }
 
 /* Loading State */
@@ -1731,21 +1722,16 @@ html, body, #root {
 }
 
 .timesheet-header {
-  margin-bottom: var(--ds-space-400);
-  padding-bottom: var(--ds-space-300);
-  border-bottom: 3px solid var(--ds-background-neutral-subtle);
+  margin-bottom: var(--ds-space-200);
+  padding-bottom: var(--ds-space-200);
+  border-bottom: 1px solid var(--ds-border);
 }
 
 .timesheet-header h3 {
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 600;
   color: var(--ds-text);
   margin: 0;
-  letter-spacing: -0.3px;
-  background: linear-gradient(135deg, var(--ds-text) 0%, var(--ds-text-subtle) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
 }
 
 /* Day View Styles */
@@ -1756,74 +1742,50 @@ html, body, #root {
 }
 
 .team-member-card {
-  background: var(--ds-background-default);
+  background: var(--ds-background-neutral-subtle);
   border: 1px solid var(--ds-border);
-  border-radius: 12px;
-  padding: var(--ds-space-300);
-  transition: all 0.3s ease;
-  box-shadow: 0 1px 3px rgba(9, 30, 66, 0.08);
-  position: relative;
-  overflow: hidden;
-}
-
-.team-member-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 4px;
-  height: 100%;
-  background: linear-gradient(180deg, var(--ds-background-brand-bold) 0%, var(--ds-background-accent-blue) 100%);
-  opacity: 0;
-  transition: opacity 0.3s ease;
+  border-radius: 8px;
+  padding: var(--ds-space-200);
+  transition: all 0.2s ease;
 }
 
 .team-member-card:hover {
-  box-shadow: 0 8px 16px rgba(9, 30, 66, 0.12);
-  transform: translateY(-2px);
+  background: var(--ds-background-neutral);
   border-color: var(--ds-border-focused);
-}
-
-.team-member-card:hover::before {
-  opacity: 1;
 }
 
 .member-header {
   display: flex;
   align-items: center;
   gap: var(--ds-space-200);
-  padding-bottom: var(--ds-space-200);
-  border-bottom: 2px solid var(--ds-background-neutral-subtle);
 }
 
 .member-avatar {
-  width: 48px;
-  height: 48px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--ds-background-brand-bold) 0%, var(--ds-background-accent-blue) 100%);
+  background: var(--ds-background-brand-bold);
   color: white;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
-  font-size: 18px;
-  box-shadow: 0 2px 8px rgba(0, 82, 204, 0.25);
+  font-weight: 600;
+  font-size: 14px;
   flex-shrink: 0;
 }
 
 .member-avatar-small {
-  width: 36px;
-  height: 36px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--ds-background-brand-bold) 0%, var(--ds-background-accent-blue) 100%);
+  background: var(--ds-background-brand-bold);
   color: white;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
-  font-size: 14px;
+  font-weight: 600;
+  font-size: 12px;
   flex-shrink: 0;
-  box-shadow: 0 2px 6px rgba(0, 82, 204, 0.2);
 }
 
 .member-info {
@@ -1835,21 +1797,15 @@ html, body, #root {
 }
 
 .member-name {
-  font-weight: 600;
-  font-size: 16px;
+  font-weight: 500;
+  font-size: 14px;
   color: var(--ds-text);
-  letter-spacing: -0.2px;
 }
 
 .member-total {
-  font-size: 24px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 600;
   color: var(--ds-text-brand);
-  background: linear-gradient(135deg, var(--ds-background-brand-bold) 0%, var(--ds-background-accent-blue) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  letter-spacing: -0.5px;
 }
 
 .member-tasks {
@@ -1884,71 +1840,36 @@ html, body, #root {
   overflow-x: auto;
   background: var(--ds-background-default);
   border: 1px solid var(--ds-border);
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(9, 30, 66, 0.08);
-  position: relative;
-}
-
-.week-table-container::-webkit-scrollbar {
-  height: 8px;
-}
-
-.week-table-container::-webkit-scrollbar-track {
-  background: var(--ds-background-neutral-subtle);
-  border-radius: 4px;
-}
-
-.week-table-container::-webkit-scrollbar-thumb {
-  background: #C1C7D0;
-  border-radius: 4px;
-}
-
-.week-table-container::-webkit-scrollbar-thumb:hover {
-  background: #A5ADBA;
+  border-radius: 8px;
 }
 
 .week-table {
   width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
+  border-collapse: collapse;
 }
 
 .week-table thead {
-  background: linear-gradient(180deg, var(--ds-background-neutral-subtle) 0%, var(--ds-background-neutral) 100%);
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  background: var(--ds-background-neutral-subtle);
 }
 
 .week-table th {
-  padding: var(--ds-space-200) var(--ds-space-200);
+  padding: var(--ds-space-150) var(--ds-space-200);
   text-align: left;
   font-size: 11px;
-  font-weight: 700;
-  color: var(--ds-text);
+  font-weight: 600;
+  color: var(--ds-text-subtle);
   text-transform: uppercase;
-  letter-spacing: 0.8px;
-  border-bottom: 3px solid var(--ds-background-brand-bold);
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--ds-border);
   white-space: nowrap;
 }
 
-.week-table th:first-child {
-  border-top-left-radius: 12px;
-}
-
-.week-table th:last-child {
-  border-top-right-radius: 12px;
-}
-
 .week-table tbody tr {
-  transition: all 0.2s ease;
-  border-bottom: 1px solid var(--ds-background-neutral-subtle);
+  border-bottom: 1px solid var(--ds-border);
 }
 
 .week-table tbody tr:hover {
   background: var(--ds-background-neutral-subtle);
-  transform: scale(1.01);
-  box-shadow: 0 2px 8px rgba(9, 30, 66, 0.1);
 }
 
 .week-table tbody tr:last-child {
@@ -1956,7 +1877,7 @@ html, body, #root {
 }
 
 .week-table td {
-  padding: var(--ds-space-200) var(--ds-space-200);
+  padding: var(--ds-space-150) var(--ds-space-200);
   font-size: 14px;
   vertical-align: middle;
 }
@@ -1964,19 +1885,10 @@ html, body, #root {
 .member-name-cell {
   display: flex;
   align-items: center;
-  gap: var(--ds-space-200);
-  font-weight: 600;
+  gap: var(--ds-space-150);
+  font-weight: 500;
   color: var(--ds-text);
   font-size: 14px;
-  position: sticky;
-  left: 0;
-  background: var(--ds-background-default);
-  z-index: 5;
-  padding-right: var(--ds-space-300);
-}
-
-.week-table tbody tr:hover .member-name-cell {
-  background: var(--ds-background-neutral-subtle);
 }
 
 .time-cell {
@@ -1984,57 +1896,34 @@ html, body, #root {
   color: var(--ds-text);
   font-weight: 500;
   font-size: 13px;
-  padding: var(--ds-space-200);
-  min-width: 80px;
-}
-
-.time-cell:not(:empty) {
-  background: var(--ds-background-neutral-subtle);
-  border-radius: 6px;
-  margin: 2px;
-  padding: var(--ds-space-150) var(--ds-space-200);
-  font-weight: 600;
-  color: var(--ds-text-brand);
+  min-width: 70px;
 }
 
 .total-cell {
   text-align: center;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--ds-text-brand);
-  font-size: 15px;
-  background: linear-gradient(135deg, rgba(0, 82, 204, 0.1) 0%, rgba(76, 154, 255, 0.1) 100%);
-  border-radius: 6px;
-  padding: var(--ds-space-200);
-  min-width: 100px;
+  font-size: 14px;
+  background: rgba(0, 82, 204, 0.05);
 }
 
 .totals-row {
-  background: linear-gradient(180deg, var(--ds-background-neutral-subtle) 0%, var(--ds-background-neutral) 100%);
-  font-weight: 700;
-  border-top: 3px solid var(--ds-background-brand-bold);
+  background: var(--ds-background-neutral-subtle);
+  font-weight: 600;
+  border-top: 1px solid var(--ds-border);
 }
 
 .totals-row td {
   border-bottom: none;
-  padding: var(--ds-space-200) var(--ds-space-200);
-  font-size: 14px;
-}
-
-.totals-row .member-name-cell {
-  background: transparent;
-  font-weight: 700;
-  color: var(--ds-text);
+  padding: var(--ds-space-150) var(--ds-space-200);
+  font-size: 13px;
 }
 
 .grand-total-cell {
   text-align: center;
   font-weight: 700;
   color: var(--ds-text-brand);
-  font-size: 16px;
-  background: linear-gradient(135deg, var(--ds-background-brand-bold) 0%, var(--ds-background-accent-blue) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  font-size: 14px;
 }
 
 /* Month View Styles */
@@ -2237,24 +2126,15 @@ html, body, #root {
 
 .summary-time {
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--ds-text-brand);
-  background: linear-gradient(135deg, rgba(0, 82, 204, 0.1) 0%, rgba(76, 154, 255, 0.1) 100%);
-  padding: 2px 8px;
-  border-radius: 4px;
-  display: inline-block;
-  width: fit-content;
 }
 
 .summary-percentage {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--ds-text-brand);
-  background: linear-gradient(135deg, var(--ds-background-brand-bold) 0%, var(--ds-background-accent-blue) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  min-width: 50px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ds-text-subtle);
+  min-width: 45px;
   text-align: right;
 }
 

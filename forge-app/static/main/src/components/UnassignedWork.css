@@ -865,3 +865,155 @@
 .fullscreen-next {
   right: 20px;
 }
+
+/* ===========================
+   Notification Settings Toggle
+   =========================== */
+
+.notification-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.notification-toggle-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.notification-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #172b4d;
+  font-weight: 500;
+}
+
+.notification-icon {
+  font-size: 18px;
+}
+
+.notification-text {
+  margin-right: 4px;
+}
+
+.notification-hint {
+  font-size: 12px;
+  color: #6b778c;
+  margin-left: 30px;
+}
+
+/* Toggle Switch Styles - Matching Atlassian Design */
+/* Using more specific selectors to prevent Forge/Atlassian global style overrides */
+.notification-toggle-label .toggle-switch-wrapper {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  min-width: 48px;
+  height: 24px;
+  min-height: 24px;
+  flex-shrink: 0;
+  vertical-align: middle;
+  margin-left: 8px;
+}
+
+.notification-toggle-label .toggle-switch-wrapper .toggle-input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+  margin: 0;
+  padding: 0;
+}
+
+.notification-toggle-label .toggle-switch-wrapper .toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  width: 48px;
+  height: 24px;
+  background-color: #c1c7d0;
+  transition: background-color 0.3s ease;
+  border-radius: 24px;
+  border: none;
+  box-sizing: border-box;
+}
+
+.notification-toggle-label .toggle-switch-wrapper .toggle-slider::before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  top: 3px;
+  background-color: white;
+  transition: transform 0.3s ease;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* When checked - Blue to match Atlassian/Jira theme */
+.notification-toggle-label .toggle-input:checked + .toggle-slider {
+  background-color: #0052cc;
+}
+
+.notification-toggle-label .toggle-input:checked + .toggle-slider::before {
+  transform: translateX(24px);
+}
+
+.notification-toggle-label .toggle-input:disabled + .toggle-slider {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.notification-toggle-label .toggle-slider:hover {
+  background-color: #a5adba;
+}
+
+.notification-toggle-label .toggle-input:checked + .toggle-slider:hover {
+  background-color: #0065ff;
+}
+
+/* Focus state for accessibility */
+.notification-toggle-label .toggle-input:focus + .toggle-slider {
+  box-shadow: 0 0 0 2px rgba(0, 82, 204, 0.3);
+}
+
+.notification-settings-message {
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 4px;
+  animation: fadeIn 0.3s ease;
+  margin-left: auto;
+}
+
+.notification-settings-message.success {
+  background: #e3fcef;
+  color: #006644;
+}
+
+.notification-settings-message.error {
+  background: #ffebe6;
+  color: #de350b;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

@@ -92,7 +92,21 @@ function StatusDropdown({ issue, onStatusChange, isUpdating, onLoadTransitions }
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  // Check URL hash for initial tab (e.g., #unassigned-work)
+  const getInitialTab = () => {
+    try {
+      const hash = window.location.hash.replace('#', '');
+      const validTabs = ['dashboard', 'analytics', 'unassigned-work', 'org-analytics', 'timesheet-settings'];
+      if (hash && validTabs.includes(hash)) {
+        return hash;
+      }
+    } catch (e) {
+      // Ignore errors in Forge iframe context
+    }
+    return 'dashboard';
+  };
+
+  const [activeTab, setActiveTab] = useState(getInitialTab);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [timesheetView, setTimesheetView] = useState('day'); // day, week, month
   const [timeData, setTimeData] = useState(null);

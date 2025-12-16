@@ -40,11 +40,17 @@ function UnassignedWork() {
   const [availableStatuses, setAvailableStatuses] = useState([]);
   const [assignToMe, setAssignToMe] = useState(true);
 
+  // Notification settings state
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [savingNotificationSettings, setSavingNotificationSettings] = useState(false);
+  const [notificationSettingsMessage, setNotificationSettingsMessage] = useState(null);
+
   useEffect(() => {
     loadUserRole();
     loadUnassignedWork();
     loadUserIssues();
     loadUserProjects();
+    loadNotificationSettings();
   }, []);
 
   // Load statuses when project changes
@@ -68,6 +74,54 @@ function UnassignedWork() {
       }
     } catch (err) {
       console.error('[UnassignedWork] Error loading user role:', err);
+    }
+  };
+
+  const loadNotificationSettings = async () => {
+    try {
+      const result = await invoke('getUnassignedNotificationSettings');
+      if (result.success && result.settings) {
+        setNotificationsEnabled(result.settings.unassignedWorkNotificationsEnabled ?? true);
+      }
+    } catch (err) {
+      console.error('[UnassignedWork] Error loading notification settings:', err);
+    }
+  };
+
+  const handleToggleNotifications = async () => {
+    const newValue = !notificationsEnabled;
+    setSavingNotificationSettings(true);
+    setNotificationSettingsMessage(null);
+
+    try {
+      const result = await invoke('saveUnassignedNotificationSettings', {
+        settings: {
+          unassignedWorkNotificationsEnabled: newValue
+        }
+      });
+
+      if (result.success) {
+        setNotificationsEnabled(newValue);
+        setNotificationSettingsMessage({
+          type: 'success',
+          text: newValue ? 'Desktop notifications enabled' : 'Desktop notifications disabled'
+        });
+        // Auto-dismiss after 3 seconds
+        setTimeout(() => setNotificationSettingsMessage(null), 3000);
+      } else {
+        setNotificationSettingsMessage({
+          type: 'error',
+          text: result.error || 'Failed to save notification settings'
+        });
+      }
+    } catch (err) {
+      console.error('[UnassignedWork] Error saving notification settings:', err);
+      setNotificationSettingsMessage({
+        type: 'error',
+        text: err.message || 'Failed to save notification settings'
+      });
+    } finally {
+      setSavingNotificationSettings(false);
     }
   };
 
@@ -446,6 +500,34 @@ function UnassignedWork() {
           <span className="summary-item">
             <strong>{formatDuration(getTotalTime())}</strong> total time
           </span>
+        </div>
+
+        {/* Desktop Notification Toggle */}
+        <div className="notification-settings-row">
+          <div className="notification-toggle-container">
+            <label className="notification-toggle-label">
+              <span className="notification-icon">🔔</span>
+              <span className="notification-text">Desktop Notifications</span>
+              <div className="toggle-switch-wrapper">
+                <input
+                  type="checkbox"
+                  checked={notificationsEnabled}
+                  onChange={handleToggleNotifications}
+                  disabled={savingNotificationSettings}
+                  className="toggle-input"
+                />
+                <span className="toggle-slider"></span>
+              </div>
+            </label>
+            <span className="notification-hint">
+              {notificationsEnabled ? 'You will receive reminders to assign pending work' : 'Reminders are disabled'}
+            </span>
+          </div>
+          {notificationSettingsMessage && (
+            <span className={`notification-settings-message ${notificationSettingsMessage.type}`}>
+              {notificationSettingsMessage.type === 'success' ? '✓' : '✕'} {notificationSettingsMessage.text}
+            </span>
+          )}
         </div>
       </div>
 
