@@ -1,10 +1,17 @@
 const OpenAI = require('openai');
 const logger = require('../utils/logger');
 
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+// Initialize OpenAI client (lazy initialization to handle missing API key)
+let openai = null;
+
+function getOpenAIClient() {
+  if (!openai && process.env.OPENAI_API_KEY) {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    });
+  }
+  return openai;
+}
 
 // Applications that should ALWAYS be grouped separately (system/idle apps)
 const SYSTEM_APPS = [
@@ -161,7 +168,12 @@ Return ONLY valid JSON in this exact format (no markdown, no backticks):
   ]
 }`;
 
-    const completion = await openai.chat.completions.create({
+    const client = getOpenAIClient();
+    if (!client) {
+      throw new Error('OpenAI client not available - OPENAI_API_KEY may be missing');
+    }
+
+    const completion = await client.chat.completions.create({
       model: process.env.OPENAI_MODEL || 'gpt-4o',
       messages: [
         {
