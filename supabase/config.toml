@@ -50,6 +50,5 @@ double_confirm_changes = true
 enable_confirmations = false
 
 # Edge Functions configuration
-[functions]
-# A string containing the Deno version to use for the Functions runtime.
-deno_version = "1.30.3"
+[functions.screenshot-webhook]
+verify_jwt = false

@@ -137,14 +137,37 @@ serve(async (req) => {
       } catch (aiError) {
         console.error('Error notifying AI server:', aiError);
 
-        // Update screenshot status to failed
-        await supabaseClient
-          .from('screenshots')
-          .update({
-            status: 'failed',
-            metadata: { error: String(aiError) }
-          })
-          .eq('id', payload.record.id);
+        // Check if it's a transient error (network, timeout) vs permanent error
+        const errorMessage = String(aiError);
+        const isTransientError = 
+          errorMessage.includes('ETIMEDOUT') ||
+          errorMessage.includes('ECONNREFUSED') ||
+          errorMessage.includes('ENOTFOUND') ||
+          errorMessage.includes('fetch failed') ||
+          errorMessage.includes('network') ||
+          errorMessage.includes('timeout');
+
+        if (isTransientError) {
+          // Reset to pending for polling service to retry
+          await supabaseClient
+            .from('screenshots')
+            .update({
+              status: 'pending',
+              metadata: { webhook_error: errorMessage, will_retry: true }
+            })
+            .eq('id', payload.record.id);
+          
+          console.log('Transient error - reset to pending for retry');
+        } else {
+          // Permanent error - mark as failed
+          await supabaseClient
+            .from('screenshots')
+            .update({
+              status: 'failed',
+              metadata: { error: errorMessage }
+            })
+            .eq('id', payload.record.id);
+        }
 
         throw aiError;
       }
