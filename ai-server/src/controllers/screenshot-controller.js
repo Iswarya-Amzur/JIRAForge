@@ -13,7 +13,7 @@ exports.analyzeScreenshot = async (req, res) => {
 
     const {
       id,
-      screenshot_id: screenshotIdFromPayload,  // Edge Function sends 'screenshot_id'
+      screenshot_id: screenshotIdFromPayload,  // Backwards compatibility: legacy payloads may use 'screenshot_id'
       user_id,
       organization_id,  // Multi-tenancy: Extract organization_id from webhook payload
       storage_url,
@@ -27,7 +27,7 @@ exports.analyzeScreenshot = async (req, res) => {
       user_assigned_issues // Optional: User's assigned Jira issues from Forge app
     } = webhookData;
 
-    // Support both 'id' (from direct webhook) and 'screenshot_id' (from Edge Function)
+    // Edge Function sends 'id' (spreads full record), fallback to 'screenshot_id' for backwards compatibility
     const screenshot_id = id || screenshotIdFromPayload;
 
     // Parse user_assigned_issues if it's a string (defensive coding)
@@ -50,9 +50,23 @@ exports.analyzeScreenshot = async (req, res) => {
       });
     }
 
+    // If organization_id is missing (Edge Function doesn't send it), fetch from screenshot record
+    let resolvedOrganizationId = organization_id;
+    if (!resolvedOrganizationId) {
+      const screenshotRecord = await supabaseService.getScreenshotById(screenshot_id);
+      if (screenshotRecord) {
+        resolvedOrganizationId = screenshotRecord.organization_id;
+        logger.info('Fetched organization_id from screenshot record', {
+          screenshot_id,
+          organization_id: resolvedOrganizationId
+        });
+      }
+    }
+
     logger.info('Starting screenshot analysis', {
       screenshot_id,
       user_id,
+      organization_id: resolvedOrganizationId,
       application_name,
       hasAssignedIssues: !!parsedAssignedIssues && parsedAssignedIssues.length > 0
     });
@@ -80,7 +94,7 @@ exports.analyzeScreenshot = async (req, res) => {
     await supabaseService.saveAnalysisResult({
       screenshot_id,
       user_id,
-      organization_id,  // Multi-tenancy: Pass organization_id from webhook payload
+      organization_id: resolvedOrganizationId,  // Multi-tenancy: Use resolved organization_id
       time_spent_seconds: actualDuration,
       active_task_key: analysis.taskKey,
       active_project_key: analysis.projectKey,

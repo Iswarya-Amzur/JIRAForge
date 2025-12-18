@@ -16,12 +16,17 @@ interface ScreenshotPayload {
   record: {
     id: string;
     user_id: string;
+    organization_id: string;  // Multi-tenancy support
     timestamp: string;
     storage_url: string;
     storage_path: string;
     window_title?: string;
     application_name?: string;
     status: string;
+    // Event-based tracking fields
+    duration_seconds?: number;
+    start_time?: string;
+    end_time?: string;
   };
   old_record?: any;
 }
@@ -104,14 +109,10 @@ serve(async (req) => {
             'Authorization': `Bearer ${Deno.env.get('AI_SERVER_API_KEY')}`,
           },
           body: JSON.stringify({
-            screenshot_id: payload.record.id,
-            user_id: payload.record.user_id,
-            storage_url: payload.record.storage_url,
-            storage_path: payload.record.storage_path,
-            window_title: payload.record.window_title,
-            application_name: payload.record.application_name,
-            timestamp: payload.record.timestamp,
-            user_assigned_issues: userAssignedIssues, // Pass assigned issues to AI server
+            // Send the entire record (all fields from screenshots table)
+            ...payload.record,
+            // Override user_assigned_issues with cached issues (more up-to-date)
+            user_assigned_issues: userAssignedIssues.length > 0 ? userAssignedIssues : payload.record.user_assigned_issues,
           }),
         });
 
