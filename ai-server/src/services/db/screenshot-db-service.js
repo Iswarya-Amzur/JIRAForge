@@ -18,11 +18,24 @@ async function updateScreenshotStatus(screenshotId, status, errorMessage = null)
     const supabase = getClient();
     const updateData = {
       status,
-      analyzed_at: status === 'analyzed' ? new Date().toISOString() : null
+      analyzed_at: status === 'analyzed' ? new Date().toISOString() : null,
+      updated_at: new Date().toISOString()
     };
 
     if (errorMessage) {
       updateData.metadata = { error: errorMessage };
+    }
+
+    // If marking as failed, increment retry_count
+    if (status === 'failed') {
+      // First get current retry_count
+      const { data: currentData } = await supabase
+        .from('screenshots')
+        .select('retry_count')
+        .eq('id', screenshotId)
+        .single();
+      
+      updateData.retry_count = (currentData?.retry_count || 0) + 1;
     }
 
     const { error } = await supabase
@@ -73,25 +86,56 @@ async function updateScreenshotDuration(screenshotId, { duration_seconds, start_
 
 /**
  * Fetch pending screenshots from Supabase
+ * Also fetches failed screenshots for retry (up to MAX_RETRIES)
  * @param {number} limit - Maximum number of screenshots to fetch
  * @returns {Promise<Array>} Array of pending screenshots
  */
 async function getPendingScreenshots(limit = 10) {
+  const MAX_RETRIES = 3; // Maximum retry attempts for failed screenshots
+  
   try {
     const supabase = getClient();
-    const { data, error } = await supabase
+    
+    // Fetch pending screenshots
+    const { data: pendingData, error: pendingError } = await supabase
       .from('screenshots')
       .select('*')
       .eq('status', 'pending')
       .order('created_at', { ascending: true })
       .limit(limit);
 
-    if (error) {
-      throw error;
+    if (pendingError) {
+      throw pendingError;
     }
 
-    logger.info(`Fetched ${data?.length || 0} pending screenshots`);
-    return data || [];
+    // Fetch failed screenshots for retry (only those with retry_count < MAX_RETRIES)
+    // Also only retry screenshots that failed more than 1 minute ago (backoff)
+    const oneMinuteAgo = new Date(Date.now() - 60 * 1000).toISOString();
+    const { data: failedData, error: failedError } = await supabase
+      .from('screenshots')
+      .select('*')
+      .eq('status', 'failed')
+      .lt('retry_count', MAX_RETRIES)
+      .lt('updated_at', oneMinuteAgo)
+      .order('created_at', { ascending: true })
+      .limit(Math.max(0, limit - (pendingData?.length || 0)));
+
+    if (failedError) {
+      // Log but don't fail - pending screenshots are more important
+      logger.warn('Error fetching failed screenshots for retry:', failedError);
+    }
+
+    const allScreenshots = [...(pendingData || []), ...(failedData || [])];
+    
+    const pendingCount = pendingData?.length || 0;
+    const retryCount = failedData?.length || 0;
+    if (pendingCount > 0 || retryCount > 0) {
+      logger.info(`Fetched ${pendingCount} pending + ${retryCount} retry screenshots`);
+    } else {
+      logger.debug('No pending screenshots to process');
+    }
+    
+    return allScreenshots;
   } catch (error) {
     // Network errors should be re-thrown for polling service to handle
     if (isNetworkError(error)) {

@@ -6,8 +6,9 @@ class PollingService {
   constructor() {
     this.isRunning = false;
     this.intervalId = null;
-    // Poll every 30 seconds by default (configurable via env)
-    this.pollInterval = parseInt(process.env.POLLING_INTERVAL_MS || '30000', 10);
+    // Poll every 3 minutes by default (configurable via env)
+    // With webhook handling real-time, polling is just a backup for missed screenshots
+    this.pollInterval = parseInt(process.env.POLLING_INTERVAL_MS || '180000', 10);
     this.batchSize = parseInt(process.env.POLLING_BATCH_SIZE || '10', 10);
     this.processing = false;
   }
