@@ -12,7 +12,8 @@ exports.analyzeScreenshot = async (req, res) => {
     const webhookData = req.body.record || req.body;
 
     const {
-      id: screenshot_id,
+      id,
+      screenshot_id: screenshotIdFromPayload,  // Edge Function sends 'screenshot_id'
       user_id,
       organization_id,  // Multi-tenancy: Extract organization_id from webhook payload
       storage_url,
@@ -25,6 +26,9 @@ exports.analyzeScreenshot = async (req, res) => {
       end_time,          // Event-based tracking: End time set by desktop app
       user_assigned_issues // Optional: User's assigned Jira issues from Forge app
     } = webhookData;
+
+    // Support both 'id' (from direct webhook) and 'screenshot_id' (from Edge Function)
+    const screenshot_id = id || screenshotIdFromPayload;
 
     // Parse user_assigned_issues if it's a string (defensive coding)
     let parsedAssignedIssues = user_assigned_issues;
@@ -145,10 +149,12 @@ exports.analyzeScreenshot = async (req, res) => {
     logger.error('Screenshot analysis error:', error);
 
     // Update screenshot status to failed
-    if (req.body.screenshot_id) {
+    // Support both 'id' and 'screenshot_id' from various payload formats
+    const failedScreenshotId = req.body.record?.id || req.body.id || req.body.screenshot_id;
+    if (failedScreenshotId) {
       try {
         await supabaseService.updateScreenshotStatus(
-          req.body.screenshot_id,
+          failedScreenshotId,
           'failed',
           error.message
         );
