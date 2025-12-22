@@ -156,6 +156,42 @@ export async function isJiraAdmin() {
 }
 
 /**
+ * Get all Jira projects accessible to the current user
+ * @returns {Promise<Array<Object>>} Array of project objects with key and name
+ */
+export async function getAllJiraProjects() {
+  try {
+    const response = await api.asUser().requestJira(
+      route`/rest/api/3/project`,
+      {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json'
+        }
+      }
+    );
+
+    const projects = await response.json();
+    return (projects || []).map(p => ({
+      key: p.key,
+      name: p.name
+    }));
+  } catch (error) {
+    console.error('Error fetching Jira projects:', error);
+    return [];
+  }
+}
+
+/**
+ * Get all Jira project keys accessible to the current user
+ * @returns {Promise<Set<string>>} Set of project keys
+ */
+export async function getAllJiraProjectKeys() {
+  const projects = await getAllJiraProjects();
+  return new Set(projects.map(p => p.key));
+}
+
+/**
  * Get list of projects where current user is a Project Administrator
  * @returns {Promise<Array<string>>} Array of project keys
  */

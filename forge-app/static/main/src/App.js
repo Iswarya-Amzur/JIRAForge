@@ -206,6 +206,7 @@ function App() {
   const [userPermissions, setUserPermissions] = useState({
     isJiraAdmin: false,
     projectAdminProjects: [],
+    allProjectKeys: [],
     canCreateIssues: false,
     canEditIssues: false
   });
@@ -275,8 +276,11 @@ function App() {
       const result = await invoke('getUserPermissions');
       if (result.success) {
         setUserPermissions(result.permissions);
-        // Set default project for team analytics if user is project admin
-        if (result.permissions.projectAdminProjects?.length > 0) {
+        // Set default project for team analytics
+        // For Jira Admins, use all project keys; for Project Admins, use their admin projects
+        if (result.permissions.isJiraAdmin && result.permissions.allProjectKeys?.length > 0) {
+          setSelectedProjectKey(result.permissions.allProjectKeys[0]);
+        } else if (result.permissions.projectAdminProjects?.length > 0) {
           setSelectedProjectKey(result.permissions.projectAdminProjects[0]);
         }
       }
@@ -783,7 +787,7 @@ function App() {
               <span className="sidebar-icon">⏰</span>
               {sidebarOpen && <span className="sidebar-label">Unassigned Work</span>}
             </button>
-            {userPermissions.projectAdminProjects?.length > 0 && (
+            {(userPermissions.projectAdminProjects?.length > 0 || (userPermissions.isJiraAdmin && userPermissions.allProjectKeys?.length > 0)) && (
               <button
                 className={`sidebar-item ${activeTab === 'team-analytics' ? 'active' : ''}`}
                 onClick={() => setActiveTab('team-analytics')}
@@ -1825,73 +1829,219 @@ function App() {
 
         {activeTab === 'team-analytics' && (
           <div className="team-analytics">
-            <h2>Team Analytics Dashboard</h2>
-            <div className="project-selector">
-              <label htmlFor="team-project-select">Select Project: </label>
-              <select
-                id="team-project-select"
-                value={selectedProjectKey}
-                onChange={(e) => setSelectedProjectKey(e.target.value)}
-              >
-                {userPermissions.projectAdminProjects?.map(pk => (
-                  <option key={pk} value={pk}>{pk}</option>
-                ))}
-              </select>
+            <div className="team-analytics-header">
+              <h2>Team Analytics Dashboard</h2>
+              <div className="project-selector">
+                <label htmlFor="team-project-select">Project: </label>
+                <select
+                  id="team-project-select"
+                  value={selectedProjectKey}
+                  onChange={(e) => setSelectedProjectKey(e.target.value)}
+                >
+                  {(userPermissions.isJiraAdmin
+                    ? userPermissions.allProjectKeys
+                    : userPermissions.projectAdminProjects
+                  )?.map(pk => (
+                    <option key={pk} value={pk}>{pk}</option>
+                  ))}
+                </select>
+              </div>
             </div>
+
             {loading ? (
-              <p>Loading team analytics...</p>
+              <div className="loading-state">
+                <div className="loading-spinner"></div>
+                <p>Loading team analytics...</p>
+              </div>
             ) : error ? (
               <p className="error">Error: {error}</p>
             ) : (
-              <div className="analytics-grid">
-                <div className="analytics-card">
-                  <h3>Team Daily Summary (Last 30 Days)</h3>
-                  {teamAnalytics?.teamDailySummary && teamAnalytics.teamDailySummary.length > 0 ? (
-                    <div className="data-list">
-                      {teamAnalytics.teamDailySummary.slice(0, 10).map((day, idx) => (
-                        <div key={idx} className="data-item">
-                          <span className="label">{new Date(day.work_date).toLocaleDateString()}</span>
-                          <span className="value">
-                            {day.active_task_key || 'No task'} - {formatTime(day.total_seconds)}
-                          </span>
+              <>
+                {/* KPI Summary Cards */}
+                <div className="team-kpi-cards">
+                  <div className="team-kpi-card">
+                    <div className="kpi-icon">📊</div>
+                    <div className="kpi-content">
+                      <div className="kpi-value">{teamAnalytics?.teamSummary?.totalHoursThisMonth || 0}h</div>
+                      <div className="kpi-label">Total Hours This Month</div>
+                    </div>
+                  </div>
+                  <div className="team-kpi-card">
+                    <div className="kpi-icon">👥</div>
+                    <div className="kpi-content">
+                      <div className="kpi-value">{teamAnalytics?.teamSummary?.activeMembers || 0}</div>
+                      <div className="kpi-label">Active Members</div>
+                    </div>
+                  </div>
+                  <div className="team-kpi-card">
+                    <div className="kpi-icon">📋</div>
+                    <div className="kpi-content">
+                      <div className="kpi-value">{teamAnalytics?.teamSummary?.issuesWorked || 0}</div>
+                      <div className="kpi-label">Issues Worked</div>
+                    </div>
+                  </div>
+                  <div className="team-kpi-card">
+                    <div className="kpi-icon">⏱️</div>
+                    <div className="kpi-content">
+                      <div className="kpi-value">{teamAnalytics?.teamSummary?.avgHoursPerMember || 0}h</div>
+                      <div className="kpi-label">Avg Hours/Member</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Two Column Layout: Member Activity + Activity Trend */}
+                <div className="team-analytics-grid">
+                  {/* Team Member Activity Table */}
+                  <div className="team-section team-member-activity">
+                    <div className="section-header">
+                      <h3>Team Member Activity</h3>
+                      <span className="section-subtitle">Hours tracked by each team member</span>
+                    </div>
+                    <div className="team-member-table-container">
+                      <table className="team-member-table">
+                        <thead>
+                          <tr>
+                            <th>Member</th>
+                            <th>
+                              Today
+                              <span className="info-icon-wrapper">
+                                <span className="info-icon">ℹ</span>
+                                <span className="info-tooltip">
+                                  {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+                                </span>
+                              </span>
+                            </th>
+                            <th>
+                              This Week
+                              <span className="info-icon-wrapper">
+                                <span className="info-icon">ℹ</span>
+                                <span className="info-tooltip">
+                                  {(() => {
+                                    const now = new Date();
+                                    const dayOfWeek = now.getDay();
+                                    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+                                    const monday = new Date(now);
+                                    monday.setDate(now.getDate() - daysToMonday);
+                                    const sunday = new Date(monday);
+                                    sunday.setDate(monday.getDate() + 6);
+                                    const formatDate = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                                    return `${formatDate(monday)} - ${formatDate(sunday)}`;
+                                  })()}
+                                </span>
+                              </span>
+                            </th>
+                            <th>
+                              This Month
+                              <span className="info-icon-wrapper">
+                                <span className="info-icon">ℹ</span>
+                                <span className="info-tooltip">
+                                  {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                                </span>
+                              </span>
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {teamAnalytics?.teamMemberActivity?.length > 0 ? (
+                            teamAnalytics.teamMemberActivity.map((member, idx) => (
+                              <tr key={idx}>
+                                <td className="member-name-cell">
+                                  <span className="member-avatar">👤</span>
+                                  <span className="member-name">{member.displayName}</span>
+                                </td>
+                                <td className="hours-cell"><strong>{member.todayHours}h</strong></td>
+                                <td className="hours-cell"><strong>{member.weekHours}h</strong></td>
+                                <td className="hours-cell"><strong>{member.monthHours}h</strong></td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan="4" className="empty-state">No team member activity yet</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Activity Trend Chart */}
+                  <div className="team-section team-activity-trend">
+                    <div className="section-header">
+                      <h3>Activity Trend</h3>
+                      <span className="section-subtitle">Daily team hours - Last 14 days</span>
+                    </div>
+                    <div className="trend-chart-container">
+                      {teamAnalytics?.activityTrend?.length > 0 ? (
+                        <div className="trend-chart">
+                          {(() => {
+                            const maxHours = Math.max(...teamAnalytics.activityTrend.map(d => d.totalHours), 1);
+                            return teamAnalytics.activityTrend.map((day, idx) => (
+                              <div key={idx} className="trend-bar-wrapper">
+                                <div
+                                  className="trend-bar"
+                                  style={{ height: `${(day.totalHours / maxHours) * 100}%` }}
+                                  title={`${day.date}: ${day.totalHours}h`}
+                                >
+                                  {day.totalHours > 0 && (
+                                    <span className="trend-bar-value">{day.totalHours}h</span>
+                                  )}
+                                </div>
+                                <span className="trend-bar-label">{day.dayOfMonth}</span>
+                                <span className="trend-bar-day">{day.dayOfWeek}</span>
+                              </div>
+                            ));
+                          })()}
                         </div>
-                      ))}
-                      {teamAnalytics.teamDailySummary.length > 10 && (
-                        <p className="more-data">+ {teamAnalytics.teamDailySummary.length - 10} more days</p>
+                      ) : (
+                        <p className="empty-state">No activity trend data available</p>
                       )}
                     </div>
-                  ) : (
-                    <p>No team data available yet.</p>
-                  )}
+                  </div>
                 </div>
-                <div className="analytics-card">
-                  <h3>Team Time by Issue</h3>
-                  {teamAnalytics?.teamTimeByIssue && teamAnalytics.teamTimeByIssue.length > 0 ? (
-                    <div className="data-list">
-                      {teamAnalytics.teamTimeByIssue.map((issue, idx) => (
-                        <div key={idx} className="data-item">
-                          <span className="label">
-                            <a 
-                              href={`/browse/${issue.issueKey}`}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                navigateToIssue(issue.issueKey);
-                              }}
-                              style={{ cursor: 'pointer' }}
-                            >
-                              {issue.issueKey}
-                            </a>
-                            <span className="contributors"> ({issue.contributors} contributor{issue.contributors !== 1 ? 's' : ''})</span>
-                          </span>
-                          <span className="value">{formatTime(issue.totalSeconds)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p>No team issue data available yet.</p>
-                  )}
+
+                {/* Time by Issue Section */}
+                <div className="team-section team-time-by-issue">
+                  <div className="section-header">
+                    <h3>Time by Issue</h3>
+                    <span className="section-subtitle">Team effort distribution across issues</span>
+                  </div>
+                  <div className="issue-bars-container">
+                    {teamAnalytics?.teamTimeByIssue?.length > 0 ? (
+                      (() => {
+                        const maxSeconds = Math.max(...teamAnalytics.teamTimeByIssue.map(i => i.totalSeconds), 1);
+                        return teamAnalytics.teamTimeByIssue.slice(0, 10).map((issue, idx) => (
+                          <div key={idx} className="issue-bar-item">
+                            <div className="issue-bar-header">
+                              <a
+                                href={`/browse/${issue.issueKey}`}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  navigateToIssue(issue.issueKey);
+                                }}
+                                className="issue-key-link"
+                              >
+                                {issue.issueKey}
+                              </a>
+                              <span className="issue-stats">
+                                <span className="issue-hours">{formatTime(issue.totalSeconds)}</span>
+                                <span className="issue-contributors">👥 {issue.contributors}</span>
+                              </span>
+                            </div>
+                            <div className="issue-bar-track">
+                              <div
+                                className="issue-bar-fill"
+                                style={{ width: `${(issue.totalSeconds / maxSeconds) * 100}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        ));
+                      })()
+                    ) : (
+                      <p className="empty-state">No issue data available yet</p>
+                    )}
+                  </div>
                 </div>
-              </div>
+              </>
             )}
           </div>
         )}
@@ -2123,6 +2273,91 @@ function App() {
                                   {project.status === 'warning' && 'Warning'}
                                   {project.status === 'critical' && 'Critical'}
                                 </span>
+                              </td>
+                            </tr>
+                          ));
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* User Activity Table */}
+                <div className="user-activity-section">
+                  <div className="section-header">
+                    <h3>Team Activity Overview</h3>
+                    <span className="section-subtitle">Daily, weekly, and monthly hours by team member</span>
+                  </div>
+                  <div className="user-activity-table-container">
+                    <table className="user-activity-table">
+                      <thead>
+                        <tr>
+                          <th>User</th>
+                          <th>
+                            Today
+                            <span className="info-icon-wrapper">
+                              <span className="info-icon">ℹ</span>
+                              <span className="info-tooltip">
+                                {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                              </span>
+                            </span>
+                          </th>
+                          <th>
+                            This Week
+                            <span className="info-icon-wrapper">
+                              <span className="info-icon">ℹ</span>
+                              <span className="info-tooltip">
+                                {(() => {
+                                  const now = new Date();
+                                  const dayOfWeek = now.getDay();
+                                  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+                                  const monday = new Date(now);
+                                  monday.setDate(now.getDate() - daysToMonday);
+                                  const sunday = new Date(monday);
+                                  sunday.setDate(monday.getDate() + 6);
+                                  const formatDate = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                                  return `${formatDate(monday)} - ${formatDate(sunday)}, ${now.getFullYear()}`;
+                                })()}
+                              </span>
+                            </span>
+                          </th>
+                          <th>
+                            This Month
+                            <span className="info-icon-wrapper">
+                              <span className="info-icon">ℹ</span>
+                              <span className="info-tooltip">
+                                {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                              </span>
+                            </span>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(() => {
+                          const users = orgAnalytics?.userActivity || [];
+
+                          if (users.length === 0) {
+                            return (
+                              <tr>
+                                <td colSpan="4" className="empty-state">No user activity data available</td>
+                              </tr>
+                            );
+                          }
+
+                          return users.map((user, idx) => (
+                            <tr key={idx}>
+                              <td className="user-name-cell">
+                                <span className="user-avatar">👤</span>
+                                <span className="user-name">{user.displayName}</span>
+                              </td>
+                              <td className="hours-cell">
+                                <strong>{user.todayHours}h</strong>
+                              </td>
+                              <td className="hours-cell">
+                                <strong>{user.weekHours}h</strong>
+                              </td>
+                              <td className="hours-cell">
+                                <strong>{user.monthHours}h</strong>
                               </td>
                             </tr>
                           ));

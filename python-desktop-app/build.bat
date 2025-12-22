@@ -49,7 +49,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Install UPX for compression (if not available)
+REM Check for UPX compression (optional)
 echo.
 echo [STEP 2/4] Checking for UPX compression tool...
 where upx >nul 2>&1
@@ -57,10 +57,8 @@ if errorlevel 1 (
     echo [WARN] UPX not found - executable will not be compressed
     echo To enable compression, download UPX from https://github.com/upx/upx/releases
     echo and add it to your PATH
-    set UPX_FLAG=--noupx
 ) else (
     echo [OK] UPX found - compression enabled
-    set UPX_FLAG=
 )
 
 REM Clean previous builds
@@ -75,7 +73,7 @@ echo [STEP 4/4] Building executable...
 echo This may take a few minutes...
 echo.
 
-pyinstaller desktop_app.spec %UPX_FLAG%
+pyinstaller desktop_app.spec
 
 if errorlevel 1 (
     echo.
@@ -107,8 +105,8 @@ if exist "dist\BRDTimeTracker.exe" (
     echo The executable is ready to distribute!
     echo.
     echo Features included:
-    echo   - Credentials embedded (no .env file needed)
-    echo   - Auto-start on Windows boot (registry)
+    echo   - Credentials embedded - no .env file needed
+    echo   - Auto-start on Windows boot via registry
     echo   - Uninstaller generated on first run
     echo   - Data stored in: %%LOCALAPPDATA%%\BRDTimeTracker
     echo.

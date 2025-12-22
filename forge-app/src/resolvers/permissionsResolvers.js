@@ -3,7 +3,7 @@
  * Resolver definitions for checking user permissions and roles
  */
 
-import { isJiraAdmin, checkUserPermissions, getProjectsUserAdmins } from '../utils/jira.js';
+import { isJiraAdmin, checkUserPermissions, getProjectsUserAdmins, getAllJiraProjectKeys } from '../utils/jira.js';
 
 /**
  * Register permissions resolvers
@@ -23,7 +23,16 @@ export function registerPermissionsResolvers(resolver) {
       const isAdmin = await isJiraAdmin();
 
       // Get list of projects where user is Project Admin
-      const projectAdminProjects = isAdmin ? [] : await getProjectsUserAdmins();
+      // For Jira Admins, get all project keys so they can access Team Analytics for any project
+      let projectAdminProjects = [];
+      let allProjectKeys = [];
+
+      if (isAdmin) {
+        const projectKeysSet = await getAllJiraProjectKeys();
+        allProjectKeys = Array.from(projectKeysSet);
+      } else {
+        projectAdminProjects = await getProjectsUserAdmins();
+      }
 
       // Check basic issue permissions (useful for future features)
       const issuePermissions = await checkUserPermissions(['CREATE_ISSUES', 'EDIT_ISSUES']);
@@ -33,6 +42,7 @@ export function registerPermissionsResolvers(resolver) {
         permissions: {
           isJiraAdmin: isAdmin,
           projectAdminProjects: projectAdminProjects || [],
+          allProjectKeys: allProjectKeys || [],
           canCreateIssues: issuePermissions.permissions?.CREATE_ISSUES?.havePermission || false,
           canEditIssues: issuePermissions.permissions?.EDIT_ISSUES?.havePermission || false
         }
@@ -45,6 +55,7 @@ export function registerPermissionsResolvers(resolver) {
         permissions: {
           isJiraAdmin: false,
           projectAdminProjects: [],
+          allProjectKeys: [],
           canCreateIssues: false,
           canEditIssues: false
         }

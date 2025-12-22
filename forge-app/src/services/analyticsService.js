@@ -4,7 +4,7 @@
  */
 
 import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, getUserOrganizationMembership, supabaseRequest } from '../utils/supabase.js';
-import { isJiraAdmin, checkUserPermissions } from '../utils/jira.js';
+import { isJiraAdmin, checkUserPermissions, getAllJiraProjectKeys } from '../utils/jira.js';
 import { MAX_DAILY_SUMMARY_DAYS, MAX_WEEKLY_SUMMARY_WEEKS, MAX_ISSUES_IN_ANALYTICS } from '../config/constants.js';
 
 /**
@@ -156,10 +156,10 @@ export async function fetchAllAnalytics(accountId, cloudId) {
     `project_time_summary?organization_id=eq.${organization.id}&order=total_seconds.desc`
   );
 
-  // Get all users in organization for adoption metrics
+  // Get all users in organization for adoption metrics and user activity
   const allUsers = await supabaseRequest(
     supabaseConfig,
-    `users?organization_id=eq.${organization.id}&select=id,is_active`
+    `users?organization_id=eq.${organization.id}&select=id,display_name,email,is_active`
   );
 
   // Get unique active users who tracked time this month
@@ -213,13 +213,34 @@ export async function fetchAllAnalytics(accountId, cloudId) {
   const totalUsers = (allUsers || []).filter(u => u.is_active !== false).length;
   const adoptionRate = totalUsers > 0 ? Math.round(activeUsersThisMonth / totalUsers * 100) : 0;
 
-  // Active projects this month
-  const activeProjectsThisMonth = new Set(thisMonthData.map(d => d.project_key).filter(Boolean)).size;
-  const activeProjectsLastMonth = new Set(lastMonthData.map(d => d.project_key).filter(Boolean)).size;
+  // Fetch actual Jira projects to filter out invalid/stale project keys
+  const validJiraProjectKeys = await getAllJiraProjectKeys();
+  console.log('[Analytics] Valid Jira project keys:', Array.from(validJiraProjectKeys));
+
+  // Active projects this month - only count valid Jira projects
+  const activeProjectsThisMonth = new Set(
+    thisMonthData
+      .map(d => d.project_key)
+      .filter(key => key && validJiraProjectKeys.has(key))
+  ).size;
+  const activeProjectsLastMonth = new Set(
+    lastMonthData
+      .map(d => d.project_key)
+      .filter(key => key && validJiraProjectKeys.has(key))
+  ).size;
   const projectsChange = activeProjectsThisMonth - activeProjectsLastMonth;
 
   // Build project portfolio with contributor counts and trends
-  const projectPortfolio = (timeByProject || []).map(project => {
+  // Filter to only include projects that exist in Jira
+  const projectPortfolio = (timeByProject || [])
+    .filter(project => {
+      const isValid = validJiraProjectKeys.has(project.project_key);
+      if (!isValid) {
+        console.log(`[Analytics] Filtering out invalid project: ${project.project_key}`);
+      }
+      return isValid;
+    })
+    .map(project => {
     // Get this month's data for the project
     const projectThisMonth = thisMonthData.filter(d => d.project_key === project.project_key);
     const projectLastMonth = lastMonthData.filter(d => d.project_key === project.project_key);
@@ -265,11 +286,63 @@ export async function fetchAllAnalytics(accountId, cloudId) {
     adoptionRate: adoptionRate
   };
 
+  // Calculate user activity (today, this week, this month)
+  const todayStr = formatDate(now);
+
+  // Calculate week start (Monday)
+  const weekStart = new Date(now);
+  const dayOfWeek = weekStart.getDay();
+  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Sunday = 0, so go back 6 days
+  weekStart.setDate(weekStart.getDate() - daysToMonday);
+  const weekStartStr = formatDate(weekStart);
+
+  // Build user activity data
+  const userActivity = (allUsers || [])
+    .filter(user => user.is_active !== false)
+    .map(user => {
+      // Filter daily summary for this user
+      const userDailyData = (dailySummary || []).filter(d => d.user_id === user.id);
+
+      // Today's hours
+      const todayData = userDailyData.filter(d => {
+        const workDate = typeof d.work_date === 'string' ? d.work_date.split('T')[0] : String(d.work_date);
+        return workDate === todayStr;
+      });
+      const todaySeconds = todayData.reduce((sum, d) => sum + (d.total_seconds || 0), 0);
+      const todayHours = Math.round(todaySeconds / 3600 * 10) / 10;
+
+      // This week's hours
+      const weekData = userDailyData.filter(d => {
+        const workDate = typeof d.work_date === 'string' ? d.work_date.split('T')[0] : String(d.work_date);
+        return workDate >= weekStartStr && workDate <= todayStr;
+      });
+      const weekSeconds = weekData.reduce((sum, d) => sum + (d.total_seconds || 0), 0);
+      const weekHours = Math.round(weekSeconds / 3600 * 10) / 10;
+
+      // This month's hours
+      const monthData = userDailyData.filter(d => {
+        const workDate = typeof d.work_date === 'string' ? d.work_date.split('T')[0] : String(d.work_date);
+        return workDate >= currentMonthStr;
+      });
+      const monthSeconds = monthData.reduce((sum, d) => sum + (d.total_seconds || 0), 0);
+      const monthHours = Math.round(monthSeconds / 3600 * 10) / 10;
+
+      return {
+        userId: user.id,
+        displayName: user.display_name || user.email || 'Unknown User',
+        todayHours,
+        weekHours,
+        monthHours
+      };
+    })
+    .sort((a, b) => b.monthHours - a.monthHours); // Sort by monthly hours descending
+
   return {
     dailySummary: dailySummary || [],
     timeByProject: timeByProject || [],
     orgSummary,
     projectPortfolio,
+    userActivity,
     scope: 'GLOBAL',
     organizationId: organization.id,
     organizationName: organization.org_name
@@ -361,6 +434,12 @@ export async function fetchProjectTeamAnalytics(accountId, cloudId, projectKey) 
     `daily_time_summary?organization_id=eq.${organization.id}&project_key=eq.${projectKey}&order=work_date.desc&limit=${MAX_DAILY_SUMMARY_DAYS}`
   );
 
+  // Fetch all users in organization for team member breakdown
+  const allUsers = await supabaseRequest(
+    supabaseConfig,
+    `users?organization_id=eq.${organization.id}&select=id,display_name,email,is_active`
+  );
+
   // Time by issue for this project
   // Updated to use screenshots.duration_seconds instead of analysis_results.time_spent_seconds
   const timeByIssue = await supabaseRequest(
@@ -396,9 +475,130 @@ export async function fetchProjectTeamAnalytics(accountId, cloudId, projectKey) 
     .sort((a, b) => b.totalSeconds - a.totalSeconds)
     .slice(0, MAX_ISSUES_IN_ANALYTICS);
 
+  // === Calculate Team Summary KPIs ===
+  const now = new Date();
+  const formatDate = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const todayStr = formatDate(now);
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const currentMonthStr = formatDate(currentMonthStart);
+
+  // Calculate week start (Monday)
+  const weekStart = new Date(now);
+  const dayOfWeek = weekStart.getDay();
+  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  weekStart.setDate(weekStart.getDate() - daysToMonday);
+  const weekStartStr = formatDate(weekStart);
+
+  // Filter data for this month
+  const thisMonthData = (teamDailySummary || []).filter(day => {
+    const workDate = typeof day.work_date === 'string' ? day.work_date.split('T')[0] : String(day.work_date);
+    return workDate >= currentMonthStr;
+  });
+
+  // Total hours this month
+  const totalSecondsThisMonth = thisMonthData.reduce((sum, d) => sum + (d.total_seconds || 0), 0);
+  const totalHoursThisMonth = Math.round(totalSecondsThisMonth / 3600 * 10) / 10;
+
+  // Active members (unique users who tracked time this month)
+  const activeMembers = new Set(thisMonthData.map(d => d.user_id)).size;
+
+  // Issues worked (unique issues this month)
+  const issuesWorked = new Set(thisMonthData.map(d => d.active_task_key).filter(Boolean)).size;
+
+  // Average hours per member
+  const avgHoursPerMember = activeMembers > 0
+    ? Math.round(totalHoursThisMonth / activeMembers * 10) / 10
+    : 0;
+
+  // Build team summary
+  const teamSummary = {
+    totalHoursThisMonth,
+    activeMembers,
+    issuesWorked,
+    avgHoursPerMember
+  };
+
+  // === Calculate Team Member Activity (Today/Week/Month) ===
+  // Get unique user IDs who have worked on this project
+  const projectUserIds = new Set(teamDailySummary.map(d => d.user_id));
+
+  const teamMemberActivity = Array.from(projectUserIds).map(userId => {
+    // Find user info
+    const userInfo = (allUsers || []).find(u => u.id === userId);
+    const displayName = userInfo?.display_name || userInfo?.email || 'Unknown User';
+
+    // Filter daily summary for this user
+    const userDailyData = (teamDailySummary || []).filter(d => d.user_id === userId);
+
+    // Today's hours
+    const todayData = userDailyData.filter(d => {
+      const workDate = typeof d.work_date === 'string' ? d.work_date.split('T')[0] : String(d.work_date);
+      return workDate === todayStr;
+    });
+    const todaySeconds = todayData.reduce((sum, d) => sum + (d.total_seconds || 0), 0);
+    const todayHours = Math.round(todaySeconds / 3600 * 10) / 10;
+
+    // This week's hours
+    const weekData = userDailyData.filter(d => {
+      const workDate = typeof d.work_date === 'string' ? d.work_date.split('T')[0] : String(d.work_date);
+      return workDate >= weekStartStr && workDate <= todayStr;
+    });
+    const weekSeconds = weekData.reduce((sum, d) => sum + (d.total_seconds || 0), 0);
+    const weekHours = Math.round(weekSeconds / 3600 * 10) / 10;
+
+    // This month's hours
+    const monthData = userDailyData.filter(d => {
+      const workDate = typeof d.work_date === 'string' ? d.work_date.split('T')[0] : String(d.work_date);
+      return workDate >= currentMonthStr;
+    });
+    const monthSeconds = monthData.reduce((sum, d) => sum + (d.total_seconds || 0), 0);
+    const monthHours = Math.round(monthSeconds / 3600 * 10) / 10;
+
+    return {
+      userId,
+      displayName,
+      todayHours,
+      weekHours,
+      monthHours
+    };
+  }).sort((a, b) => b.monthHours - a.monthHours);
+
+  // === Calculate Daily Trend (Last 14 days) ===
+  const trendDays = 14;
+  const trendData = [];
+  for (let i = trendDays - 1; i >= 0; i--) {
+    const date = new Date(now);
+    date.setDate(date.getDate() - i);
+    const dateStr = formatDate(date);
+
+    // Sum hours for all users on this date
+    const dayData = (teamDailySummary || []).filter(d => {
+      const workDate = typeof d.work_date === 'string' ? d.work_date.split('T')[0] : String(d.work_date);
+      return workDate === dateStr;
+    });
+    const totalSeconds = dayData.reduce((sum, d) => sum + (d.total_seconds || 0), 0);
+    const totalHours = Math.round(totalSeconds / 3600 * 10) / 10;
+
+    trendData.push({
+      date: dateStr,
+      dayOfWeek: date.toLocaleDateString('en-US', { weekday: 'short' }),
+      dayOfMonth: date.getDate(),
+      totalHours
+    });
+  }
+
   return {
+    teamSummary,
+    teamMemberActivity,
     teamDailySummary: teamDailySummary || [],
     teamTimeByIssue,
+    activityTrend: trendData,
     scope: 'TEAM',
     projectKey,
     organizationId: organization.id
