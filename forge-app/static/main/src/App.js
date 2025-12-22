@@ -23,6 +23,90 @@ const navigateToIssue = (issueKey) => {
   }
 };
 
+// Issue Type Icon Component - displays Jira-like icons for issue types
+function IssueTypeIcon({ issueType, iconUrl }) {
+  // If we have an icon URL from Jira, use it
+  if (iconUrl) {
+    return (
+      <img 
+        src={iconUrl} 
+        alt={issueType || 'Issue'} 
+        className="issue-type-icon jira-icon"
+        title={issueType || 'Issue'}
+      />
+    );
+  }
+
+  // SVG icons matching Jira's style
+  const svgIcons = {
+    'Story': (
+      <svg className="issue-type-icon svg-icon" viewBox="0 0 16 16" title="Story">
+        <path 
+          d="M4 2h8a1 1 0 011 1v11.586a.5.5 0 01-.853.354L8 10.793l-4.147 4.147A.5.5 0 013 14.586V3a1 1 0 011-1z"
+          fill="#63BA3C"
+        />
+      </svg>
+    ),
+    'Task': (
+      <svg className="issue-type-icon svg-icon" viewBox="0 0 16 16" title="Task">
+        <rect x="1" y="1" width="14" height="14" rx="2" fill="#4FADE6"/>
+        <path d="M4.5 8l2.5 2.5 4.5-4.5" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    ),
+    'Bug': (
+      <svg className="issue-type-icon svg-icon" viewBox="0 0 16 16" title="Bug">
+        <circle cx="8" cy="8" r="7" fill="#E5493A"/>
+        <circle cx="8" cy="8" r="3" fill="white"/>
+      </svg>
+    ),
+    'Epic': (
+      <svg className="issue-type-icon svg-icon" viewBox="0 0 16 16" title="Epic">
+        <path d="M8 1L2 9h5v6l6-8H8V1z" fill="#904EE2"/>
+      </svg>
+    ),
+    'Sub-task': (
+      <svg className="issue-type-icon svg-icon" viewBox="0 0 16 16" title="Sub-task">
+        <rect x="1" y="1" width="14" height="14" rx="2" fill="#4FADE6"/>
+        <rect x="4" y="7" width="8" height="2" fill="white"/>
+      </svg>
+    ),
+    'Feature': (
+      <svg className="issue-type-icon svg-icon" viewBox="0 0 16 16" title="Feature">
+        <rect x="1" y="1" width="14" height="14" rx="2" fill="#63BA3C"/>
+        <circle cx="5" cy="5" r="1.5" fill="white"/>
+        <circle cx="11" cy="5" r="1.5" fill="white"/>
+        <circle cx="5" cy="11" r="1.5" fill="white"/>
+        <circle cx="11" cy="11" r="1.5" fill="white"/>
+      </svg>
+    ),
+    'Request': (
+      <svg className="issue-type-icon svg-icon" viewBox="0 0 16 16" title="Request">
+        <rect x="1" y="1" width="14" height="14" rx="2" fill="#2684FF"/>
+        <path d="M8 4v8M4 8h8" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+      </svg>
+    ),
+    'Improvement': (
+      <svg className="issue-type-icon svg-icon" viewBox="0 0 16 16" title="Improvement">
+        <rect x="1" y="1" width="14" height="14" rx="2" fill="#63BA3C"/>
+        <path d="M8 4v8M5 7l3-3 3 3" stroke="white" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    )
+  };
+
+  // Return SVG icon if available, otherwise a default
+  if (svgIcons[issueType]) {
+    return svgIcons[issueType];
+  }
+
+  // Default fallback icon
+  return (
+    <svg className="issue-type-icon svg-icon" viewBox="0 0 16 16" title={issueType || 'Issue'}>
+      <rect x="1" y="1" width="14" height="14" rx="2" fill="#6B778C"/>
+      <path d="M5 8h6" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
 // Status Dropdown Component
 function StatusDropdown({ issue, onStatusChange, isUpdating, onLoadTransitions }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -823,6 +907,10 @@ function App() {
                                         ▶
                                       </button>
                                     )}
+                                    <IssueTypeIcon 
+                                      issueType={issue.issueType} 
+                                      iconUrl={issue.issueTypeIconUrl} 
+                                    />
                                     <a 
                                       href={`/browse/${issue.key}`}
                                       onClick={(e) => {
@@ -1811,49 +1899,239 @@ function App() {
         {activeTab === 'org-analytics' && (
           <div className="org-analytics">
             <h2>Organization Analytics Dashboard</h2>
-            <p className="admin-notice">Jira Administrator View - Global Analytics</p>
+            <p className="admin-notice">Jira Administrator View - Enterprise Overview</p>
             {loading ? (
-              <p>Loading organization analytics...</p>
+              <div className="loading-state">
+                <div className="loading-spinner"></div>
+                <p>Loading organization analytics...</p>
+              </div>
             ) : error ? (
               <p className="error">Error: {error}</p>
             ) : (
-              <div className="analytics-grid">
-                <div className="analytics-card">
-                  <h3>Organization Daily Summary (Last 30 Days)</h3>
-                  {orgAnalytics?.dailySummary && orgAnalytics.dailySummary.length > 0 ? (
-                    <div className="data-list">
-                      {orgAnalytics.dailySummary.slice(0, 10).map((day, idx) => (
-                        <div key={idx} className="data-item">
-                          <span className="label">{new Date(day.work_date).toLocaleDateString()}</span>
-                          <span className="value">
-                            {day.active_task_key || 'No task'} - {formatTime(day.total_seconds)}
-                          </span>
-                        </div>
-                      ))}
-                      {orgAnalytics.dailySummary.length > 10 && (
-                        <p className="more-data">+ {orgAnalytics.dailySummary.length - 10} more days</p>
-                      )}
+              <>
+                {/* Executive Summary KPI Cards */}
+                <div className="org-kpi-cards">
+                  <div className="org-kpi-card">
+                    <div className="kpi-icon">
+                      <span>&#128200;</span>
                     </div>
-                  ) : (
-                    <p>No organization data available yet.</p>
-                  )}
-                </div>
-                <div className="analytics-card">
-                  <h3>Organization Time by Project</h3>
-                  {orgAnalytics?.timeByProject && orgAnalytics.timeByProject.length > 0 ? (
-                    <div className="data-list">
-                      {orgAnalytics.timeByProject.map((project, idx) => (
-                        <div key={idx} className="data-item">
-                          <span className="label">{project.active_project_key || 'Unknown'}</span>
-                          <span className="value">{formatTime(project.total_seconds)}</span>
-                        </div>
-                      ))}
+                    <div className="kpi-content">
+                      <div className="kpi-value">{orgAnalytics?.orgSummary?.totalHours || 0}h</div>
+                      <div className="kpi-label">Total Hours This Month</div>
+                      <div className={`kpi-change ${(orgAnalytics?.orgSummary?.totalHoursChange || 0) >= 0 ? 'positive' : 'negative'}`}>
+                        {(orgAnalytics?.orgSummary?.totalHoursChange || 0) >= 0 ? '↑' : '↓'} {Math.abs(orgAnalytics?.orgSummary?.totalHoursChange || 0)}% vs last month
+                      </div>
                     </div>
-                  ) : (
-                    <p>No organization project data available yet.</p>
-                  )}
+                  </div>
+
+                  <div className="org-kpi-card">
+                    <div className="kpi-icon">
+                      <span>&#128193;</span>
+                    </div>
+                    <div className="kpi-content">
+                      <div className="kpi-value">{orgAnalytics?.orgSummary?.activeProjects || 0}</div>
+                      <div className="kpi-label">Active Projects</div>
+                      <div className={`kpi-change ${(orgAnalytics?.orgSummary?.projectsChange || 0) >= 0 ? 'positive' : 'negative'}`}>
+                        {(orgAnalytics?.orgSummary?.projectsChange || 0) >= 0 ? '+' : ''}{orgAnalytics?.orgSummary?.projectsChange || 0} vs last month
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="org-kpi-card">
+                    <div className="kpi-icon">
+                      <span>&#128101;</span>
+                    </div>
+                    <div className="kpi-content">
+                      <div className="kpi-value">{orgAnalytics?.orgSummary?.activeUsers || 0}</div>
+                      <div className="kpi-label">Active Users</div>
+                      <div className={`kpi-change ${(orgAnalytics?.orgSummary?.activeUsersChange || 0) >= 0 ? 'positive' : 'negative'}`}>
+                        {(orgAnalytics?.orgSummary?.activeUsersChange || 0) >= 0 ? '+' : ''}{orgAnalytics?.orgSummary?.activeUsersChange || 0} vs last month
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="org-kpi-card">
+                    <div className="kpi-icon">
+                      <span>&#128200;</span>
+                    </div>
+                    <div className="kpi-content">
+                      <div className="kpi-value">{orgAnalytics?.orgSummary?.adoptionRate || 0}%</div>
+                      <div className="kpi-label">Adoption Rate</div>
+                      <div className="kpi-subtext">
+                        {orgAnalytics?.orgSummary?.activeUsers || 0} of {orgAnalytics?.orgSummary?.totalUsers || 0} users
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
+
+                {/* Time By Project & Org Trend Section */}
+                <div className="org-charts-row">
+                  {/* Time By Project - Horizontal Bar Chart */}
+                  <div className="org-chart-card">
+                    <div className="chart-header">
+                      <h3>Time By Project</h3>
+                      <span className="chart-subtitle">Hours tracked this month</span>
+                    </div>
+                    <div className="project-bars">
+                      {(() => {
+                        const projects = orgAnalytics?.projectPortfolio || [];
+                        const maxHours = Math.max(...projects.map(p => p.totalHours || 0), 1);
+
+                        if (projects.length === 0) {
+                          return <p className="empty-state">No project data available</p>;
+                        }
+
+                        return projects.slice(0, 8).map((project, idx) => (
+                          <div key={idx} className="project-bar-item">
+                            <div className="project-bar-label">
+                              <span className="project-key">{project.projectKey}</span>
+                              <span className="project-hours">{project.totalHours}h</span>
+                            </div>
+                            <div className="project-bar-container">
+                              <div
+                                className={`project-bar-fill status-${project.status}`}
+                                style={{ width: `${(project.totalHours / maxHours) * 100}%` }}
+                              ></div>
+                            </div>
+                            <div className="project-bar-meta">
+                              <span className="contributor-count">{project.contributorCount} contributors</span>
+                              <span className={`trend-indicator ${project.trendPercent >= 0 ? 'up' : 'down'}`}>
+                                {project.trendPercent >= 0 ? '↑' : '↓'} {Math.abs(project.trendPercent)}%
+                              </span>
+                            </div>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* Org Time Trend - Daily Activity */}
+                  <div className="org-chart-card">
+                    <div className="chart-header">
+                      <h3>Organization Activity Trend</h3>
+                      <span className="chart-subtitle">Daily hours - Last 30 days</span>
+                    </div>
+                    <div className="trend-chart">
+                      {(() => {
+                        // Process daily summary into chart data
+                        const dailyData = orgAnalytics?.dailySummary || [];
+
+                        if (dailyData.length === 0) {
+                          return <p className="empty-state">No activity data available</p>;
+                        }
+
+                        // Aggregate by date
+                        const dateAggregation = {};
+                        dailyData.forEach(day => {
+                          const dateStr = typeof day.work_date === 'string'
+                            ? day.work_date.split('T')[0]
+                            : String(day.work_date);
+                          if (!dateAggregation[dateStr]) {
+                            dateAggregation[dateStr] = 0;
+                          }
+                          dateAggregation[dateStr] += (day.total_seconds || 0) / 3600;
+                        });
+
+                        // Sort by date and take last 30 days
+                        const sortedDates = Object.keys(dateAggregation).sort().slice(-30);
+                        const maxDailyHours = Math.max(...sortedDates.map(d => dateAggregation[d]), 1);
+
+                        return (
+                          <div className="trend-bars">
+                            {sortedDates.map((dateStr, idx) => {
+                              const hours = dateAggregation[dateStr];
+                              const height = (hours / maxDailyHours) * 100;
+                              const date = new Date(dateStr + 'T00:00:00');
+                              const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
+                              const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+
+                              return (
+                                <div
+                                  key={idx}
+                                  className={`trend-bar ${isWeekend ? 'weekend' : ''}`}
+                                  title={`${dateStr}: ${Math.round(hours * 10) / 10}h`}
+                                >
+                                  <div
+                                    className="trend-bar-fill"
+                                    style={{ height: `${Math.max(height, 2)}%` }}
+                                  ></div>
+                                  {idx % 5 === 0 && (
+                                    <span className="trend-bar-label">{date.getDate()}</span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Project Portfolio Table */}
+                <div className="org-portfolio-section">
+                  <div className="portfolio-header">
+                    <h3>Project Portfolio Details</h3>
+                    <span className="portfolio-subtitle">Complete breakdown of project activity this month</span>
+                  </div>
+                  <div className="portfolio-table-container">
+                    <table className="portfolio-table">
+                      <thead>
+                        <tr>
+                          <th>Project</th>
+                          <th>Total Hours</th>
+                          <th>Contributors</th>
+                          <th>Issues Worked</th>
+                          <th>Trend</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(() => {
+                          const projects = orgAnalytics?.projectPortfolio || [];
+
+                          if (projects.length === 0) {
+                            return (
+                              <tr>
+                                <td colSpan="6" className="empty-state">No project data available</td>
+                              </tr>
+                            );
+                          }
+
+                          return projects.map((project, idx) => (
+                            <tr key={idx}>
+                              <td className="project-name-cell">
+                                <span className="project-badge">{project.projectKey}</span>
+                              </td>
+                              <td className="hours-cell">
+                                <strong>{project.totalHours}h</strong>
+                              </td>
+                              <td className="contributors-cell">
+                                <span className="contributor-badge">{project.contributorCount}</span>
+                              </td>
+                              <td className="issues-cell">
+                                {project.issueCount}
+                              </td>
+                              <td className={`trend-cell ${project.trendPercent >= 0 ? 'positive' : 'negative'}`}>
+                                <span className="trend-value">
+                                  {project.trendPercent >= 0 ? '↑' : '↓'} {Math.abs(project.trendPercent)}%
+                                </span>
+                              </td>
+                              <td className="status-cell">
+                                <span className={`status-indicator status-${project.status}`}>
+                                  {project.status === 'healthy' && 'Healthy'}
+                                  {project.status === 'warning' && 'Warning'}
+                                  {project.status === 'critical' && 'Critical'}
+                                </span>
+                              </td>
+                            </tr>
+                          ));
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
             )}
           </div>
         )}

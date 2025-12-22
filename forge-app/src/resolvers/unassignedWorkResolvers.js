@@ -102,17 +102,20 @@ function formatJiraDate(date = new Date()) {
 
 /**
  * Get already-clustered groups from database (AI server creates these automatically)
+ * LAZY LOADING: Returns summary data only (no session_ids), with pagination
+ * Full details are loaded on-demand via getGroupDetails when user expands a group
  */
 async function getUnassignedGroups(req) {
   try {
     const { accountId, cloudId } = req.context;
+    const { limit = 10, offset = 0 } = req.payload || {};
 
     const supabaseConfig = await getSupabaseConfig(accountId);
     if (!supabaseConfig) {
       return { success: false, error: 'Supabase not configured' };
     }
 
-    // Get or create organization first (multi-tenancy)
+    // Get or create organization first (multi-tenancy) - these are cached
     const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
     if (!organization) {
       return { success: false, error: 'Unable to get organization information' };
@@ -120,142 +123,138 @@ async function getUnassignedGroups(req) {
 
     const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
 
-    // Fetch unassigned groups for this user - filter by organization_id for multi-tenancy
+    // First, get total count for pagination info
+    const countResult = await supabaseRequest(
+      supabaseConfig,
+      `unassigned_work_groups?user_id=eq.${userId}&organization_id=eq.${organization.id}&is_assigned=eq.false&select=id`,
+      { headers: { 'Prefer': 'count=exact' } }
+    );
+    const totalCount = Array.isArray(countResult) ? countResult.length : 0;
+
+    // LAZY LOADING: Fetch only summary data (no members/activities) with pagination
+    // Session details loaded on-demand via getGroupDetails
     const groups = await supabaseRequest(
       supabaseConfig,
-      `unassigned_work_groups?user_id=eq.${userId}&organization_id=eq.${organization.id}&is_assigned=eq.false&order=created_at.desc`
+      `unassigned_work_groups?user_id=eq.${userId}&organization_id=eq.${organization.id}&is_assigned=eq.false&order=created_at.desc&limit=${limit}&offset=${offset}&select=id,group_label,group_description,session_count,total_seconds,confidence_level,recommended_action,suggested_issue_key,recommendation_reason,created_at`
     );
 
     if (!groups || groups.length === 0) {
-      return { success: true, groups: [], total_groups: 0 };
+      return { success: true, groups: [], total_groups: totalCount, has_more: false };
     }
 
-    // For each group, fetch its members and enrich with formatted data
-    const enrichedGroups = await Promise.all(
-      groups.map(async (group) => {
-        // Fetch members with unassigned_activity_id
-        const members = await supabaseRequest(
-          supabaseConfig,
-          `unassigned_group_members?group_id=eq.${group.id}&select=id,unassigned_activity_id`
-        );
+    console.log(`[getUnassignedGroups] Loaded ${groups.length} groups (offset: ${offset}, total: ${totalCount})`);
 
-        // Ensure members is an array
-        const membersArray = Array.isArray(members) ? members : (members ? [members] : []);
-        
-        console.log(`[getUnassignedGroups] Group ${group.id} has ${membersArray.length} members`, 
-          membersArray.length > 0 ? `First member: ${JSON.stringify(membersArray[0])}` : 'No members');
+    // Transform groups with minimal processing (no additional API calls)
+    const enrichedGroups = groups.map((group) => {
+      // Use DB values directly - no recalculation needed for summary view
+      const totalTimeFormatted = formatDuration(group.total_seconds || 0);
 
-        // Calculate total_seconds from ACTUAL member activities (not DB value which may be wrong)
-        // Always recalculate to ensure accuracy
-        let totalSeconds = 0;
+      // Format recommendation data
+      const recommendation = group.recommended_action ? {
+        action: group.recommended_action,
+        suggested_issue_key: group.suggested_issue_key || null,
+        reason: group.recommendation_reason || ''
+      } : null;
 
-        if (membersArray.length > 0) {
-          const activityIds = membersArray.map(m => m?.unassigned_activity_id).filter(Boolean);
-          if (activityIds.length > 0) {
-            const activityIdsParam = activityIds.join(',');
-            const activities = await supabaseRequest(
-              supabaseConfig,
-              `unassigned_activity?id=in.(${activityIdsParam})&select=time_spent_seconds`
-            );
-            const activitiesArray = Array.isArray(activities) ? activities : (activities ? [activities] : []);
-            totalSeconds = activitiesArray.reduce((sum, a) => sum + (a?.time_spent_seconds || 0), 0);
-          }
-        }
+      return {
+        id: group.id,
+        label: group.group_label,
+        description: group.group_description,
+        session_count: group.session_count || 0,
+        total_seconds: group.total_seconds || 0,
+        total_time_formatted: totalTimeFormatted,
+        confidence: group.confidence_level || 'medium',
+        recommendation: recommendation,
+        created_at: group.created_at,
+        // Note: session_ids NOT included - loaded on-demand via getGroupDetails
+        // This flag indicates details need to be fetched when expanded
+        details_loaded: false
+      };
+    });
 
-        const totalTimeFormatted = formatDuration(totalSeconds);
-
-        // Format recommendation data
-        const recommendation = group.recommended_action ? {
-          action: group.recommended_action,
-          suggested_issue_key: group.suggested_issue_key || null,
-          reason: group.recommendation_reason || ''
-        } : null;
-
-        // Filter out null/undefined session IDs and ensure we have valid UUIDs
-        // Try multiple ways to extract the ID
-        let validSessionIds = membersArray
-          .map(m => {
-            // Try different possible field names
-            return m?.unassigned_activity_id || m?.id || m?.activity_id;
-          })
-          .filter(id => {
-            // Validate it's a non-empty string that looks like a UUID
-            if (!id || typeof id !== 'string' || id.trim() === '') return false;
-            // Basic UUID format check (8-4-4-4-12 hex characters)
-            return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id.trim());
-          });
-        
-        // Fallback: If no valid session IDs but we have members, try re-querying
-        if (validSessionIds.length === 0 && membersArray.length > 0) {
-          console.warn(`[getUnassignedGroups] Group ${group.id} has ${membersArray.length} members but no valid session IDs. Trying fallback...`);
-          console.warn(`[getUnassignedGroups] Sample member data:`, JSON.stringify(membersArray[0]));
-          
-          // Try to get unassigned_activity records using the member junction table IDs
-          try {
-            // Re-query with just unassigned_activity_id to see if the field name is different
-            const allMembers = await supabaseRequest(
-              supabaseConfig,
-              `unassigned_group_members?group_id=eq.${group.id}&select=*`
-            );
-            
-            const allMembersArray = Array.isArray(allMembers) ? allMembers : (allMembers ? [allMembers] : []);
-            console.log(`[getUnassignedGroups] Fallback: Found ${allMembersArray.length} members with full data`);
-            
-            // Try to extract from full data
-            validSessionIds = allMembersArray
-              .map(m => m?.unassigned_activity_id || m?.id)
-              .filter(id => {
-                if (!id || typeof id !== 'string' || id.trim() === '') return false;
-                return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id.trim());
-              });
-            
-            if (validSessionIds.length > 0) {
-              console.log(`[getUnassignedGroups] Fallback successful: Found ${validSessionIds.length} session IDs for group ${group.id}`);
-            } else {
-              console.warn(`[getUnassignedGroups] Fallback also found no valid session IDs. Full member sample:`, 
-                JSON.stringify(allMembersArray[0]));
-            }
-          } catch (fallbackError) {
-            console.error(`[getUnassignedGroups] Fallback query failed for group ${group.id}:`, fallbackError.message);
-          }
-        }
-        
-        console.log(`[getUnassignedGroups] Group ${group.id} final result: ${validSessionIds.length} valid session IDs (members: ${membersArray.length}, session_count: ${group.session_count || 0})`);
-        
-        if (validSessionIds.length === 0 && (membersArray.length > 0 || (group.session_count && group.session_count > 0))) {
-          console.warn(`[getUnassignedGroups] WARNING: Group ${group.id} has ${membersArray.length} members and session_count=${group.session_count} but no valid session IDs!`);
-        }
-        
-        return {
-          ...group,
-          label: group.group_label, // Map group_label to label for UI
-          description: group.group_description, // Map group_description to description for UI
-          session_ids: validSessionIds,
-          session_count: validSessionIds.length || 0, // Use ACTUAL valid session count, not DB value
-          total_seconds: totalSeconds, // Recalculated from actual members
-          total_time_formatted: totalTimeFormatted,
-          confidence: group.confidence_level || 'medium', // Map confidence_level to confidence
-          recommendation: recommendation,
-          has_valid_sessions: validSessionIds.length > 0 // Flag to indicate if group has usable sessions
-        };
-      })
-    );
-
-    // Filter out groups with no valid session IDs (data inconsistency - group exists but no members)
-    const validGroups = enrichedGroups.filter(g => g.has_valid_sessions);
-    
-    if (validGroups.length < enrichedGroups.length) {
-      console.warn(`[getUnassignedGroups] Filtered out ${enrichedGroups.length - validGroups.length} groups with no valid session IDs`);
-    }
+    // Filter out groups with 0 sessions (data inconsistency)
+    const validGroups = enrichedGroups.filter(g => g.session_count > 0);
 
     return {
       success: true,
       groups: validGroups,
-      total_groups: validGroups.length
+      total_groups: totalCount,
+      has_more: offset + limit < totalCount,
+      next_offset: offset + limit
     };
 
   } catch (error) {
     console.error('Error getting unassigned groups:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Get detailed data for a specific group (session_ids, recalculated totals)
+ * LAZY LOADING: Called when user expands a group to see details
+ */
+async function getGroupDetails(req) {
+  try {
+    const { accountId, cloudId } = req.context;
+    const { groupId } = req.payload;
+
+    if (!groupId) {
+      return { success: false, error: 'Group ID required' };
+    }
+
+    const supabaseConfig = await getSupabaseConfig(accountId);
+    if (!supabaseConfig) {
+      return { success: false, error: 'Supabase not configured' };
+    }
+
+    // Get or create organization first (multi-tenancy) - cached
+    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+    if (!organization) {
+      return { success: false, error: 'Unable to get organization information' };
+    }
+
+    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+
+    console.log(`[getGroupDetails] Loading details for group: ${groupId}`);
+
+    // Fetch group members with activity data in a single query
+    const members = await supabaseRequest(
+      supabaseConfig,
+      `unassigned_group_members?group_id=eq.${groupId}&select=id,unassigned_activity_id,unassigned_activity(id,time_spent_seconds,window_title,application_name,timestamp)`
+    );
+
+    const membersArray = Array.isArray(members) ? members : (members ? [members] : []);
+
+    // Calculate accurate total_seconds from actual activities
+    let totalSeconds = 0;
+    membersArray.forEach(member => {
+      if (member?.unassigned_activity?.time_spent_seconds) {
+        totalSeconds += member.unassigned_activity.time_spent_seconds;
+      }
+    });
+
+    // Extract valid session IDs
+    const sessionIds = membersArray
+      .map(m => m?.unassigned_activity_id)
+      .filter(id => {
+        if (!id || typeof id !== 'string' || id.trim() === '') return false;
+        return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id.trim());
+      });
+
+    console.log(`[getGroupDetails] Group ${groupId}: ${sessionIds.length} sessions, ${totalSeconds}s total`);
+
+    return {
+      success: true,
+      groupId,
+      session_ids: sessionIds,
+      session_count: sessionIds.length,
+      total_seconds: totalSeconds,
+      total_time_formatted: formatDuration(totalSeconds),
+      has_valid_sessions: sessionIds.length > 0
+    };
+
+  } catch (error) {
+    console.error('Error getting group details:', error);
     return { success: false, error: error.message };
   }
 }
@@ -1512,8 +1511,9 @@ async function getUnassignedWorkSummary(req) {
  */
 export function registerUnassignedWorkResolvers(resolver) {
   resolver.define('getUnassignedWork', getUnassignedWork);
-  resolver.define('getUnassignedGroups', getUnassignedGroups); // New: Read groups from DB instead of clustering
-  resolver.define('getGroupScreenshots', getGroupScreenshots); // Get screenshots for a group
+  resolver.define('getUnassignedGroups', getUnassignedGroups); // Paginated groups with summary data
+  resolver.define('getGroupDetails', getGroupDetails); // Lazy load: Get full details when group is expanded
+  resolver.define('getGroupScreenshots', getGroupScreenshots); // Lazy load: Get screenshots for a group
   resolver.define('assignToExistingIssue', assignToExistingIssue);
   resolver.define('createIssueAndAssign', createIssueAndAssign);
   resolver.define('getUserProjects', getUserProjects);

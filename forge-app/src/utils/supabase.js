@@ -4,23 +4,38 @@
  */
 
 import { fetch, storage } from '@forge/api';
+import { getFromCache, setInCache, TTL, CacheKeys } from './cache.js';
 
 /**
  * Get Supabase client configuration from Forge storage
+ * Uses caching to reduce storage reads
  * @param {string} accountId - Atlassian account ID
  * @returns {Promise<Object|null>} Supabase configuration or null if not configured
  */
 export async function getSupabaseConfig(accountId) {
+  const cacheKey = CacheKeys.supabaseConfig(accountId);
+  
+  // Check cache first
+  const cached = getFromCache(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  
   try {
     const settings = await storage.get('global:app-settings');
     if (!settings) {
       return null;
     }
-    return {
+    const config = {
       url: settings.supabaseUrl,
       serviceRoleKey: settings.supabaseServiceRoleKey,
       anonKey: settings.supabaseAnonKey
     };
+    
+    // Cache the config
+    setInCache(cacheKey, config, TTL.CONFIG);
+    
+    return config;
   } catch (error) {
     console.error('Error getting Supabase config:', error);
     return null;
@@ -29,6 +44,7 @@ export async function getSupabaseConfig(accountId) {
 
 /**
  * Get or create organization record in Supabase
+ * Uses caching to reduce database lookups (organizations rarely change)
  * @param {string} cloudId - Jira Cloud ID from Atlassian
  * @param {Object} supabaseConfig - Supabase configuration
  * @param {string} orgName - Optional organization name
@@ -36,6 +52,14 @@ export async function getSupabaseConfig(accountId) {
  * @returns {Promise<Object>} Organization object with id and other properties
  */
 export async function getOrCreateOrganization(cloudId, supabaseConfig, orgName = null, jiraUrl = null) {
+  const cacheKey = CacheKeys.organization(cloudId);
+  
+  // Check cache first
+  const cached = getFromCache(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  
   try {
     // First, try to get organization by Jira Cloud ID
     const response = await fetch(
@@ -54,6 +78,8 @@ export async function getOrCreateOrganization(cloudId, supabaseConfig, orgName =
 
     if (orgs && orgs.length > 0) {
       console.log('[Supabase] Found existing organization:', orgs[0].id);
+      // Cache the organization
+      setInCache(cacheKey, orgs[0], TTL.ORGANIZATION);
       return orgs[0];
     }
 
@@ -93,6 +119,9 @@ export async function getOrCreateOrganization(cloudId, supabaseConfig, orgName =
       })
     });
 
+    // Cache the new organization
+    setInCache(cacheKey, newOrg[0], TTL.ORGANIZATION);
+    
     return newOrg[0];
   } catch (error) {
     console.error('Error getting/creating organization:', error);
@@ -102,12 +131,21 @@ export async function getOrCreateOrganization(cloudId, supabaseConfig, orgName =
 
 /**
  * Get or create user record in Supabase with organization support
+ * Uses caching to reduce database lookups (user IDs don't change)
  * @param {string} accountId - Atlassian account ID
  * @param {Object} supabaseConfig - Supabase configuration
  * @param {string} organizationId - Organization UUID (optional but recommended)
  * @returns {Promise<string>} Supabase user UUID
  */
 export async function getOrCreateUser(accountId, supabaseConfig, organizationId = null) {
+  const cacheKey = CacheKeys.userId(accountId);
+  
+  // Check cache first (only if we don't need to update org)
+  const cached = getFromCache(cacheKey);
+  if (cached && cached.organizationId === organizationId) {
+    return cached.userId;
+  }
+  
   try {
     // First, try to get user by Atlassian account ID
     const response = await fetch(
@@ -147,6 +185,9 @@ export async function getOrCreateUser(accountId, supabaseConfig, organizationId 
         await ensureOrganizationMembership(userId, organizationId, supabaseConfig);
       }
 
+      // Cache the user ID
+      setInCache(cacheKey, { userId, organizationId: organizationId || existingOrgId }, TTL.USER_ID);
+      
       return userId;
     }
 
@@ -173,6 +214,9 @@ export async function getOrCreateUser(accountId, supabaseConfig, organizationId 
       await ensureOrganizationMembership(newUserId, organizationId, supabaseConfig);
     }
 
+    // Cache the new user ID
+    setInCache(cacheKey, { userId: newUserId, organizationId }, TTL.USER_ID);
+    
     return newUserId;
   } catch (error) {
     console.error('Error getting/creating user:', error);
@@ -278,13 +322,26 @@ export async function getUserOrganizationMembership(userId, organizationId, supa
 }
 
 /**
- * Make a request to Supabase REST API
+ * Sleep for a given number of milliseconds
+ * @param {number} ms - Milliseconds to sleep
+ * @returns {Promise<void>}
+ */
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Make a request to Supabase REST API with retry logic for rate limiting
  * @param {Object} supabaseConfig - Supabase configuration
  * @param {string} endpoint - API endpoint (e.g., 'screenshots', 'users?id=eq.123')
  * @param {Object} options - Request options (method, body, headers)
+ * @param {number} retryCount - Current retry attempt (internal)
  * @returns {Promise<Object>} Response data
  */
-export async function supabaseRequest(supabaseConfig, endpoint, options = {}) {
+export async function supabaseRequest(supabaseConfig, endpoint, options = {}, retryCount = 0) {
+  const MAX_RETRIES = 3;
+  const BASE_DELAY = 1000; // 1 second base delay
+  
   const url = `${supabaseConfig.url}/rest/v1/${endpoint}`;
   const headers = {
     'apikey': supabaseConfig.serviceRoleKey,
@@ -298,6 +355,17 @@ export async function supabaseRequest(supabaseConfig, endpoint, options = {}) {
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined
   });
+
+  // Handle rate limiting with exponential backoff
+  if (response.status === 429) {
+    if (retryCount < MAX_RETRIES) {
+      const delay = BASE_DELAY * Math.pow(2, retryCount); // Exponential backoff: 1s, 2s, 4s
+      console.warn(`[Supabase] Rate limited, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+      await sleep(delay);
+      return supabaseRequest(supabaseConfig, endpoint, options, retryCount + 1);
+    }
+    throw new Error('Supabase request failed: Too Many Requests');
+  }
 
   if (!response.ok) {
     const error = await response.text();

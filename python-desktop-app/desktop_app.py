@@ -41,9 +41,104 @@ try:
     import win32gui
     import win32process
     import win32con
+    import win32event
+    import winerror
     WIN32_AVAILABLE = True
 except ImportError:
     WIN32_AVAILABLE = False
+
+# ============================================================================
+# SINGLE INSTANCE LOCK
+# ============================================================================
+
+_instance_mutex = None
+
+def acquire_single_instance_lock():
+    """
+    Acquire a system-wide mutex to ensure only one instance runs.
+    Returns True if lock acquired (this is the only instance).
+    Returns False if another instance is already running.
+    """
+    global _instance_mutex
+
+    if not WIN32_AVAILABLE:
+        # On non-Windows, use a lock file approach
+        return _acquire_lock_file()
+
+    try:
+        # Create a named mutex - if it already exists, another instance is running
+        mutex_name = "BRDTimeTracker_SingleInstance_Mutex"
+        _instance_mutex = win32event.CreateMutex(None, True, mutex_name)
+
+        # Check if we got the mutex or if it already existed
+        last_error = win32event.GetLastError() if hasattr(win32event, 'GetLastError') else 0
+
+        # Alternative way to check - try to get last error via ctypes
+        import ctypes
+        last_error = ctypes.windll.kernel32.GetLastError()
+
+        if last_error == winerror.ERROR_ALREADY_EXISTS:
+            print("[WARN] Another instance of BRD Time Tracker is already running!")
+            return False
+
+        print("[OK] Single instance lock acquired")
+        return True
+
+    except Exception as e:
+        print(f"[WARN] Could not create single instance lock: {e}")
+        # Fall back to lock file approach
+        return _acquire_lock_file()
+
+def _acquire_lock_file():
+    """Fallback lock file approach for non-Windows or when mutex fails"""
+    lock_file = os.path.join(get_app_data_dir(), '.lock')
+
+    try:
+        # Check if lock file exists and if the process is still running
+        if os.path.exists(lock_file):
+            with open(lock_file, 'r') as f:
+                pid = int(f.read().strip())
+
+            # Check if process is still running
+            if psutil.pid_exists(pid):
+                try:
+                    proc = psutil.Process(pid)
+                    if 'brdtimetracker' in proc.name().lower() or 'python' in proc.name().lower():
+                        print(f"[WARN] Another instance is running (PID: {pid})")
+                        return False
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+        # Write our PID to lock file
+        with open(lock_file, 'w') as f:
+            f.write(str(os.getpid()))
+
+        print("[OK] Lock file acquired")
+        return True
+
+    except Exception as e:
+        print(f"[WARN] Lock file error: {e}")
+        return True  # Allow running if we can't check
+
+def release_single_instance_lock():
+    """Release the single instance lock"""
+    global _instance_mutex
+
+    if _instance_mutex:
+        try:
+            win32event.ReleaseMutex(_instance_mutex)
+            win32event.CloseHandle(_instance_mutex)
+        except:
+            pass
+        _instance_mutex = None
+
+    # Also clean up lock file
+    lock_file = os.path.join(get_app_data_dir(), '.lock')
+    try:
+        if os.path.exists(lock_file):
+            os.remove(lock_file)
+    except:
+        pass
 
 # Windows toast notifications
 try:
@@ -63,10 +158,333 @@ load_dotenv()
 # CONFIGURATION
 # ============================================================================
 
+# Embedded credentials (for production builds - no .env file needed)
+EMBEDDED_CONFIG = {
+    'ATLASSIAN_CLIENT_ID': 'Q8HT4Jn205AuTiAarj088oWNDrOqwvM5',
+    'ATLASSIAN_CLIENT_SECRET': 'ATOANevmtov-6HclDUksQLt6lUpelk9nof-k3wQXLrJIy0Z79QNkrO0orGoLLg3cDYrf91FBCBB3',
+    'SUPABASE_URL': 'https://jvijitdewbypqbatfboi.supabase.co',
+    'SUPABASE_ANON_KEY': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2aWppdGRld2J5cHFiYXRmYm9pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI3NTU1OTAsImV4cCI6MjA3ODMzMTU5MH0.OvoIgXKqYTK_9S_bIJtUa6N2TVgtgcp94iOVjE3rdRM',
+    'SUPABASE_SERVICE_ROLE_KEY': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2aWppdGRld2J5cHFiYXRmYm9pIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2Mjc1NTU5MCwiZXhwIjoyMDc4MzMxNTkwfQ.2Pbdo2DHHfCIpUVPP390P2Y3rF7_hdsYM-38g26XTUY',
+    'CAPTURE_INTERVAL': '300',
+    'WEB_PORT': '51777',
+    'ADMIN_PASSWORD': 'admin123'
+}
+
 def get_env_var(key, default=None):
     """Get environment variable with fallback to embedded values"""
-    value = os.getenv(key, default)
-    return value
+    # First try environment variable (for development with .env)
+    value = os.getenv(key)
+    if value:
+        return value
+    # Then try embedded config (for production builds)
+    if key in EMBEDDED_CONFIG:
+        return EMBEDDED_CONFIG[key]
+    # Finally use default
+    return default
+
+def get_app_data_dir():
+    """Get the application data directory in LocalAppData"""
+    if sys.platform == 'win32':
+        app_data = os.environ.get('LOCALAPPDATA', os.path.expanduser('~'))
+    else:
+        app_data = os.path.expanduser('~/.local/share')
+
+    app_dir = os.path.join(app_data, 'BRDTimeTracker')
+
+    # Create directory if it doesn't exist
+    if not os.path.exists(app_dir):
+        os.makedirs(app_dir)
+        print(f"[OK] Created app data directory: {app_dir}")
+
+    return app_dir
+
+def get_app_executable_dir():
+    """Get the directory where the executable is located"""
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable
+        return os.path.dirname(sys.executable)
+    else:
+        # Running as script
+        return os.path.dirname(os.path.abspath(__file__))
+
+def get_app_executable_path():
+    """Get the full path to the executable"""
+    if getattr(sys, 'frozen', False):
+        return sys.executable
+    else:
+        return os.path.abspath(__file__)
+
+def get_installed_exe_path():
+    """Get the path where the exe should be installed"""
+    return os.path.join(get_app_data_dir(), 'BRDTimeTracker.exe')
+
+def is_running_from_install_location():
+    """Check if the app is running from the correct install location"""
+    if not getattr(sys, 'frozen', False):
+        # Running as script (development mode) - always return True
+        return True
+
+    current_path = os.path.normpath(get_app_executable_path()).lower()
+    install_path = os.path.normpath(get_installed_exe_path()).lower()
+
+    return current_path == install_path
+
+def install_application():
+    """
+    Self-install the application to %LOCALAPPDATA%\BRDTimeTracker\
+
+    Returns:
+        bool: True if app should continue running, False if it should exit (restart from new location)
+    """
+    if not getattr(sys, 'frozen', False):
+        # Running as script (development mode) - skip installation
+        print("[INFO] Running in development mode - skipping self-installation")
+        return True
+
+    # Check if already running from install location
+    if is_running_from_install_location():
+        print("[OK] Running from installed location")
+        return True
+
+    current_exe = get_app_executable_path()
+    install_dir = get_app_data_dir()
+    installed_exe = get_installed_exe_path()
+
+    print(f"[INFO] First run detected - installing application...")
+    print(f"       From: {current_exe}")
+    print(f"       To:   {installed_exe}")
+
+    try:
+        import shutil
+        import subprocess
+
+        # Copy the executable to install location
+        shutil.copy2(current_exe, installed_exe)
+        print(f"[OK] Application copied to: {installed_exe}")
+
+        # Generate uninstaller in install location
+        uninstall_path = os.path.join(install_dir, 'uninstall.bat')
+        _generate_uninstaller_at_path(uninstall_path, install_dir)
+        print(f"[OK] Uninstaller created: {uninstall_path}")
+
+        # Start the installed version
+        print("[INFO] Starting installed application...")
+        subprocess.Popen([installed_exe], creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+
+        # Show message to user
+        print("")
+        print("=" * 50)
+        print("  INSTALLATION COMPLETE!")
+        print("=" * 50)
+        print("")
+        print(f"  Application installed to:")
+        print(f"  {install_dir}")
+        print("")
+        print("  The application is now starting from the")
+        print("  installed location. You can delete the")
+        print("  downloaded file if you wish.")
+        print("")
+        print("=" * 50)
+
+        # Exit this instance (the new one will continue)
+        return False
+
+    except Exception as e:
+        print(f"[ERROR] Installation failed: {e}")
+        print("[INFO] Continuing to run from current location...")
+        import traceback
+        traceback.print_exc()
+        return True
+
+def _generate_uninstaller_at_path(uninstall_path, install_dir):
+    """Generate uninstall.bat at the specified path"""
+
+    uninstall_script = f'''@echo off
+REM ============================================================================
+REM BRD Time Tracker - Uninstall Script
+REM Removes the application and all associated data
+REM ============================================================================
+
+echo.
+echo ============================================
+echo  BRD Time Tracker - Uninstaller
+echo ============================================
+echo.
+
+echo This will remove BRD Time Tracker and all associated data.
+echo.
+echo The following will be deleted:
+echo   - Application executable
+echo   - OAuth tokens and session data
+echo   - Offline screenshot database
+echo   - User preferences and consent data
+echo   - Windows startup entry
+echo.
+set /p CONFIRM="Are you sure you want to uninstall? (Y/N): "
+if /i not "%CONFIRM%"=="Y" (
+    echo.
+    echo Uninstall cancelled.
+    pause
+    exit /b 0
+)
+
+echo.
+echo [STEP 1/4] Stopping application if running...
+taskkill /f /im BRDTimeTracker.exe >nul 2>&1
+if %errorlevel%==0 (
+    echo   Application stopped.
+) else (
+    echo   Application was not running.
+)
+
+echo.
+echo [STEP 2/4] Removing from Windows startup...
+reg delete "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v BRDTimeTracker /f >nul 2>&1
+if %errorlevel%==0 (
+    echo   Removed from startup.
+) else (
+    echo   Was not in startup.
+)
+
+echo.
+echo [STEP 3/4] Waiting for application to fully close...
+timeout /t 2 /nobreak >nul
+
+echo.
+echo [STEP 4/4] Removing application files...
+
+REM Store the install directory path
+set "INSTALL_DIR={install_dir}"
+
+REM Delete the executable first
+if exist "%INSTALL_DIR%\\BRDTimeTracker.exe" (
+    del /f /q "%INSTALL_DIR%\\BRDTimeTracker.exe"
+    echo   - Removed: BRDTimeTracker.exe
+)
+
+REM Delete data files
+if exist "%INSTALL_DIR%\\brd_tracker_auth.json" del /f /q "%INSTALL_DIR%\\brd_tracker_auth.json"
+if exist "%INSTALL_DIR%\\brd_tracker_offline.db" del /f /q "%INSTALL_DIR%\\brd_tracker_offline.db"
+if exist "%INSTALL_DIR%\\brd_tracker_consent.json" del /f /q "%INSTALL_DIR%\\brd_tracker_consent.json"
+if exist "%INSTALL_DIR%\\brd_tracker_user_cache.json" del /f /q "%INSTALL_DIR%\\brd_tracker_user_cache.json"
+echo   - Removed: Application data files
+
+REM Also clean up old TEMP location if exists
+if exist "%TEMP%\\brd_tracker_auth.json" del /f /q "%TEMP%\\brd_tracker_auth.json"
+if exist "%TEMP%\\brd_tracker_offline.db" del /f /q "%TEMP%\\brd_tracker_offline.db"
+if exist "%TEMP%\\brd_tracker_consent.json" del /f /q "%TEMP%\\brd_tracker_consent.json"
+if exist "%TEMP%\\brd_tracker_user_cache.json" del /f /q "%TEMP%\\brd_tracker_user_cache.json"
+
+echo.
+echo ============================================
+echo  Uninstall Complete!
+echo ============================================
+echo.
+echo BRD Time Tracker has been removed from your system.
+echo.
+echo This window will close and the uninstaller will
+echo delete itself along with the application folder.
+echo.
+pause
+
+REM Self-delete: remove this batch file and the folder
+cd /d "%TEMP%"
+rmdir /s /q "%INSTALL_DIR%" 2>nul
+'''
+
+    with open(uninstall_path, 'w') as f:
+        f.write(uninstall_script)
+
+# ============================================================================
+# AUTO-START (REGISTRY) MANAGEMENT
+# ============================================================================
+
+APP_NAME = "BRDTimeTracker"
+REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+def add_to_startup():
+    """Add application to Windows startup via registry"""
+    if sys.platform != 'win32':
+        print("[INFO] Auto-start only supported on Windows")
+        return False
+
+    try:
+        import winreg
+
+        exe_path = get_app_executable_path()
+
+        # Open registry key
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            REGISTRY_PATH,
+            0,
+            winreg.KEY_SET_VALUE
+        )
+
+        # Set the value
+        winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, f'"{exe_path}"')
+        winreg.CloseKey(key)
+
+        print(f"[OK] Added to Windows startup: {exe_path}")
+        return True
+
+    except Exception as e:
+        print(f"[ERROR] Failed to add to startup: {e}")
+        return False
+
+def remove_from_startup():
+    """Remove application from Windows startup"""
+    if sys.platform != 'win32':
+        return False
+
+    try:
+        import winreg
+
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            REGISTRY_PATH,
+            0,
+            winreg.KEY_SET_VALUE
+        )
+
+        try:
+            winreg.DeleteValue(key, APP_NAME)
+            print(f"[OK] Removed from Windows startup")
+        except FileNotFoundError:
+            print("[INFO] App was not in startup")
+
+        winreg.CloseKey(key)
+        return True
+
+    except Exception as e:
+        print(f"[ERROR] Failed to remove from startup: {e}")
+        return False
+
+def is_in_startup():
+    """Check if application is in Windows startup"""
+    if sys.platform != 'win32':
+        return False
+
+    try:
+        import winreg
+
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            REGISTRY_PATH,
+            0,
+            winreg.KEY_READ
+        )
+
+        try:
+            value, _ = winreg.QueryValueEx(key, APP_NAME)
+            winreg.CloseKey(key)
+            return True
+        except FileNotFoundError:
+            winreg.CloseKey(key)
+            return False
+
+    except Exception as e:
+        return False
 
 # ============================================================================
 # ATLASSIAN OAUTH MANAGER
@@ -81,7 +499,7 @@ class AtlassianAuthManager:
         self.redirect_uri = f'http://localhost:{web_port}/auth/callback'
         self.authorization_url = 'https://auth.atlassian.com/authorize'
         self.token_url = 'https://auth.atlassian.com/oauth/token'
-        self.store_path = store_path or os.path.join(tempfile.gettempdir(), 'brd_tracker_auth.json')
+        self.store_path = store_path or os.path.join(get_app_data_dir(), 'brd_tracker_auth.json')
         self.tokens = self._load_tokens()
         
     def _load_tokens(self):
@@ -265,7 +683,7 @@ class OfflineManager:
     
     def __init__(self, db_path=None):
         """Initialize offline manager with SQLite database"""
-        self.db_path = db_path or os.path.join(tempfile.gettempdir(), 'brd_tracker_offline.db')
+        self.db_path = db_path or os.path.join(get_app_data_dir(), 'brd_tracker_offline.db')
         self.is_online = True
         self._last_connectivity_check = 0
         self._connectivity_check_interval = 30  # Check every 30 seconds
@@ -338,14 +756,24 @@ class OfflineManager:
         ]
         
         for host, port in test_endpoints:
+            sock = None
             try:
-                socket.setdefaulttimeout(3)
-                socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
+                # Create socket with per-socket timeout (not global)
+                # Using setdefaulttimeout() would affect Flask's request handling
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(3)  # Per-socket timeout
+                sock.connect((host, port))
+                sock.close()
                 if not self.is_online:
                     print("[OK] Network connectivity restored")
                 self.is_online = True
                 return True
-            except (socket.error, socket.timeout):
+            except (socket.error, socket.timeout, OSError):
+                if sock:
+                    try:
+                        sock.close()
+                    except:
+                        pass
                 continue
         
         if self.is_online:
@@ -783,6 +1211,91 @@ class OfflineManager:
             raise
 
 # ============================================================================
+# CONSENT MANAGER
+# ============================================================================
+
+class ConsentManager:
+    """Manages user consent for screenshot capture - GDPR/Privacy compliance"""
+
+    CONSENT_VERSION = "1.0"  # Increment when privacy policy changes significantly
+
+    def __init__(self, store_path=None):
+        self.store_path = store_path or os.path.join(
+            get_app_data_dir(), 'brd_tracker_consent.json'
+        )
+        self.consent_data = self._load_consent()
+
+    def _load_consent(self):
+        """Load stored consent data from file"""
+        try:
+            if os.path.exists(self.store_path):
+                with open(self.store_path, 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"[WARN] Failed to load consent data: {e}")
+        return {}
+
+    def _save_consent(self):
+        """Save consent data to file"""
+        try:
+            with open(self.store_path, 'w') as f:
+                json.dump(self.consent_data, f, indent=2)
+        except Exception as e:
+            print(f"[WARN] Failed to save consent data: {e}")
+
+    def has_valid_consent(self, user_id):
+        """Check if user has given valid consent for current version"""
+        if not user_id:
+            return False
+
+        user_consent = self.consent_data.get(user_id, {})
+        if not user_consent.get('consented', False):
+            return False
+
+        # Check if consent is for current version
+        consent_version = user_consent.get('version', '0.0')
+        if consent_version != self.CONSENT_VERSION:
+            print(f"[INFO] Consent version mismatch ({consent_version} vs {self.CONSENT_VERSION}) - re-consent required")
+            return False
+
+        return True
+
+    def record_consent(self, user_id, consented=True, user_email=None):
+        """Record user's consent decision"""
+        self.consent_data[user_id] = {
+            'consented': consented,
+            'version': self.CONSENT_VERSION,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'user_email': user_email,
+            'data_collected': [
+                'screenshots',
+                'window_titles',
+                'application_names',
+                'timestamps',
+                'jira_issues'
+            ],
+            'third_party_processing': [
+                'OpenAI (screenshot analysis)',
+                'Supabase (data storage)'
+            ]
+        }
+        self._save_consent()
+        print(f"[OK] Consent {'granted' if consented else 'denied'} for user {user_id}")
+
+    def revoke_consent(self, user_id):
+        """Revoke user's consent"""
+        if user_id in self.consent_data:
+            self.consent_data[user_id]['consented'] = False
+            self.consent_data[user_id]['revoked_at'] = datetime.now(timezone.utc).isoformat()
+            self._save_consent()
+            print(f"[OK] Consent revoked for user {user_id}")
+
+    def get_consent_info(self, user_id):
+        """Get consent information for a user"""
+        return self.consent_data.get(user_id, {})
+
+
+# ============================================================================
 # MAIN APPLICATION
 # ============================================================================
 
@@ -895,7 +1408,10 @@ class BRDTimeTracker:
         self._sync_thread = None
         self._last_sync_time = 0
         self._sync_interval = 60  # Try to sync every 60 seconds when online
-        
+
+        # Consent management (GDPR/Privacy compliance)
+        self.consent_manager = ConsentManager()
+
         # AI analysis is handled by the separate AI server
         # Desktop app only captures and uploads screenshots
         
@@ -906,11 +1422,18 @@ class BRDTimeTracker:
         
         # System tray
         self.tray = None
-        
+
+        # Admin configuration
+        self.admin_password = get_env_var('ADMIN_PASSWORD', 'admin123')  # Default password, should be changed
+        self.admin_session_token = None
+        self.admin_logs = []  # In-memory log storage
+        self.max_log_entries = 500  # Maximum log entries to keep
+
         # Setup routes
         self.setup_routes()
-        
+
         print("[OK] Application initialized")
+        self.add_admin_log('INFO', 'Application started')
     
     def setup_routes(self):
         """Setup Flask routes"""
@@ -967,17 +1490,24 @@ class BRDTimeTracker:
                 self.current_user_id = self.ensure_user_exists(user_info)
                 
                 print(f"[OK] Authenticated user: {user_info.get('email', 'unknown')}")
-                
+
                 # Associate any anonymous offline records with this user
                 self._associate_offline_records()
-                
+
                 # Update tray icon to blue (logged in, tracking not started yet)
                 self.update_tray_icon()
-                
-                # Start tracking if not already running
+
+                # Check if user has given consent for screenshot capture
+                user_account_id = user_info.get('account_id')
+                if not self.consent_manager.has_valid_consent(user_account_id):
+                    # Redirect to consent page first
+                    print(f"[INFO] User {user_info.get('email')} needs to provide consent")
+                    return redirect('/consent')
+
+                # User has consent - start tracking if not already running
                 if not self.running:
                     self.start_tracking()
-                
+
                 return redirect('/success')
                 
             except Exception as e:
@@ -1128,7 +1658,224 @@ class BRDTimeTracker:
             except Exception as e:
                 print(f"[ERROR] Error serving screenshot: {e}")
                 return jsonify({'error': str(e)}), 500
-    
+
+        # ============================================================================
+        # ADMIN ROUTES
+        # ============================================================================
+
+        @self.app.route('/admin')
+        def admin_login_page():
+            """Admin login page"""
+            # Check if already authenticated
+            session_token = request.cookies.get('admin_session')
+            if session_token and session_token == self.admin_session_token:
+                return redirect('/admin/dashboard')
+            return self.render_admin_login_page()
+
+        @self.app.route('/admin/login', methods=['POST'])
+        def admin_login():
+            """Handle admin login"""
+            password = request.form.get('password', '')
+
+            if password == self.admin_password:
+                # Generate session token
+                self.admin_session_token = secrets.token_hex(32)
+                self.add_admin_log('INFO', 'Admin logged in successfully')
+
+                response = redirect('/admin/dashboard')
+                response.set_cookie('admin_session', self.admin_session_token, httponly=True, max_age=3600)
+                return response
+            else:
+                self.add_admin_log('WARN', 'Failed admin login attempt')
+                return self.render_admin_login_page(error='Invalid password')
+
+        @self.app.route('/admin/dashboard')
+        def admin_dashboard():
+            """Admin dashboard"""
+            session_token = request.cookies.get('admin_session')
+            if not session_token or session_token != self.admin_session_token:
+                return redirect('/admin')
+            return self.render_admin_dashboard()
+
+        @self.app.route('/admin/logout')
+        def admin_logout():
+            """Admin logout"""
+            self.add_admin_log('INFO', 'Admin logged out')
+            self.admin_session_token = None
+            response = redirect('/admin')
+            response.delete_cookie('admin_session')
+            return response
+
+        @self.app.route('/api/admin/logs')
+        def api_admin_logs():
+            """Get admin logs"""
+            session_token = request.cookies.get('admin_session')
+            if not session_token or session_token != self.admin_session_token:
+                return jsonify({'error': 'Unauthorized'}), 401
+
+            # Get optional filters
+            level = request.args.get('level', None)
+            limit = int(request.args.get('limit', 100))
+
+            logs = self.admin_logs[-limit:]
+            if level:
+                logs = [l for l in logs if l['level'] == level.upper()]
+
+            return jsonify({'logs': logs})
+
+        @self.app.route('/api/admin/status')
+        def api_admin_status():
+            """Get detailed admin status"""
+            session_token = request.cookies.get('admin_session')
+            if not session_token or session_token != self.admin_session_token:
+                return jsonify({'error': 'Unauthorized'}), 401
+
+            return jsonify({
+                'tracking_active': self.tracking_active,
+                'is_idle': self.is_idle,
+                'running': self.running,
+                'current_user': self.current_user.get('email') if self.current_user else None,
+                'organization': self.organization_name,
+                'online': self.offline_manager.check_connectivity(force=False),
+                'offline_pending': self.offline_manager.get_pending_count(),
+                'capture_interval': self.capture_interval,
+                'tracking_settings': self.tracking_settings,
+                'total_logs': len(self.admin_logs)
+            })
+
+        @self.app.route('/api/admin/control', methods=['POST'])
+        def api_admin_control():
+            """Admin control actions"""
+            session_token = request.cookies.get('admin_session')
+            if not session_token or session_token != self.admin_session_token:
+                return jsonify({'error': 'Unauthorized'}), 401
+
+            data = request.get_json() or {}
+            action = data.get('action')
+
+            if action == 'start_tracking':
+                if not self.running:
+                    self.start_tracking()
+                    self.add_admin_log('INFO', 'Tracking started by admin')
+                return jsonify({'success': True, 'message': 'Tracking started'})
+
+            elif action == 'stop_tracking':
+                if self.running:
+                    self.stop_tracking()
+                    self.add_admin_log('INFO', 'Tracking stopped by admin')
+                return jsonify({'success': True, 'message': 'Tracking stopped'})
+
+            elif action == 'clear_logs':
+                self.admin_logs = []
+                self.add_admin_log('INFO', 'Logs cleared by admin')
+                return jsonify({'success': True, 'message': 'Logs cleared'})
+
+            elif action == 'force_sync':
+                try:
+                    synced, failed = self.offline_manager.sync_pending_screenshots(self)
+                    self.add_admin_log('INFO', f'Force sync completed: {synced} synced, {failed} failed')
+                    return jsonify({'success': True, 'synced': synced, 'failed': failed})
+                except Exception as e:
+                    self.add_admin_log('ERROR', f'Force sync failed: {str(e)}')
+                    return jsonify({'success': False, 'error': str(e)}), 500
+
+            elif action == 'refresh_settings':
+                self.load_tracking_settings()
+                self.add_admin_log('INFO', 'Settings refreshed by admin')
+                return jsonify({'success': True, 'message': 'Settings refreshed'})
+
+            else:
+                return jsonify({'error': 'Unknown action'}), 400
+
+        # ============================================================================
+        # CONSENT ROUTES (GDPR/Privacy Compliance)
+        # ============================================================================
+
+        @self.app.route('/consent')
+        def consent_page():
+            """Display consent page for screenshot capture"""
+            if not self.current_user:
+                return redirect('/login')
+            return self.render_consent_page()
+
+        @self.app.route('/consent/submit', methods=['POST'])
+        def consent_submit():
+            """Handle consent form submission"""
+            if not self.current_user:
+                return redirect('/login')
+
+            consented = request.form.get('consent') == 'agree'
+            user_id = self.current_user.get('account_id')
+            user_email = self.current_user.get('email')
+
+            if consented:
+                # Record consent
+                self.consent_manager.record_consent(user_id, True, user_email)
+                self.add_admin_log('INFO', f'User {user_email} granted consent for screenshot capture')
+
+                # Now start tracking
+                if not self.running:
+                    self.start_tracking()
+
+                return redirect('/success')
+            else:
+                # Record denial
+                self.consent_manager.record_consent(user_id, False, user_email)
+                self.add_admin_log('INFO', f'User {user_email} denied consent for screenshot capture')
+                return self.render_consent_denied_page()
+
+        @self.app.route('/consent/revoke', methods=['POST'])
+        def consent_revoke():
+            """Revoke previously given consent"""
+            if not self.current_user:
+                return jsonify({'error': 'Not authenticated'}), 401
+
+            user_id = self.current_user.get('account_id')
+            user_email = self.current_user.get('email')
+
+            # Revoke consent
+            self.consent_manager.revoke_consent(user_id)
+
+            # Stop tracking
+            if self.running:
+                self.stop_tracking()
+
+            self.add_admin_log('INFO', f'User {user_email} revoked consent for screenshot capture')
+            return jsonify({'success': True, 'message': 'Consent revoked. Screenshot tracking has been stopped.'})
+
+        @self.app.route('/api/consent/status')
+        def api_consent_status():
+            """Get consent status for current user"""
+            if not self.current_user:
+                return jsonify({'error': 'Not authenticated'}), 401
+
+            user_id = self.current_user.get('account_id')
+            has_consent = self.consent_manager.has_valid_consent(user_id)
+            consent_info = self.consent_manager.get_consent_info(user_id)
+
+            return jsonify({
+                'has_consent': has_consent,
+                'consent_version': ConsentManager.CONSENT_VERSION,
+                'consent_info': consent_info
+            })
+
+    # ============================================================================
+    # ADMIN HELPER METHODS
+    # ============================================================================
+
+    def add_admin_log(self, level, message):
+        """Add a log entry for admin panel"""
+        log_entry = {
+            'timestamp': datetime.now().isoformat(),
+            'level': level.upper(),
+            'message': message
+        }
+        self.admin_logs.append(log_entry)
+
+        # Keep only last N entries
+        if len(self.admin_logs) > self.max_log_entries:
+            self.admin_logs = self.admin_logs[-self.max_log_entries:]
+
     def ensure_user_exists(self, atlassian_user):
         """Ensure user exists in Supabase users table and is linked to organization"""
         account_id = atlassian_user.get('account_id')
@@ -1191,7 +1938,7 @@ class BRDTimeTracker:
 
     def _get_user_cache_path(self):
         """Get path to user cache file"""
-        return os.path.join(tempfile.gettempdir(), 'brd_tracker_user_cache.json')
+        return os.path.join(get_app_data_dir(), 'brd_tracker_user_cache.json')
     
     def _save_cached_user_info(self, atlassian_user, user_id):
         """Save user info locally for offline mode"""
@@ -1577,7 +2324,8 @@ class BRDTimeTracker:
                 
                 self.tracking_settings_last_fetch = time.time()
                 print(f"[OK] Tracking settings loaded - interval: {self.capture_interval}s, whitelist: {len(self.tracking_settings['whitelisted_apps'])} apps, blacklist: {len(self.tracking_settings['blacklisted_apps'])} apps")
-                
+                self.add_admin_log('INFO', f'Settings loaded: interval={self.capture_interval}s')
+
             else:
                 print("[INFO] No tracking settings found in Supabase, using defaults")
                 self.tracking_settings_last_fetch = time.time()
@@ -1919,6 +2667,7 @@ class BRDTimeTracker:
                     print(f"[INFO] Window switched at {self.current_window_start_time.strftime('%H:%M:%S')}:")
                     print(f"     - App: {app_name}")
                     print(f"     - Title: {title[:50]}")
+                    self.add_admin_log('INFO', f'Window switch: {app_name}')
             
             return {
                 'title': title,
@@ -2088,6 +2837,7 @@ class BRDTimeTracker:
                     print(f"     - End:   {end_time.strftime('%H:%M:%S')}")
                     print(f"     - Duration: {duration_seconds}s")
                     print(f"     - App: {window_info['app']}")
+                    self.add_admin_log('INFO', f"Screenshot captured: {window_info['app']} ({duration_seconds}s)")
                     
                     # Store the screenshot ID so we can update end_time/duration later
                     # When user switches windows OR when interval is reached, this record will be updated
@@ -2113,6 +2863,7 @@ class BRDTimeTracker:
         except requests.exceptions.ConnectionError:
             # Network error - save offline
             print("[WARN] Connection error - saving screenshot offline")
+            self.add_admin_log('WARN', 'Connection error - saving screenshot offline')
             local_id = self.offline_manager.save_screenshot_offline(
                 screenshot_data, img_bytes, thumb_bytes
             )
@@ -2124,6 +2875,7 @@ class BRDTimeTracker:
             
         except Exception as e:
             print(f"[ERROR] Screenshot upload failed: {e}")
+            self.add_admin_log('ERROR', f'Screenshot upload failed: {str(e)[:100]}')
             traceback.print_exc()
             
             # Try to save offline as fallback
@@ -2198,16 +2950,22 @@ class BRDTimeTracker:
             return None
         
         print(f"[INFO] Network online - syncing {pending_count} offline screenshots...")
-        
+        self.add_admin_log('INFO', f'Syncing {pending_count} offline screenshots...')
+
         # Get the appropriate clients
         db_client = self.supabase_service if self.supabase_service else self.supabase
         storage_client = self.supabase_service if self.supabase_service else self.supabase
-        
+
         # Perform sync
         result = self.offline_manager.sync_all(db_client, storage_client)
-        
+
         self._last_sync_time = current_time
-        
+
+        if result:
+            synced, failed = result
+            if synced > 0 or failed > 0:
+                self.add_admin_log('INFO', f'Sync complete: {synced} synced, {failed} failed')
+
         return result
 
     def start_sync_thread(self):
@@ -2322,6 +3080,7 @@ class BRDTimeTracker:
                         
                         self.is_idle = True
                         self.update_tray_icon()
+                        self.add_admin_log('INFO', f'User idle (no activity for {int(idle_duration)}s)')
 
                     # While idle, check every 5 seconds for activity
                     # Don't skip if needs_idle_resume is set - we need to process the resume
@@ -2337,6 +3096,7 @@ class BRDTimeTracker:
                     self.is_idle = False
                     self.needs_idle_resume = False
                     self.update_tray_icon()
+                    self.add_admin_log('INFO', 'User active - resuming tracking')
                     # Reset interval timer so first capture happens after full interval
                     self.last_interval_time = time.time()
                     # Start fresh - next screenshot will be the start of a new work session
@@ -2448,6 +3208,7 @@ class BRDTimeTracker:
                 elif time_since_last_interval >= current_capture_interval:
                     # Interval reached (using dynamic interval from settings)
                     # This ensures clean, non-overlapping time periods
+                    updated_existing_record = False  # Track if we updated a previous record
                     if self.current_window_screenshot_id is not None and self.current_window_db_start_time is not None:
                         # SAFEGUARD: Skip if the current record was just created (less than interval seconds ago)
                         # This prevents the bug where delays (settings fetch, network) cause duplicate interval updates
@@ -2488,6 +3249,7 @@ class BRDTimeTracker:
                                 print(f"     - Start: {self.current_window_db_start_time.strftime('%H:%M:%S')} (from DB)")
                                 print(f"     - End:   {end_time.strftime('%H:%M:%S')}")
                                 print(f"     - Duration: {duration_seconds}s")
+                                updated_existing_record = True  # Mark that we successfully updated a record
                         except Exception as e:
                             print(f"[ERROR] Error updating record before interval: {e}")
 
@@ -2514,7 +3276,16 @@ class BRDTimeTracker:
                             # This prevents the issue where blocking operations (settings fetch, Jira API calls)
                             # cause the next iteration to think another interval has passed
                             self.last_interval_time = time.time()
-                        
+
+                            # BUG FIX: If this was a "fresh" interval capture (no previous record was updated),
+                            # make this record "final" so the next interval creates a new record instead of updating this one.
+                            # This prevents records from spanning multiple interval periods when window switch
+                            # didn't create a screenshot (due to min_interval check).
+                            if not updated_existing_record:
+                                print(f"[INFO] Fresh interval capture - record is final (won't be extended)")
+                                self.current_window_screenshot_id = None
+                                self.current_window_db_start_time = None
+
                         # Always update last_screenshot_time (for min_screenshot_interval check)
                         last_screenshot_time = time.time()  # Also use fresh time here
                         print(f"[OK] Screenshot captured ({capture_reason})")
@@ -2590,16 +3361,18 @@ class BRDTimeTracker:
         self.update_tray_icon()
 
         print("[OK] Tracking started with idle detection")
+        self.add_admin_log('INFO', f'Tracking started (interval: {self.capture_interval}s)')
     
     def stop_tracking(self):
         """Stop screenshot tracking"""
         self.running = False
         self.tracking_active = False
-        
+
         # Update tray icon to blue
         self.update_tray_icon()
-        
+
         print("[OK] Tracking stopped")
+        self.add_admin_log('INFO', 'Tracking stopped')
     
     def pause_tracking(self):
         """Pause screenshot tracking (can be resumed)"""
@@ -2707,7 +3480,28 @@ class BRDTimeTracker:
                     return "👤 Anonymous (Click to Login)"
                 else:
                     return "Login"
-            
+
+            def get_consent_label():
+                if self.current_user:
+                    user_account_id = self.current_user.get('account_id')
+                    has_consent = self.consent_manager.has_valid_consent(user_account_id)
+                    if has_consent:
+                        return "✅ Consent: Granted"
+                    else:
+                        return "⚠️ Consent: Required"
+                return "Consent: N/A"
+
+            def handle_consent_action():
+                if self.current_user:
+                    user_account_id = self.current_user.get('account_id')
+                    has_consent = self.consent_manager.has_valid_consent(user_account_id)
+                    if has_consent:
+                        # Open dashboard with revoke option
+                        webbrowser.open(f'http://localhost:{self.web_port}/dashboard')
+                    else:
+                        # Open consent page
+                        webbrowser.open(f'http://localhost:{self.web_port}/consent')
+
             users_action = lambda: webbrowser.open(
                 f'http://localhost:{self.web_port}/login' if not self.current_user
                 else f'http://localhost:{self.web_port}/dashboard'
@@ -2719,6 +3513,12 @@ class BRDTimeTracker:
                     lambda text: get_menu_label(),
                     users_action
                 ),
+                item(
+                    lambda text: get_consent_label(),
+                    handle_consent_action,
+                    visible=lambda item: self.current_user is not None
+                ),
+                pystray.Menu.SEPARATOR,
                 item(
                     lambda text: "Resume" if (self.running and not self.tracking_active) else "Pause",
                     lambda: self.resume_tracking() if (self.running and not self.tracking_active) else self.pause_tracking() if (self.running and self.tracking_active) else None,
@@ -2762,7 +3562,26 @@ class BRDTimeTracker:
                         return "👤 Anonymous (Click to Login)"
                     else:
                         return "Login"
-                
+
+                def get_consent_label():
+                    if self.current_user:
+                        user_account_id = self.current_user.get('account_id')
+                        has_consent = self.consent_manager.has_valid_consent(user_account_id)
+                        if has_consent:
+                            return "✅ Consent: Granted"
+                        else:
+                            return "⚠️ Consent: Required"
+                    return "Consent: N/A"
+
+                def handle_consent_action():
+                    if self.current_user:
+                        user_account_id = self.current_user.get('account_id')
+                        has_consent = self.consent_manager.has_valid_consent(user_account_id)
+                        if has_consent:
+                            webbrowser.open(f'http://localhost:{self.web_port}/dashboard')
+                        else:
+                            webbrowser.open(f'http://localhost:{self.web_port}/consent')
+
                 users_action = lambda: webbrowser.open(
                     f'http://localhost:{self.web_port}/login' if not self.current_user
                     else f'http://localhost:{self.web_port}/dashboard'
@@ -2773,6 +3592,12 @@ class BRDTimeTracker:
                         lambda text: get_menu_label(),
                         users_action
                     ),
+                    item(
+                        lambda text: get_consent_label(),
+                        handle_consent_action,
+                        visible=lambda item: self.current_user is not None
+                    ),
+                    pystray.Menu.SEPARATOR,
                     item(
                         lambda text: "Resume" if (self.running and not self.tracking_active) else "Pause",
                         lambda: self.resume_tracking() if (self.running and not self.tracking_active) else self.pause_tracking() if (self.running and self.tracking_active) else None,
@@ -2799,7 +3624,27 @@ class BRDTimeTracker:
     def run(self):
         """Main application entry point"""
         print("[OK] Starting BRD Time Tracker...")
-        
+
+        # Self-install on first run (copies exe to %LOCALAPPDATA%\BRDTimeTracker\)
+        if not install_application():
+            # Installation happened - this instance should exit
+            # The installed version has been started
+            print("[INFO] Exiting installer instance...")
+            sys.exit(0)
+
+        # Acquire single instance lock - prevent multiple instances
+        if not acquire_single_instance_lock():
+            print("[ERROR] Another instance is already running. Exiting...")
+            print("[INFO] Check your system tray for the existing instance.")
+            # Give user time to see the message if running from console
+            time.sleep(3)
+            sys.exit(1)
+
+        # Add to Windows startup (runs on system boot)
+        # Uses the installed path, not the downloaded path
+        if not is_in_startup():
+            add_to_startup()
+
         # Check network connectivity first
         is_online = self.offline_manager.check_connectivity(force=True)
         
@@ -2819,6 +3664,7 @@ class BRDTimeTracker:
                         # Try to load cached user_id from local storage
                         self.current_user_id = self._load_cached_user_id()
                     print(f"[OK] Welcome back, {user_info.get('email', 'User')}!")
+                    self.add_admin_log('INFO', f"User logged in: {user_info.get('email', 'User')}")
                 else:
                     print("[WARN] Failed to get user info, please re-authenticate")
                     self.auth_manager.logout()
@@ -2851,8 +3697,19 @@ class BRDTimeTracker:
         
         # Determine if we should start tracking
         should_track = self.current_user is not None or self.current_user_id is not None
-        
-        # Open browser if not authenticated (only if online)
+
+        # Check consent status for authenticated users
+        has_consent = False
+        if self.current_user:
+            user_account_id = self.current_user.get('account_id')
+            has_consent = self.consent_manager.has_valid_consent(user_account_id)
+            if not has_consent:
+                print(f"[INFO] User {self.current_user.get('email')} has not provided consent for screenshot capture")
+        elif self.current_user_id and self.current_user_id.startswith('anonymous_'):
+            # Anonymous users don't need consent yet (they'll provide it on login)
+            has_consent = True
+
+        # Open browser if not authenticated (only if online) or if consent needed
         if not self.current_user:
             if is_online:
                 print("[INFO] Opening browser for authentication...")
@@ -2860,10 +3717,16 @@ class BRDTimeTracker:
             else:
                 print(f"[INFO] Dashboard available at http://localhost:{self.web_port}")
                 print("[INFO] Login when online to sync your data")
-        
-        # Start tracking (even in offline/anonymous mode)
-        if should_track:
+        elif not has_consent:
+            # User is authenticated but hasn't given consent - open consent page
+            print("[INFO] Opening browser for consent...")
+            webbrowser.open(f'http://localhost:{self.web_port}/consent')
+
+        # Start tracking only if user has consent (or is anonymous)
+        if should_track and has_consent:
             self.start_tracking()
+        elif should_track and not has_consent:
+            print("[INFO] Waiting for user consent before starting screenshot capture")
         
         print(f"[OK] Application running at http://localhost:{self.web_port}")
         if not is_online:
@@ -2887,20 +3750,478 @@ class BRDTimeTracker:
         html = '''<!DOCTYPE html>
 <html>
 <head>
-    <title>BRD Time Tracker - Login</title>
+    <title>Time Tracker - Login</title>
     <style>
-        body { font-family: Arial; max-width: 400px; margin: 100px auto; padding: 20px; background: #f5f5f5; }
-        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; }
-        .btn { background: #0052CC; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px; width: 100%; margin: 10px 0; }
-        .btn:hover { background: #0065FF; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            background: #f8fafc;
+        }
+
+        /* Split Screen Layout */
+        .split-container {
+            display: flex;
+            width: 100%;
+            min-height: 100vh;
+        }
+
+        /* Left Panel - Branding & Features */
+        .left-panel {
+            flex: 1;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 60px;
+            position: relative;
+            overflow: hidden;
+        }
+        .left-panel::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 60%);
+            animation: pulse 15s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 0.5; }
+            50% { transform: scale(1.1); opacity: 0.3; }
+        }
+        .left-content {
+            position: relative;
+            z-index: 1;
+            max-width: 480px;
+        }
+        .brand-logo {
+            width: 56px;
+            height: 56px;
+            background: white;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            margin-bottom: 32px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+        }
+        .left-panel h1 {
+            color: white;
+            font-size: 36px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            letter-spacing: -0.5px;
+        }
+        .left-panel .tagline {
+            color: rgba(255, 255, 255, 0.85);
+            font-size: 18px;
+            font-weight: 400;
+            margin-bottom: 48px;
+            line-height: 1.5;
+        }
+        .feature-list {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+        .feature-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+        }
+        .feature-icon-wrapper {
+            width: 48px;
+            height: 48px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            flex-shrink: 0;
+            backdrop-filter: blur(10px);
+        }
+        .feature-content h4 {
+            color: white;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .feature-content p {
+            color: rgba(255, 255, 255, 0.75);
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        .trust-badge {
+            margin-top: 48px;
+            padding-top: 32px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .trust-badge p {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .trust-badge .stat {
+            color: white;
+            font-weight: 600;
+        }
+
+        /* Right Panel - Login Form */
+        .right-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 60px;
+            background: white;
+        }
+        .login-container {
+            width: 100%;
+            max-width: 380px;
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        .login-logo {
+            width: 64px;
+            height: 64px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            margin: 0 auto 24px;
+            box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);
+        }
+        .login-header h2 {
+            color: #1a1a2e;
+            font-size: 26px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .login-header p {
+            color: #64748b;
+            font-size: 15px;
+            font-weight: 400;
+        }
+
+        /* Login Button - Atlassian Style */
+        .login-btn {
+            width: 100%;
+            height: 52px;
+            background: #0052CC;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            transition: all 0.2s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .login-btn:hover {
+            background: #0065FF;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0, 82, 204, 0.35);
+        }
+        .login-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 4px 12px rgba(0, 82, 204, 0.25);
+        }
+        .login-btn.loading {
+            pointer-events: none;
+        }
+        .login-btn.loading .btn-text {
+            opacity: 0;
+        }
+        .login-btn.loading .spinner {
+            display: block;
+        }
+        .login-btn svg.atlassian-icon {
+            width: 20px;
+            height: 20px;
+        }
+        .spinner {
+            display: none;
+            position: absolute;
+            width: 22px;
+            height: 22px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Divider */
+        .divider {
+            display: flex;
+            align-items: center;
+            margin: 28px 0;
+            color: #94a3b8;
+            font-size: 13px;
+        }
+        .divider::before, .divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: #e2e8f0;
+        }
+        .divider span {
+            padding: 0 16px;
+        }
+
+        /* Info Cards */
+        .info-cards {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 32px;
+        }
+        .info-card {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 14px 16px;
+            background: #f8fafc;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+            transition: border-color 0.2s;
+        }
+        .info-card:hover {
+            border-color: #cbd5e1;
+        }
+        .info-card-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+        .info-card-icon.green {
+            background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+        }
+        .info-card-icon.purple {
+            background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%);
+        }
+        .info-card h4 {
+            color: #1e293b;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+        .info-card p {
+            color: #64748b;
+            font-size: 12px;
+        }
+
+        /* Security Note */
+        .security-note {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 14px;
+            background: #f0fdf4;
+            border-radius: 8px;
+            margin-bottom: 24px;
+        }
+        .security-note svg {
+            width: 16px;
+            height: 16px;
+            color: #16a34a;
+        }
+        .security-note p {
+            color: #15803d;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        /* Footer */
+        .login-footer {
+            text-align: center;
+            padding-top: 24px;
+            border-top: 1px solid #e2e8f0;
+        }
+        .login-footer p {
+            color: #94a3b8;
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+        .legal-links {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+        }
+        .legal-links a {
+            color: #64748b;
+            font-size: 12px;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .legal-links a:hover {
+            color: #0052CC;
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .split-container {
+                flex-direction: column;
+            }
+            .left-panel {
+                padding: 40px 30px;
+                min-height: auto;
+            }
+            .left-content {
+                max-width: 100%;
+            }
+            .left-panel h1 {
+                font-size: 28px;
+            }
+            .feature-list {
+                display: none;
+            }
+            .trust-badge {
+                display: none;
+            }
+            .right-panel {
+                padding: 40px 30px;
+            }
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h2>BRD Time Tracker</h2>
-        <p>Sign in with Atlassian to start tracking</p>
-        <button class="btn" onclick="window.location.href='/auth/atlassian'">Sign in with Atlassian</button>
+    <div class="split-container">
+        <!-- Left Panel - Branding -->
+        <div class="left-panel">
+            <div class="left-content">
+                <div class="brand-logo">&#128337;</div>
+                <h1>Time Tracker</h1>
+                <p class="tagline">Effortless time tracking that works in the background while you focus on what matters.</p>
+
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-icon-wrapper">&#128247;</div>
+                        <div class="feature-content">
+                            <h4>Automatic Tracking</h4>
+                            <p>Captures your work activity automatically without interrupting your flow</p>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon-wrapper">&#129302;</div>
+                        <div class="feature-content">
+                            <h4>AI-Powered Analysis</h4>
+                            <p>Intelligently matches your work sessions to the right Jira issues</p>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon-wrapper">&#128202;</div>
+                        <div class="feature-content">
+                            <h4>Accurate Timesheets</h4>
+                            <p>Generate precise time reports with zero manual effort</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="trust-badge">
+                    <p>Trusted by <span class="stat">500+</span> teams tracking <span class="stat">10,000+</span> hours monthly</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Panel - Login -->
+        <div class="right-panel">
+            <div class="login-container">
+                <div class="login-header">
+                    <div class="login-logo">&#128337;</div>
+                    <h2>Welcome Back</h2>
+                    <p>Sign in to continue tracking your time</p>
+                </div>
+
+                <div class="info-cards">
+                    <div class="info-card">
+                        <div class="info-card-icon">&#128247;</div>
+                        <div>
+                            <h4>Smart Capture</h4>
+                            <p>Activity tracked automatically</p>
+                        </div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-card-icon green">&#129302;</div>
+                        <div>
+                            <h4>AI Matching</h4>
+                            <p>Links work to Jira issues</p>
+                        </div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-card-icon purple">&#128202;</div>
+                        <div>
+                            <h4>Precise Reports</h4>
+                            <p>Accurate timesheets instantly</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="security-note">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                    </svg>
+                    <p>Secure authentication via Atlassian OAuth 2.0</p>
+                </div>
+
+                <button class="login-btn" id="loginBtn" onclick="handleLogin()">
+                    <div class="spinner"></div>
+                    <span class="btn-text">
+                        <svg class="atlassian-icon" viewBox="0 0 32 32" fill="currentColor">
+                            <path d="M15.52 5.14a1.06 1.06 0 0 0-1.81.04C11.36 9.73 11.89 13.19 14.15 18l3.53 7.54c.22.47.63.46.9 0L22 18c2.59-4.57 3.14-9.27.21-13.1-.15-.19-.35-.36-.62-.36H6.05c-.7 0-1.16.74-.83 1.36l6.6 13.27c.2.41.68.41.88 0l2.82-5.83z"/>
+                        </svg>
+                        Sign in with Atlassian
+                    </span>
+                </button>
+
+                <div class="login-footer">
+                    <p>By signing in, you agree to our terms</p>
+                    <div class="legal-links">
+                        <a href="#">Privacy Policy</a>
+                        <a href="#">Terms of Service</a>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
+
+    <script>
+        function handleLogin() {
+            const btn = document.getElementById('loginBtn');
+            btn.classList.add('loading');
+            // Small delay to show loading state
+            setTimeout(() => {
+                window.location.href = '/auth/atlassian';
+            }, 300);
+        }
+    </script>
 </body>
 </html>'''
         return html
@@ -2911,246 +4232,782 @@ class BRDTimeTracker:
 <head>
     <title>Login Successful</title>
     <style>
-        body { font-family: Arial; max-width: 400px; margin: 100px auto; padding: 20px; background: #f5f5f5; }
-        .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; }
-        .success { color: #28a745; font-size: 48px; margin: 20px 0; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+        }
+        .success-card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 400px;
+            padding: 50px 40px;
+            text-align: center;
+        }
+        .success-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+            box-shadow: 0 8px 25px rgba(40, 167, 69, 0.4);
+        }
+        .success-icon svg {
+            width: 40px;
+            height: 40px;
+            color: white;
+        }
+        h1 {
+            color: #172B4D;
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        p {
+            color: #6B778C;
+            font-size: 15px;
+            line-height: 1.5;
+            margin-bottom: 30px;
+        }
+        .close-btn {
+            width: 100%;
+            padding: 14px 24px;
+            background: linear-gradient(135deg, #0052CC 0%, #0065FF 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .close-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 82, 204, 0.4);
+        }
+        .close-btn:active {
+            transform: translateY(0);
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="success">✓</div>
-        <h2>Login Successful!</h2>
-        <p>You can close this window. Tracking will start automatically.</p>
-        <p><a href="/dashboard">Go to Dashboard</a></p>
+    <div class="success-card">
+        <div class="success-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+        </div>
+        <h1>Login Successful!</h1>
+        <p>You're all set. Time tracking will start automatically in the background.</p>
+        <button class="close-btn" onclick="window.close()">Close This Tab</button>
+    </div>
+    <script>
+        // Auto-close after 5 seconds (optional)
+        // setTimeout(() => window.close(), 5000);
+    </script>
+</body>
+</html>'''
+        return html
+
+    def render_consent_page(self):
+        """Render the consent page for screenshot capture"""
+        user_email = self.current_user.get('email', 'User') if self.current_user else 'User'
+        html = f'''<!DOCTYPE html>
+<html>
+<head>
+    <title>BRD Time Tracker - Consent Required</title>
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+        }}
+        .consent-card {{
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 600px;
+            padding: 40px;
+        }}
+        .header {{
+            text-align: center;
+            margin-bottom: 30px;
+        }}
+        .header-icon {{
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #0052CC 0%, #0065FF 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 16px;
+        }}
+        .header-icon svg {{
+            width: 30px;
+            height: 30px;
+            color: white;
+        }}
+        h1 {{
+            color: #172B4D;
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }}
+        .subtitle {{
+            color: #6B778C;
+            font-size: 14px;
+        }}
+        .section {{
+            background: #F4F5F7;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }}
+        .section-title {{
+            color: #172B4D;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        .section-title svg {{
+            width: 20px;
+            height: 20px;
+            color: #0052CC;
+        }}
+        .data-item {{
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 8px 0;
+            border-bottom: 1px solid #DFE1E6;
+        }}
+        .data-item:last-child {{
+            border-bottom: none;
+        }}
+        .data-icon {{
+            font-size: 18px;
+            width: 24px;
+            text-align: center;
+        }}
+        .data-text {{
+            flex: 1;
+        }}
+        .data-text strong {{
+            color: #172B4D;
+            display: block;
+            font-size: 14px;
+        }}
+        .data-text span {{
+            color: #6B778C;
+            font-size: 13px;
+        }}
+        .third-party {{
+            background: #FFF7E6;
+            border: 1px solid #FFE4B5;
+        }}
+        .third-party .section-title svg {{
+            color: #FF8B00;
+        }}
+        .retention {{
+            background: #E6FCFF;
+            border: 1px solid #B3F5FF;
+        }}
+        .retention .section-title svg {{
+            color: #00B8D9;
+        }}
+        .buttons {{
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }}
+        .btn {{
+            flex: 1;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }}
+        .btn-primary {{
+            background: linear-gradient(135deg, #0052CC 0%, #0065FF 100%);
+            color: white;
+        }}
+        .btn-primary:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 82, 204, 0.4);
+        }}
+        .btn-secondary {{
+            background: #DFE1E6;
+            color: #172B4D;
+        }}
+        .btn-secondary:hover {{
+            background: #C1C7D0;
+        }}
+        .privacy-link {{
+            text-align: center;
+            margin-top: 16px;
+        }}
+        .privacy-link a {{
+            color: #0052CC;
+            text-decoration: none;
+            font-size: 14px;
+        }}
+        .privacy-link a:hover {{
+            text-decoration: underline;
+        }}
+        .user-info {{
+            text-align: center;
+            color: #6B778C;
+            font-size: 13px;
+            margin-bottom: 20px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="consent-card">
+        <div class="header">
+            <div class="header-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                    <polyline points="21 15 16 10 5 21"></polyline>
+                </svg>
+            </div>
+            <h1>Screenshot Capture Consent</h1>
+            <p class="subtitle">Please review what data we collect before starting</p>
+        </div>
+
+        <p class="user-info">Logged in as: <strong>{user_email}</strong></p>
+
+        <div class="section">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                Data We Collect
+            </div>
+            <div class="data-item">
+                <span class="data-icon">📸</span>
+                <div class="data-text">
+                    <strong>Screenshots</strong>
+                    <span>Captured at regular intervals while tracking is active</span>
+                </div>
+            </div>
+            <div class="data-item">
+                <span class="data-icon">🪟</span>
+                <div class="data-text">
+                    <strong>Window Titles</strong>
+                    <span>The title of your active application window</span>
+                </div>
+            </div>
+            <div class="data-item">
+                <span class="data-icon">📱</span>
+                <div class="data-text">
+                    <strong>Application Names</strong>
+                    <span>Which application is currently in focus</span>
+                </div>
+            </div>
+            <div class="data-item">
+                <span class="data-icon">⏱️</span>
+                <div class="data-text">
+                    <strong>Timestamps</strong>
+                    <span>When each screenshot was captured</span>
+                </div>
+            </div>
+            <div class="data-item">
+                <span class="data-icon">📋</span>
+                <div class="data-text">
+                    <strong>Jira Issue Data</strong>
+                    <span>Your assigned issues for task matching</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="section third-party">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                </svg>
+                Third-Party Processing
+            </div>
+            <div class="data-item">
+                <span class="data-icon">🤖</span>
+                <div class="data-text">
+                    <strong>OpenAI</strong>
+                    <span>Screenshots are analyzed by AI to identify which Jira task you're working on. OpenAI may retain data for up to 30 days (not used for training).</span>
+                </div>
+            </div>
+            <div class="data-item">
+                <span class="data-icon">🗄️</span>
+                <div class="data-text">
+                    <strong>Supabase</strong>
+                    <span>Screenshots and analysis data are stored securely with encryption at rest.</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="section retention">
+            <div class="section-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+                Data Retention & Your Rights
+            </div>
+            <div class="data-item">
+                <span class="data-icon">🗑️</span>
+                <div class="data-text">
+                    <strong>Retention Period</strong>
+                    <span>Screenshots are retained for 90 days, then automatically deleted</span>
+                </div>
+            </div>
+            <div class="data-item">
+                <span class="data-icon">✋</span>
+                <div class="data-text">
+                    <strong>Your Control</strong>
+                    <span>You can pause tracking, delete screenshots, or revoke consent at any time</span>
+                </div>
+            </div>
+        </div>
+
+        <form action="/consent/submit" method="POST">
+            <div class="buttons">
+                <button type="submit" name="consent" value="decline" class="btn btn-secondary">
+                    I Do Not Agree
+                </button>
+                <button type="submit" name="consent" value="agree" class="btn btn-primary">
+                    I Agree - Start Tracking
+                </button>
+            </div>
+        </form>
+
+        <div class="privacy-link">
+            <a href="#" onclick="alert('Privacy policy will be available at your organization\\'s privacy policy URL')">Read Full Privacy Policy</a>
+        </div>
     </div>
 </body>
 </html>'''
         return html
-    
-    def render_dashboard(self):
+
+    def render_consent_denied_page(self):
+        """Render page when user denies consent"""
         html = '''<!DOCTYPE html>
 <html>
 <head>
-    <title>BRD Time Tracker - Dashboard</title>
+    <title>BRD Time Tracker - Consent Required</title>
     <style>
-        * { box-sizing: border-box; }
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; 
-            max-width: 1200px; 
-            margin: 0 auto; 
-            padding: 20px; 
-            background: #f5f5f5; 
-        }
-        .container { 
-            background: white; 
-            padding: 30px; 
-            border-radius: 10px; 
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
-        }
-        h1 { margin-top: 0; color: #172B4D; }
-        .status { 
-            padding: 12px 16px; 
-            margin: 20px 0; 
-            border-radius: 6px; 
-            font-weight: 500;
-        }
-        .status.active { 
-            background: #d4edda; 
-            color: #155724; 
-            border: 1px solid #c3e6cb;
-        }
-        .status.inactive { 
-            background: #f8d7da; 
-            color: #721c24; 
-            border: 1px solid #f5c6cb;
-        }
-        h2 { 
-            margin-top: 30px; 
-            margin-bottom: 20px; 
-            color: #172B4D; 
-        }
-        .screenshots-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-            gap: 20px;
-            margin-top: 20px;
-        }
-        .screenshot-item {
-            background: #f8f9fa;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .screenshot-item:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-        }
-        .screenshot-item img {
-            width: 100%;
-            height: 180px;
-            object-fit: cover;
-            display: block;
-            background: #e9ecef;
-        }
-        .screenshot-info {
-            padding: 12px;
-        }
-        .screenshot-info .app-name {
-            font-weight: 600;
-            color: #172B4D;
-            margin: 0 0 4px 0;
-            font-size: 14px;
-        }
-        .screenshot-info .window-title {
-            color: #6B778C;
-            font-size: 12px;
-            margin: 0 0 6px 0;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .screenshot-info .timestamp {
-            color: #8993A4;
-            font-size: 11px;
-            margin: 0;
-        }
-        .empty-state {
-            text-align: center;
-            color: #6B778C;
-            padding: 60px 20px;
-            grid-column: 1 / -1;
-        }
-        .empty-state p {
-            margin: 10px 0;
-            font-size: 14px;
-        }
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: #6B778C;
-        }
-        .status-bar {
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            min-height: 100vh;
             display: flex;
-            gap: 15px;
             align-items: center;
-            flex-wrap: wrap;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
         }
-        .status.offline {
-            background: #fff3cd;
-            color: #856404;
-            border: 1px solid #ffeeba;
+        .card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 450px;
+            padding: 50px 40px;
+            text-align: center;
         }
-        .status.idle {
-            background: #fff3cd;
-            color: #856404;
-            border: 1px solid #ffeeba;
+        .icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #FF8B00 0%, #FFAB00 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
         }
-        .sync-btn {
-            background: #0052CC;
+        .icon svg {
+            width: 40px;
+            height: 40px;
+            color: white;
+        }
+        h1 {
+            color: #172B4D;
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        p {
+            color: #6B778C;
+            font-size: 15px;
+            line-height: 1.6;
+            margin-bottom: 24px;
+        }
+        .btn {
+            display: inline-block;
+            padding: 14px 32px;
+            background: linear-gradient(135deg, #0052CC 0%, #0065FF 100%);
             color: white;
             border: none;
-            padding: 8px 16px;
-            border-radius: 4px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
             cursor: pointer;
-            font-size: 13px;
+            text-decoration: none;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin: 8px;
         }
-        .sync-btn:hover {
-            background: #0065FF;
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 82, 204, 0.4);
         }
-        .sync-btn:disabled {
-            background: #ccc;
-            cursor: not-allowed;
+        .btn-secondary {
+            background: #DFE1E6;
+            color: #172B4D;
         }
-        .pending-badge {
-            background: #dc3545;
-            color: white;
-            padding: 2px 8px;
-            border-radius: 12px;
-            font-size: 12px;
-            margin-left: 8px;
+        .btn-secondary:hover {
+            background: #C1C7D0;
+            box-shadow: none;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>BRD Time Tracker Dashboard</h1>
-        <div class="status-bar">
-            <div id="status" class="status">Loading...</div>
-            <div id="network-status" class="status" style="display: none;"></div>
-            <div id="offline-info" style="display: none;">
-                <button id="sync-btn" class="sync-btn" onclick="triggerSync()">Sync Now</button>
-                <span id="pending-count" class="pending-badge"></span>
+    <div class="card">
+        <div class="icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+        </div>
+        <h1>Consent Required</h1>
+        <p>
+            Screenshot tracking requires your consent to operate. Without consent, we cannot capture screenshots or track your work time.
+        </p>
+        <p>
+            If you change your mind, you can grant consent at any time by clicking the button below.
+        </p>
+        <a href="/consent" class="btn">Review & Grant Consent</a>
+        <button class="btn btn-secondary" onclick="window.close()">Close</button>
+    </div>
+</body>
+</html>'''
+        return html
+
+    def render_dashboard(self):
+        html = '''<!DOCTYPE html>
+<html>
+<head>
+    <title>Time Tracker - Dashboard</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+        }
+        .dashboard {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            color: white;
+        }
+        .header h1 {
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        .card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        .card-header {
+            background: #f8f9fa;
+            padding: 20px 24px;
+            border-bottom: 1px solid #e9ecef;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .card-header-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #0052CC 0%, #0065FF 100%);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+        .card-header h2 {
+            color: #172B4D;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .card-body {
+            padding: 24px;
+        }
+        .status-grid {
+            display: grid;
+            gap: 16px;
+        }
+        .status-item {
+            display: flex;
+            align-items: center;
+            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            gap: 16px;
+        }
+        .status-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            flex-shrink: 0;
+        }
+        .status-icon.active { background: #d4edda; }
+        .status-icon.inactive { background: #f8d7da; }
+        .status-icon.idle { background: #fff3cd; }
+        .status-icon.offline { background: #e2e3e5; }
+        .status-content {
+            flex: 1;
+        }
+        .status-label {
+            font-size: 12px;
+            color: #6B778C;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .status-value {
+            font-size: 16px;
+            font-weight: 600;
+            color: #172B4D;
+        }
+        .status-value.active { color: #155724; }
+        .status-value.inactive { color: #721c24; }
+        .status-value.idle { color: #856404; }
+        .sync-section {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e9ecef;
+        }
+        .sync-info {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .pending-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .pending-badge {
+            background: #dc3545;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        .pending-text {
+            color: #6B778C;
+            font-size: 14px;
+        }
+        .sync-btn {
+            background: linear-gradient(135deg, #0052CC 0%, #0065FF 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .sync-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 82, 204, 0.4);
+        }
+        .sync-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        .info-card {
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 20px;
+            color: white;
+            text-align: center;
+        }
+        .info-card p {
+            font-size: 14px;
+            opacity: 0.9;
+            margin-bottom: 8px;
+        }
+        .info-card small {
+            font-size: 12px;
+            opacity: 0.7;
+        }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <div class="header">
+            <h1>Time Tracker</h1>
+            <p>Your work activity is being tracked automatically</p>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-header-icon">&#128202;</div>
+                <h2>Tracking Status</h2>
+            </div>
+            <div class="card-body">
+                <div class="status-grid">
+                    <div class="status-item">
+                        <div id="tracking-icon" class="status-icon active">&#9989;</div>
+                        <div class="status-content">
+                            <div class="status-label">Status</div>
+                            <div id="tracking-status" class="status-value active">Loading...</div>
+                        </div>
+                    </div>
+                    <div id="network-item" class="status-item hidden">
+                        <div class="status-icon offline">&#128225;</div>
+                        <div class="status-content">
+                            <div class="status-label">Network</div>
+                            <div class="status-value">Offline Mode</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="sync-section" class="sync-section hidden">
+                    <div class="sync-info">
+                        <div class="pending-info">
+                            <span id="pending-badge" class="pending-badge">0</span>
+                            <span class="pending-text">screenshots pending sync</span>
+                        </div>
+                        <button id="sync-btn" class="sync-btn" onclick="triggerSync()">Sync Now</button>
+                    </div>
+                </div>
             </div>
         </div>
-        <h2>Recent Screenshots</h2>
-        <div id="screenshots" class="loading">Loading screenshots...</div>
+
+        <div class="info-card">
+            <p>Time tracking data is automatically synced to Jira</p>
+            <small>Check your Jira Time Tracker panel for detailed analytics</small>
+        </div>
     </div>
+
     <script>
-        // Load status
         function loadStatus() {
             fetch('/api/status')
                 .then(r => r.json())
                 .then(data => {
-                    const statusDiv = document.getElementById('status');
-                    const networkDiv = document.getElementById('network-status');
-                    const offlineInfo = document.getElementById('offline-info');
-                    const pendingCount = document.getElementById('pending-count');
-                    
+                    const trackingIcon = document.getElementById('tracking-icon');
+                    const trackingStatus = document.getElementById('tracking-status');
+                    const networkItem = document.getElementById('network-item');
+                    const syncSection = document.getElementById('sync-section');
+                    const pendingBadge = document.getElementById('pending-badge');
+
                     // Tracking status
                     if (data.idle) {
-                        statusDiv.className = 'status idle';
-                        statusDiv.textContent = '⏸ Idle (No Activity)';
+                        trackingIcon.className = 'status-icon idle';
+                        trackingIcon.innerHTML = '&#9208;';
+                        trackingStatus.className = 'status-value idle';
+                        trackingStatus.textContent = 'Idle - No Activity Detected';
                     } else if (data.tracking) {
-                        statusDiv.className = 'status active';
-                        statusDiv.textContent = '✓ Tracking Active';
+                        trackingIcon.className = 'status-icon active';
+                        trackingIcon.innerHTML = '&#9989;';
+                        trackingStatus.className = 'status-value active';
+                        trackingStatus.textContent = 'Actively Tracking';
                     } else {
-                        statusDiv.className = 'status inactive';
-                        statusDiv.textContent = '○ Tracking Inactive';
+                        trackingIcon.className = 'status-icon inactive';
+                        trackingIcon.innerHTML = '&#10060;';
+                        trackingStatus.className = 'status-value inactive';
+                        trackingStatus.textContent = 'Tracking Paused';
                     }
-                    
+
                     // Network status
                     if (!data.online) {
-                        networkDiv.style.display = 'block';
-                        networkDiv.className = 'status offline';
-                        networkDiv.textContent = '📡 Offline Mode';
+                        networkItem.classList.remove('hidden');
                     } else {
-                        networkDiv.style.display = 'none';
+                        networkItem.classList.add('hidden');
                     }
-                    
-                    // Pending offline screenshots
+
+                    // Pending sync
                     if (data.offline_pending > 0) {
-                        offlineInfo.style.display = 'flex';
-                        offlineInfo.style.alignItems = 'center';
-                        offlineInfo.style.gap = '8px';
-                        pendingCount.textContent = data.offline_pending + ' pending';
+                        syncSection.classList.remove('hidden');
+                        pendingBadge.textContent = data.offline_pending;
                     } else {
-                        offlineInfo.style.display = 'none';
+                        syncSection.classList.add('hidden');
                     }
                 })
                 .catch(err => {
                     console.error('Error loading status:', err);
-                    document.getElementById('status').textContent = 'Error loading status';
+                    document.getElementById('tracking-status').textContent = 'Error loading status';
                 });
         }
-        
-        // Trigger sync
+
         function triggerSync() {
             const btn = document.getElementById('sync-btn');
             btn.disabled = true;
             btn.textContent = 'Syncing...';
-            
+
             fetch('/api/offline/sync', { method: 'POST' })
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) {
-                        alert('Synced ' + data.synced + ' screenshots. ' + data.failed + ' failed.');
+                        alert('Synced ' + data.synced + ' screenshots successfully!');
                     } else {
                         alert(data.message || 'Sync completed');
                     }
                     loadStatus();
-                    loadScreenshots();
                 })
                 .catch(err => {
                     console.error('Sync error:', err);
@@ -3161,49 +5018,525 @@ class BRDTimeTracker:
                     btn.textContent = 'Sync Now';
                 });
         }
-        
-        // Load status initially and refresh every 10 seconds
+
         loadStatus();
         setInterval(loadStatus, 10000);
-        
-        // Load screenshots
-        function loadScreenshots() {
-            fetch('/api/screenshots')
+    </script>
+</body>
+</html>'''
+        return html
+
+    def render_admin_login_page(self, error=None):
+        error_html = f'<div class="error">{error}</div>' if error else ''
+        html = f'''<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Login - Time Tracker</title>
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            padding: 20px;
+        }}
+        .login-card {{
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            width: 100%;
+            max-width: 400px;
+            overflow: hidden;
+        }}
+        .card-header {{
+            background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);
+            padding: 30px;
+            text-align: center;
+        }}
+        .card-header h1 {{
+            color: white;
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }}
+        .card-header p {{
+            color: rgba(255, 255, 255, 0.85);
+            font-size: 14px;
+        }}
+        .shield-icon {{
+            width: 60px;
+            height: 60px;
+            background: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 16px;
+            font-size: 28px;
+        }}
+        .card-body {{
+            padding: 30px;
+        }}
+        .form-group {{
+            margin-bottom: 20px;
+        }}
+        .form-group label {{
+            display: block;
+            color: #172B4D;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }}
+        .form-group input {{
+            width: 100%;
+            padding: 14px 16px;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.2s;
+        }}
+        .form-group input:focus {{
+            outline: none;
+            border-color: #e94560;
+        }}
+        .login-btn {{
+            width: 100%;
+            padding: 14px 24px;
+            background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }}
+        .login-btn:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(233, 69, 96, 0.4);
+        }}
+        .error {{
+            background: #f8d7da;
+            color: #721c24;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }}
+        .back-link {{
+            display: block;
+            text-align: center;
+            margin-top: 20px;
+            color: #6B778C;
+            text-decoration: none;
+            font-size: 14px;
+        }}
+        .back-link:hover {{
+            color: #172B4D;
+        }}
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="card-header">
+            <div class="shield-icon">&#128272;</div>
+            <h1>Admin Access</h1>
+            <p>Enter password to access admin panel</p>
+        </div>
+        <div class="card-body">
+            {error_html}
+            <form method="POST" action="/admin/login">
+                <div class="form-group">
+                    <label for="password">Admin Password</label>
+                    <input type="password" id="password" name="password" placeholder="Enter admin password" required autofocus>
+                </div>
+                <button type="submit" class="login-btn">Access Admin Panel</button>
+            </form>
+            <a href="/" class="back-link">Back to Application</a>
+        </div>
+    </div>
+</body>
+</html>'''
+        return html
+
+    def render_admin_dashboard(self):
+        html = '''<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Dashboard - Time Tracker</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            min-height: 100vh;
+            background: #1a1a2e;
+            color: #fff;
+        }
+        .navbar {
+            background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);
+            padding: 16px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .navbar h1 {
+            font-size: 20px;
+            font-weight: 600;
+        }
+        .navbar-actions {
+            display: flex;
+            gap: 12px;
+        }
+        .nav-btn {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            text-decoration: none;
+        }
+        .nav-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+        .card {
+            background: #16213e;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        .card-header {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 16px 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .card-header h2 {
+            font-size: 16px;
+            font-weight: 600;
+        }
+        .card-body {
+            padding: 20px;
+        }
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+        }
+        .status-item {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 16px;
+            border-radius: 8px;
+        }
+        .status-label {
+            font-size: 12px;
+            color: #8b8fa3;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+        .status-value {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .status-value.active { color: #4ade80; }
+        .status-value.inactive { color: #f87171; }
+        .status-value.warning { color: #fbbf24; }
+        .control-btn {
+            width: 100%;
+            padding: 12px 16px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-bottom: 10px;
+            transition: transform 0.2s, opacity 0.2s;
+        }
+        .control-btn:hover {
+            transform: translateY(-1px);
+            opacity: 0.9;
+        }
+        .control-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .control-btn.primary {
+            background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
+            color: #000;
+        }
+        .control-btn.danger {
+            background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
+            color: #fff;
+        }
+        .control-btn.secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+        }
+        .logs-container {
+            background: #0f0f1a;
+            border-radius: 8px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            padding: 8px 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            gap: 12px;
+        }
+        .log-entry:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+        .log-time {
+            color: #6b7280;
+            flex-shrink: 0;
+        }
+        .log-level {
+            font-weight: 600;
+            flex-shrink: 0;
+            width: 50px;
+        }
+        .log-level.INFO { color: #4ade80; }
+        .log-level.WARN { color: #fbbf24; }
+        .log-level.ERROR { color: #f87171; }
+        .log-message {
+            color: #e5e7eb;
+            word-break: break-word;
+        }
+        .logs-toolbar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        .filter-btn {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .filter-btn:hover, .filter-btn.active {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        .empty-logs {
+            color: #6b7280;
+            text-align: center;
+            padding: 40px;
+        }
+        .full-width { grid-column: 1 / -1; }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <h1>&#128272; Admin Dashboard</h1>
+        <div class="navbar-actions">
+            <a href="/" class="nav-btn">View App</a>
+            <a href="/admin/logout" class="nav-btn">Logout</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="grid">
+            <!-- Status Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>&#128202; System Status</h2>
+                </div>
+                <div class="card-body">
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <div class="status-label">Tracking</div>
+                            <div id="tracking-status" class="status-value">Loading...</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">User</div>
+                            <div id="user-status" class="status-value">Loading...</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">Network</div>
+                            <div id="network-status" class="status-value">Loading...</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">Pending Sync</div>
+                            <div id="pending-status" class="status-value">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Controls Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>&#9881; Controls</h2>
+                </div>
+                <div class="card-body">
+                    <button id="btn-start" class="control-btn primary" onclick="controlAction('start_tracking')">
+                        &#9654; Start Tracking
+                    </button>
+                    <button id="btn-stop" class="control-btn danger" onclick="controlAction('stop_tracking')">
+                        &#9632; Stop Tracking
+                    </button>
+                    <button class="control-btn secondary" onclick="controlAction('force_sync')">
+                        &#128259; Force Sync
+                    </button>
+                    <button class="control-btn secondary" onclick="controlAction('refresh_settings')">
+                        &#128260; Refresh Settings
+                    </button>
+                    <button class="control-btn secondary" onclick="controlAction('clear_logs')">
+                        &#128465; Clear Logs
+                    </button>
+                </div>
+            </div>
+
+            <!-- Logs Card -->
+            <div class="card full-width">
+                <div class="card-header">
+                    <h2>&#128196; Application Logs</h2>
+                </div>
+                <div class="card-body">
+                    <div class="logs-toolbar">
+                        <button class="filter-btn active" onclick="filterLogs('all')">All</button>
+                        <button class="filter-btn" onclick="filterLogs('INFO')">Info</button>
+                        <button class="filter-btn" onclick="filterLogs('WARN')">Warning</button>
+                        <button class="filter-btn" onclick="filterLogs('ERROR')">Error</button>
+                        <button class="filter-btn" onclick="loadLogs()" style="margin-left: auto;">&#128260; Refresh</button>
+                    </div>
+                    <div id="logs-container" class="logs-container">
+                        <div class="empty-logs">Loading logs...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentFilter = 'all';
+
+        function loadStatus() {
+            fetch('/api/admin/status')
                 .then(r => r.json())
                 .then(data => {
-                    const div = document.getElementById('screenshots');
-                    if (!data || data.length === 0) {
-                        div.className = 'empty-state';
-                        div.innerHTML = '<p>📷</p><p>No screenshots captured yet</p><p style="font-size: 12px; color: #8993A4;">Screenshots will appear here once tracking starts</p>';
+                    // Tracking status
+                    const trackingEl = document.getElementById('tracking-status');
+                    if (data.is_idle) {
+                        trackingEl.textContent = 'Idle';
+                        trackingEl.className = 'status-value warning';
+                    } else if (data.tracking_active) {
+                        trackingEl.textContent = 'Active';
+                        trackingEl.className = 'status-value active';
                     } else {
-                        div.className = 'screenshots-grid';
-                        div.innerHTML = data.map(s => {
-                            const date = new Date(s.timestamp);
-                            const thumbnailUrl = s.thumbnail_url || s.storage_url || '';
-                            const windowTitle = s.window_title || 'Unknown window';
-                            const appName = s.application_name || 'Unknown app';
-                            
-                            const imageUrl = s.proxy_url || s.thumbnail_url || s.storage_url || '';
-                            return `
-                                <div class="screenshot-item" onclick="window.open('${imageUrl || '#'}', '_blank')">
-                                    <img src="${thumbnailUrl || imageUrl || ''}" alt="Screenshot" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'250\\' height=\\'180\\'%3E%3Crect fill=\\'%23e9ecef\\' width=\\'250\\' height=\\'180\\'/%3E%3Ctext x=\\'50%25\\' y=\\'50%25\\' text-anchor=\\'middle\\' dy=\\'.3em\\' fill=\\'%23999\\' font-family=\\'Arial\\' font-size=\\'14\\'%3EImage not available%3C/text%3E%3C/svg%3E';">
-                                    <div class="screenshot-info">
-                                        <p class="app-name">${appName}</p>
-                                        <p class="window-title" title="${windowTitle}">${windowTitle}</p>
-                                        <p class="timestamp">${date.toLocaleString()}</p>
-                                    </div>
-                                </div>
-                            `;
-                        }).join('');
+                        trackingEl.textContent = 'Stopped';
+                        trackingEl.className = 'status-value inactive';
                     }
+
+                    // User status
+                    const userEl = document.getElementById('user-status');
+                    userEl.textContent = data.current_user || 'Not logged in';
+                    userEl.className = data.current_user ? 'status-value active' : 'status-value inactive';
+
+                    // Network status
+                    const networkEl = document.getElementById('network-status');
+                    networkEl.textContent = data.online ? 'Online' : 'Offline';
+                    networkEl.className = data.online ? 'status-value active' : 'status-value warning';
+
+                    // Pending status
+                    const pendingEl = document.getElementById('pending-status');
+                    pendingEl.textContent = data.offline_pending || '0';
+                    pendingEl.className = data.offline_pending > 0 ? 'status-value warning' : 'status-value active';
+
+                    // Update buttons
+                    document.getElementById('btn-start').disabled = data.running;
+                    document.getElementById('btn-stop').disabled = !data.running;
+                })
+                .catch(err => console.error('Error loading status:', err));
+        }
+
+        function loadLogs() {
+            const url = currentFilter === 'all' ? '/api/admin/logs?limit=200' : `/api/admin/logs?level=${currentFilter}&limit=200`;
+            fetch(url)
+                .then(r => r.json())
+                .then(data => {
+                    const container = document.getElementById('logs-container');
+                    if (!data.logs || data.logs.length === 0) {
+                        container.innerHTML = '<div class="empty-logs">No logs available</div>';
+                        return;
+                    }
+
+                    container.innerHTML = data.logs.reverse().map(log => {
+                        const time = new Date(log.timestamp).toLocaleTimeString();
+                        return `
+                            <div class="log-entry">
+                                <span class="log-time">${time}</span>
+                                <span class="log-level ${log.level}">${log.level}</span>
+                                <span class="log-message">${log.message}</span>
+                            </div>
+                        `;
+                    }).join('');
                 })
                 .catch(err => {
-                    console.error('Error loading screenshots:', err);
-                    document.getElementById('screenshots').innerHTML = '<p style="color: #dc3545;">Error loading screenshots. Please refresh the page.</p>';
+                    console.error('Error loading logs:', err);
+                    document.getElementById('logs-container').innerHTML = '<div class="empty-logs">Error loading logs</div>';
                 });
         }
-        
-        loadScreenshots();
+
+        function filterLogs(level) {
+            currentFilter = level;
+            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            loadLogs();
+        }
+
+        function controlAction(action) {
+            fetch('/api/admin/control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    loadStatus();
+                    loadLogs();
+                } else {
+                    alert(data.error || 'Action failed');
+                }
+            })
+            .catch(err => {
+                console.error('Control action error:', err);
+                alert('Failed to execute action');
+            });
+        }
+
+        // Initial load
+        loadStatus();
+        loadLogs();
+
+        // Auto-refresh
+        setInterval(loadStatus, 5000);
+        setInterval(loadLogs, 10000);
     </script>
 </body>
 </html>'''

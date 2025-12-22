@@ -6,7 +6,6 @@ function UnassignedWork() {
   const [sessions, setSessions] = useState([]);
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [clustering, setClustering] = useState(false);
   const [error, setError] = useState(null);
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -14,15 +13,20 @@ function UnassignedWork() {
   const [userIssues, setUserIssues] = useState([]);
   const [userProjects, setUserProjects] = useState([]);
 
-  // User role state
-  const [userRole, setUserRole] = useState(null);
-  const [canTriggerClustering, setCanTriggerClustering] = useState(false);
-  const [clusteringMessage, setClusteringMessage] = useState(null);
+  // Pagination state for lazy loading
+  const [hasMoreGroups, setHasMoreGroups] = useState(false);
+  const [nextOffset, setNextOffset] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [totalGroups, setTotalGroups] = useState(0);
+  const GROUPS_PER_PAGE = 10;
 
   // Accordion states
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [groupScreenshots, setGroupScreenshots] = useState({});
   const [loadingScreenshots, setLoadingScreenshots] = useState({});
+  // Lazy loading: Store detailed group data (session_ids, etc.)
+  const [groupDetails, setGroupDetails] = useState({});
+  const [loadingDetails, setLoadingDetails] = useState({});
 
   // Fullscreen screenshot state
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
@@ -58,7 +62,6 @@ function UnassignedWork() {
   const [bulkEditSuccess, setBulkEditSuccess] = useState(null);
 
   useEffect(() => {
-    loadUserRole();
     loadUnassignedWork();
     loadUserIssues();
     loadUserProjects();
@@ -71,23 +74,6 @@ function UnassignedWork() {
       loadProjectStatuses(selectedProject);
     }
   }, [selectedProject]);
-
-  const loadUserRole = async () => {
-    console.log('[UnassignedWork] Loading user role...');
-    try {
-      const result = await invoke('getUserRole');
-      console.log('[UnassignedWork] getUserRole result:', result);
-      if (result.success) {
-        setUserRole(result.role);
-        setCanTriggerClustering(result.permissions?.canTriggerClustering || false);
-        console.log('[UnassignedWork] Role:', result.role, 'canTriggerClustering:', result.permissions?.canTriggerClustering);
-      } else {
-        console.log('[UnassignedWork] getUserRole failed:', result.error);
-      }
-    } catch (err) {
-      console.error('[UnassignedWork] Error loading user role:', err);
-    }
-  };
 
   const loadNotificationSettings = async () => {
     try {
@@ -232,62 +218,45 @@ function UnassignedWork() {
     });
   };
 
-  const handleTriggerClustering = async () => {
-    if (!canTriggerClustering) return;
-    
-    setClustering(true);
-    setClusteringMessage(null);
-    setError(null);
-
-    try {
-      const result = await invoke('triggerClustering');
-      
-      if (result.success) {
-        setClusteringMessage({
-          type: 'success',
-          text: result.message || 'Clustering completed successfully!'
-        });
-        // Reload the groups after clustering
-        await loadUnassignedWork();
-      } else {
-        setClusteringMessage({
-          type: 'error',
-          text: result.error || 'Failed to trigger clustering'
-        });
-      }
-    } catch (err) {
-      console.error('Error triggering clustering:', err);
-      setClusteringMessage({
-        type: 'error',
-        text: err.message || 'Failed to trigger clustering'
-      });
-    } finally {
-      setClustering(false);
+  const loadUnassignedWork = async (append = false) => {
+    if (!append) {
+      setLoading(true);
+      setError(null);
     }
-  };
-
-  const loadUnassignedWork = async () => {
-    setLoading(true);
-    setError(null);
+    
     try {
-      // Load pre-clustered groups from database (AI server creates these automatically)
-      const groupsResult = await invoke('getUnassignedGroups');
+      // Load pre-clustered groups from database with pagination (lazy loading)
+      const offset = append ? nextOffset : 0;
+      const groupsResult = await invoke('getUnassignedGroups', { 
+        limit: GROUPS_PER_PAGE, 
+        offset 
+      });
 
       if (groupsResult.success) {
-        // Filter out groups with no valid sessions (data inconsistency)
-        const validGroups = (groupsResult.groups || []).filter(g => 
-          g.session_ids && Array.isArray(g.session_ids) && g.session_ids.length > 0
-        );
-        setGroups(validGroups);
+        const newGroups = groupsResult.groups || [];
         
-        if (validGroups.length < (groupsResult.groups || []).length) {
-          console.warn(`Filtered out ${(groupsResult.groups || []).length - validGroups.length} groups with no valid sessions`);
+        if (append) {
+          // Append to existing groups
+          setGroups(prev => [...prev, ...newGroups]);
+        } else {
+          // Replace groups (initial load or refresh)
+          setGroups(newGroups);
+          // Reset details cache on fresh load
+          setGroupDetails({});
+          setGroupScreenshots({});
         }
+        
+        // Update pagination state
+        setHasMoreGroups(groupsResult.has_more || false);
+        setNextOffset(groupsResult.next_offset || 0);
+        setTotalGroups(groupsResult.total_groups || 0);
 
-        // Also load individual sessions for display purposes
-        const sessionsResult = await invoke('getUnassignedWork', { limit: 100 });
-        if (sessionsResult.success) {
-          setSessions(sessionsResult.sessions || []);
+        // Only load individual sessions on initial load (for summary display)
+        if (!append) {
+          const sessionsResult = await invoke('getUnassignedWork', { limit: 100 });
+          if (sessionsResult.success) {
+            setSessions(sessionsResult.sessions || []);
+          }
         }
       } else {
         setError(groupsResult.error || 'Failed to load unassigned work');
@@ -297,7 +266,15 @@ function UnassignedWork() {
       setError(err.message);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
+  };
+
+  // Load more groups (pagination)
+  const loadMoreGroups = async () => {
+    if (loadingMore || !hasMoreGroups) return;
+    setLoadingMore(true);
+    await loadUnassignedWork(true);
   };
 
   const loadUserIssues = async () => {
@@ -347,31 +324,68 @@ function UnassignedWork() {
     }
   };
 
-  const toggleGroup = async (groupId, sessionIds) => {
+  const toggleGroup = async (groupId) => {
     const newExpanded = new Set(expandedGroups);
 
     if (newExpanded.has(groupId)) {
       // Collapse
       newExpanded.delete(groupId);
     } else {
-      // Expand - load screenshots if not already loaded
+      // Expand - load group details and screenshots if not already loaded
       newExpanded.add(groupId);
 
-      if (!groupScreenshots[groupId] && sessionIds && sessionIds.length > 0) {
-        setLoadingScreenshots(prev => ({ ...prev, [groupId]: true }));
+      // LAZY LOADING: Load group details (session_ids) if not cached
+      if (!groupDetails[groupId]) {
+        setLoadingDetails(prev => ({ ...prev, [groupId]: true }));
         try {
-          console.log('[UnassignedWork] Fetching screenshots for group:', groupId, 'with session IDs:', sessionIds);
-          const result = await invoke('getGroupScreenshots', { sessionIds });
-          console.log('[UnassignedWork] Screenshot result:', result);
-          if (result.success) {
-            setGroupScreenshots(prev => ({ ...prev, [groupId]: result.screenshots || [] }));
+          console.log('[UnassignedWork] Fetching details for group:', groupId);
+          const detailsResult = await invoke('getGroupDetails', { groupId });
+          
+          if (detailsResult.success) {
+            setGroupDetails(prev => ({ ...prev, [groupId]: detailsResult }));
+            
+            // Now load screenshots using the session_ids from details
+            if (detailsResult.session_ids && detailsResult.session_ids.length > 0) {
+              setLoadingScreenshots(prev => ({ ...prev, [groupId]: true }));
+              try {
+                const screenshotsResult = await invoke('getGroupScreenshots', { 
+                  sessionIds: detailsResult.session_ids 
+                });
+                if (screenshotsResult.success) {
+                  setGroupScreenshots(prev => ({ 
+                    ...prev, 
+                    [groupId]: screenshotsResult.screenshots || [] 
+                  }));
+                }
+              } catch (err) {
+                console.error('Error loading screenshots for group:', err);
+              } finally {
+                setLoadingScreenshots(prev => ({ ...prev, [groupId]: false }));
+              }
+            }
           } else {
-            console.error('[UnassignedWork] Failed to load screenshots:', result.error);
+            console.error('[UnassignedWork] Failed to load group details:', detailsResult.error);
           }
         } catch (err) {
-          console.error('Error loading screenshots for group:', err);
+          console.error('Error loading group details:', err);
         } finally {
-          setLoadingScreenshots(prev => ({ ...prev, [groupId]: false }));
+          setLoadingDetails(prev => ({ ...prev, [groupId]: false }));
+        }
+      } else {
+        // Details already loaded, just load screenshots if needed
+        const details = groupDetails[groupId];
+        if (!groupScreenshots[groupId] && details.session_ids && details.session_ids.length > 0) {
+          setLoadingScreenshots(prev => ({ ...prev, [groupId]: true }));
+          try {
+            const result = await invoke('getGroupScreenshots', { sessionIds: details.session_ids });
+            if (result.success) {
+              setGroupScreenshots(prev => ({ ...prev, [groupId]: result.screenshots || [] }));
+            }
+          } catch (err) {
+            console.error('Error loading screenshots for group:', err);
+          } finally {
+            setLoadingScreenshots(prev => ({ ...prev, [groupId]: false }));
+          }
         }
       }
     }
@@ -425,8 +439,37 @@ function UnassignedWork() {
     }
   };
 
-  const handleAssignClick = (group) => {
-    setSelectedGroup(group);
+  const handleAssignClick = async (group) => {
+    // Get the detailed data (with session_ids) - either from cache or fetch
+    let details = groupDetails[group.id];
+    
+    if (!details) {
+      // Fetch details if not cached
+      try {
+        const detailsResult = await invoke('getGroupDetails', { groupId: group.id });
+        if (detailsResult.success) {
+          details = detailsResult;
+          setGroupDetails(prev => ({ ...prev, [group.id]: detailsResult }));
+        } else {
+          alert('Failed to load group details: ' + detailsResult.error);
+          return;
+        }
+      } catch (err) {
+        alert('Error loading group details: ' + err.message);
+        return;
+      }
+    }
+
+    // Merge group summary with detailed data for assignment
+    const groupWithDetails = {
+      ...group,
+      session_ids: details.session_ids,
+      session_count: details.session_count,
+      total_seconds: details.total_seconds,
+      total_time_formatted: details.total_time_formatted
+    };
+
+    setSelectedGroup(groupWithDetails);
     setShowAssignModal(true);
 
     // Pre-fill form with AI suggestions
@@ -586,24 +629,6 @@ function UnassignedWork() {
               <span className="clock-icon">🕐</span>
               Bulk Time Edit
             </button>
-            {canTriggerClustering && (
-              <button 
-                className="trigger-clustering-btn"
-                onClick={handleTriggerClustering}
-                disabled={clustering}
-              >
-                {clustering ? (
-                  <>
-                    <span className="spinner"></span>
-                    Grouping...
-                  </>
-                ) : (
-                  <>
-                    🔄 Group Activities
-                  </>
-                )}
-              </button>
-            )}
           </div>
         </div>
         <div className="unassigned-work-summary">
@@ -649,29 +674,11 @@ function UnassignedWork() {
         </div>
       </div>
 
-      {clusteringMessage && (
-        <div className={`clustering-result-message ${clusteringMessage.type}`}>
-          {clusteringMessage.type === 'success' ? '✅' : '❌'} {clusteringMessage.text}
-          <button 
-            className="dismiss-btn"
-            onClick={() => setClusteringMessage(null)}
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      {clustering && (
-        <div className="clustering-message">
-          AI is grouping your work sessions...
-        </div>
-      )}
-
-      {groups.length === 0 && !clustering && sessions.length > 0 && (
+      {groups.length === 0 && sessions.length > 0 && (
         <div className="no-groups-message">
           <p>No groups available yet.</p>
-          <p>The AI server automatically groups similar sessions every 5 minutes.</p>
-          <p>Check back shortly or wait for automatic grouping to complete.</p>
+          <p>Groups are created automatically when work sessions are analyzed.</p>
+          <p>Check back shortly.</p>
         </div>
       )}
 
@@ -680,12 +687,14 @@ function UnassignedWork() {
           const isExpanded = expandedGroups.has(group.id);
           const screenshots = groupScreenshots[group.id] || [];
           const isLoadingScreenshots = loadingScreenshots[group.id];
+          const isLoadingGroupDetails = loadingDetails[group.id];
+          const details = groupDetails[group.id];
 
           return (
             <div key={group.id || index} className={`accordion-item confidence-${group.confidence}`}>
               <div
                 className="accordion-header"
-                onClick={() => toggleGroup(group.id, group.session_ids)}
+                onClick={() => toggleGroup(group.id)}
               >
                 <div className="accordion-header-left">
                   <span className="accordion-toggle">
@@ -737,74 +746,116 @@ function UnassignedWork() {
                     </div>
                   )}
 
-                  <div className="screenshots-section">
-                    <h4 className="screenshots-title">
-                      Screenshots ({group.session_count})
-                    </h4>
+                  {/* Loading state for group details */}
+                  {isLoadingGroupDetails && (
+                    <div className="loading-details">
+                      <span className="spinner"></span>
+                      Loading group details...
+                    </div>
+                  )}
 
-                    {isLoadingScreenshots && (
-                      <div className="loading-screenshots">Loading screenshots...</div>
-                    )}
-
-                    {!isLoadingScreenshots && screenshots.length === 0 && (
-                      <div className="no-screenshots">No screenshots available</div>
-                    )}
-
-                    {!isLoadingScreenshots && screenshots.length > 0 && (
-                      <div className="screenshots-grid">
-                        {screenshots.map((screenshot, idx) => (
-                          <div key={screenshot.id || idx} className="screenshot-card">
-                            <div
-                              className="screenshot-thumbnail clickable"
-                              onClick={() => openFullscreen(group.id, idx)}
-                              title="Click to expand"
-                            >
-                              {screenshot.signed_thumbnail_url ? (
-                                <img
-                                  src={screenshot.signed_thumbnail_url}
-                                  alt={`Screenshot ${idx + 1}`}
-                                  loading="lazy"
-                                />
-                              ) : (
-                                <div className="screenshot-placeholder">
-                                  📷 No preview
-                                </div>
-                              )}
-                              <div className="expand-icon">🔍</div>
-                            </div>
-                            <div className="screenshot-info">
-                              <div className="screenshot-time">
-                                {formatTimestamp(screenshot.timestamp)}
-                              </div>
-                              <div className="screenshot-details">
-                                <div className="screenshot-app" title={screenshot.application_name}>
-                                  {screenshot.application_name || 'Unknown'}
-                                </div>
-                                <div className="screenshot-window" title={screenshot.window_title}>
-                                  {screenshot.window_title || 'No title'}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
+                  {/* Show details when loaded */}
+                  {!isLoadingGroupDetails && details && (
+                    <>
+                      {/* Updated session count from details */}
+                      <div className="group-details-summary">
+                        <span>📸 {details.session_count} sessions</span>
+                        <span className="summary-divider">•</span>
+                        <span>⏱️ {details.total_time_formatted}</span>
                       </div>
-                    )}
-                  </div>
 
-                  <div className="accordion-actions">
-                    <button
-                      className="assign-button-full"
-                      onClick={() => handleAssignClick(group)}
-                    >
-                      Assign This Group
-                    </button>
-                  </div>
+                      <div className="screenshots-section">
+                        <h4 className="screenshots-title">
+                          Screenshots ({details.session_count})
+                        </h4>
+
+                        {isLoadingScreenshots && (
+                          <div className="loading-screenshots">Loading screenshots...</div>
+                        )}
+
+                        {!isLoadingScreenshots && screenshots.length === 0 && (
+                          <div className="no-screenshots">No screenshots available</div>
+                        )}
+
+                        {!isLoadingScreenshots && screenshots.length > 0 && (
+                          <div className="screenshots-grid">
+                            {screenshots.map((screenshot, idx) => (
+                              <div key={screenshot.id || idx} className="screenshot-card">
+                                <div
+                                  className="screenshot-thumbnail clickable"
+                                  onClick={() => openFullscreen(group.id, idx)}
+                                  title="Click to expand"
+                                >
+                                  {screenshot.signed_thumbnail_url ? (
+                                    <img
+                                      src={screenshot.signed_thumbnail_url}
+                                      alt={`Screenshot ${idx + 1}`}
+                                      loading="lazy"
+                                    />
+                                  ) : (
+                                    <div className="screenshot-placeholder">
+                                      📷 No preview
+                                    </div>
+                                  )}
+                                  <div className="expand-icon">🔍</div>
+                                </div>
+                                <div className="screenshot-info">
+                                  <div className="screenshot-time">
+                                    {formatTimestamp(screenshot.timestamp)}
+                                  </div>
+                                  <div className="screenshot-details">
+                                    <div className="screenshot-app" title={screenshot.application_name}>
+                                      {screenshot.application_name || 'Unknown'}
+                                    </div>
+                                    <div className="screenshot-window" title={screenshot.window_title}>
+                                      {screenshot.window_title || 'No title'}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="accordion-actions">
+                        <button
+                          className="assign-button-full"
+                          onClick={() => handleAssignClick(group)}
+                        >
+                          Assign This Group
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
           );
         })}
       </div>
+
+      {/* Load More Button for Pagination */}
+      {hasMoreGroups && (
+        <div className="load-more-container">
+          <button 
+            className="load-more-btn"
+            onClick={loadMoreGroups}
+            disabled={loadingMore}
+          >
+            {loadingMore ? (
+              <>
+                <span className="spinner"></span>
+                Loading...
+              </>
+            ) : (
+              <>
+                Load More Groups ({groups.length} of {totalGroups})
+              </>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* Assignment Modal */}
       {showAssignModal && selectedGroup && (

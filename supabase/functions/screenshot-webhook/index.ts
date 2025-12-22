@@ -100,6 +100,15 @@ serve(async (req) => {
         // Continue with empty array - AI server will work without it but with lower accuracy
       }
 
+      // Determine which Jira issues to use
+      // Priority: Screenshot data (fresh at capture time) > Cache (may be stale)
+      const screenshotIssues = payload.record.user_assigned_issues || [];
+      const issuesForAnalysis = screenshotIssues.length > 0 
+        ? screenshotIssues      // Prefer screenshot data (fetched fresh by desktop app)
+        : userAssignedIssues;   // Fallback to cache if screenshot has no issues
+
+      console.log(`Using ${screenshotIssues.length > 0 ? 'screenshot' : 'cache'} issues for analysis (${issuesForAnalysis.length} issues)`);
+
       // Notify AI Analysis Server
       try {
         const aiResponse = await fetch(`${AI_SERVER_URL}/api/analyze-screenshot`, {
@@ -111,8 +120,8 @@ serve(async (req) => {
           body: JSON.stringify({
             // Send the entire record (all fields from screenshots table)
             ...payload.record,
-            // Override user_assigned_issues with cached issues (more up-to-date)
-            user_assigned_issues: userAssignedIssues.length > 0 ? userAssignedIssues : payload.record.user_assigned_issues,
+            // Use screenshot issues (fresh) with cache as fallback
+            user_assigned_issues: issuesForAnalysis,
           }),
         });
 
