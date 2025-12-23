@@ -195,6 +195,10 @@ async function startServer() {
     app.listen(PORT, async () => {
       logger.info(`AI Analysis Server running on port ${PORT}`);
       logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+      
+      // Initialize AI clients at startup
+      logger.info('Initializing AI clients...');
+      aiService.initializeClient();
 
       // Step 1: Start clustering service first (includes startup clustering if needed)
       // This runs any missed clustering before we start processing new screenshots
