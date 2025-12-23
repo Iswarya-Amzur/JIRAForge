@@ -1,17 +1,11 @@
-const OpenAI = require('openai');
+/**
+ * Clustering Service
+ * Groups unassigned work sessions using AI
+ * Supports LiteLLM primary with automatic OpenAI fallback
+ */
+
+const { chatCompletionWithFallback, isAIEnabled } = require('./ai/openai-client');
 const logger = require('../utils/logger');
-
-// Initialize OpenAI client (lazy initialization to handle missing API key)
-let openai = null;
-
-function getOpenAIClient() {
-  if (!openai && process.env.OPENAI_API_KEY) {
-    openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
-    });
-  }
-  return openai;
-}
 
 // Applications that should ALWAYS be grouped separately (system/idle apps)
 const SYSTEM_APPS = [
@@ -67,7 +61,9 @@ Duration: ${Math.round((session.time_spent_seconds || 0) / 60)} minutes
 }
 
 /**
- * Cluster unassigned work sessions using GPT-4
+ * Cluster unassigned work sessions using AI
+ * Uses LiteLLM as primary, falls back to OpenAI on consecutive failures
+ *
  * @param {Array} sessions - Array of unassigned work sessions
  * @param {Array} userIssues - User's assigned Jira issues for suggestion
  * @returns {Promise<Object>} Clustered groups
@@ -78,12 +74,16 @@ exports.clusterUnassignedWork = async (sessions, userIssues = []) => {
       return { groups: [] };
     }
 
-    logger.info(`Clustering ${sessions.length} unassigned work sessions`);
+    if (!isAIEnabled()) {
+      throw new Error('AI client not available - check API keys');
+    }
+
+    logger.info('[AI] Clustering %d unassigned sessions', sessions.length);
 
     // If too many sessions, process in batches
     const MAX_SESSIONS_PER_BATCH = 50;
     if (sessions.length > MAX_SESSIONS_PER_BATCH) {
-      logger.info(`Large session count (${sessions.length}), processing in batches of ${MAX_SESSIONS_PER_BATCH}`);
+      logger.info('[AI] Large session count (%d), batching by %d', sessions.length, MAX_SESSIONS_PER_BATCH);
       return await clusterInBatches(sessions, userIssues, MAX_SESSIONS_PER_BATCH);
     }
 
@@ -104,8 +104,8 @@ ${createClusteringInput(session)}`;
     const systemSessions = sessions.filter(s => isSystemApp(s.application_name));
     const workSessions = sessions.filter(s => !isSystemApp(s.application_name));
 
-    // GPT-4 clustering prompt with smart rules
-    const prompt = `You are an AI assistant helping to group similar work sessions together for time tracking.
+    // Clustering prompt with smart rules
+    const userPrompt = `You are an AI assistant helping to group similar work sessions together for time tracking.
 
 GROUPING RULES:
 
@@ -168,35 +168,31 @@ Return ONLY valid JSON in this exact format (no markdown, no backticks):
   ]
 }`;
 
-    const client = getOpenAIClient();
-    if (!client) {
-      throw new Error('OpenAI client not available - OPENAI_API_KEY may be missing');
-    }
-
-    const completion = await client.chat.completions.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4o',
-      messages: [
-        {
-          role: 'system',
-          content: `You are a work activity clustering assistant that groups time tracking sessions.
+    const systemPrompt = `You are a work activity clustering assistant that groups time tracking sessions.
 
 KEY RULES:
 1. NEVER mix system/idle apps (LockApp, ScreenSaver) with work apps - they must be in separate groups
 2. Group by PROJECT/TASK CONTEXT - if VS Code, Cursor, Terminal all show "jira1" project, group them TOGETHER
 3. Different code editors working on the SAME project = SAME GROUP
 4. Look at window titles, file paths, and descriptions to identify which project/task the work belongs to
-5. Always respond with valid JSON only, no markdown formatting.`
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      temperature: 0.2, // Lower temperature for more consistent grouping
-      max_tokens: 4000 // Increased for large session counts
+5. Always respond with valid JSON only, no markdown formatting.`;
+
+    // Build messages array
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ];
+
+    // Use unified request with automatic fallback
+    const { response, provider, model } = await chatCompletionWithFallback({
+      messages,
+      temperature: 0.2,
+      max_tokens: 4000,
+      isVision: false
     });
 
-    const responseText = completion.choices[0].message.content.trim();
+    const responseText = response.choices[0].message.content.trim();
+    logger.info('[AI] Clustering done | %s (%s)', provider, model);
 
     // Remove markdown code blocks if present
     let cleanedResponse = responseText
@@ -243,12 +239,7 @@ KEY RULES:
         clusteringResult = JSON.parse(fixedResponse);
         logger.info('Successfully parsed fixed JSON response');
       } catch (secondError) {
-        // Log the problematic response for debugging
-        logger.error('Failed to parse clustering response', {
-          responseLength: cleanedResponse.length,
-          responsePreview: cleanedResponse.substring(0, 500),
-          responseEnd: cleanedResponse.substring(cleanedResponse.length - 200)
-        });
+        logger.error('[AI] Failed to parse clustering response (len: %d)', cleanedResponse.length);
         throw new Error(`Invalid JSON in clustering response: ${parseError.message}`);
       }
     }
@@ -265,20 +256,35 @@ KEY RULES:
         session_ids: sessionIds,
         total_seconds: totalSeconds,
         total_time_formatted: formatDuration(totalSeconds),
-        session_count: groupSessions.length
+        session_count: groupSessions.length,
+        aiProvider: provider,
+        aiModel: model
       };
     });
 
-    logger.info(`Created ${enrichedGroups.length} groups from ${sessions.length} sessions`);
+    logger.info('[AI] Created %d groups from %d sessions', enrichedGroups.length, sessions.length);
+
+    // Log each group result
+    enrichedGroups.forEach((group, idx) => {
+      logger.info('[AI] Group %d: "%s" | %d sessions | %s | %s',
+        idx + 1,
+        group.label,
+        group.session_count,
+        group.total_time_formatted,
+        group.recommendation?.suggested_issue_key || 'no suggestion'
+      );
+    });
 
     return {
       groups: enrichedGroups,
       total_sessions: sessions.length,
-      total_groups: enrichedGroups.length
+      total_groups: enrichedGroups.length,
+      aiProvider: provider,
+      aiModel: model
     };
 
   } catch (error) {
-    logger.error('Error clustering unassigned work:', error);
+    logger.error('[AI] Clustering failed: %s', error.message);
     throw new Error(`Failed to cluster unassigned work: ${error.message}`);
   }
 };
@@ -299,12 +305,12 @@ async function clusterInBatches(sessions, userIssues, batchSize) {
     batches.push(sessions.slice(i, i + batchSize));
   }
 
-  logger.info(`Processing ${batches.length} batches for ${sessions.length} sessions`);
+  logger.info('[AI] Processing %d batches for %d sessions', batches.length, sessions.length);
 
   // Process each batch
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
-    logger.info(`Processing batch ${i + 1}/${batches.length} with ${batch.length} sessions`);
+    logger.info('[AI] Processing batch %d/%d (%d sessions)', i + 1, batches.length, batch.length);
 
     try {
       // Re-index sessions for this batch (1-based for the batch)
@@ -315,7 +321,7 @@ async function clusterInBatches(sessions, userIssues, batchSize) {
         allGroups.push(...batchResult.groups);
       }
     } catch (batchError) {
-      logger.error(`Error processing batch ${i + 1}:`, batchError);
+      logger.error('[AI] Batch %d failed: %s', i + 1, batchError.message);
       // Continue with other batches even if one fails
     }
   }
@@ -323,7 +329,7 @@ async function clusterInBatches(sessions, userIssues, batchSize) {
   // Merge similar groups across batches (by label)
   const mergedGroups = mergeGroups(allGroups);
 
-  logger.info(`Merged into ${mergedGroups.length} groups from ${allGroups.length} batch groups`);
+  logger.info('[AI] Merged %d batch groups into %d groups', allGroups.length, mergedGroups.length);
 
   return {
     groups: mergedGroups,

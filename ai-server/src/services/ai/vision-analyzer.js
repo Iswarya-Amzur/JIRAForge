@@ -1,15 +1,17 @@
 /**
  * Vision Analyzer Module
- * Handles GPT-4 Vision-based screenshot analysis
+ * Handles Vision-based screenshot analysis
+ * Supports LiteLLM primary with automatic OpenAI fallback
  */
 
-const { getClient, getVisionModel } = require('./openai-client');
+const { chatCompletionWithFallback, isAIEnabled } = require('./openai-client');
 const { VISION_SYSTEM_PROMPT, buildVisionUserPrompt, formatAssignedIssues } = require('./prompts');
 const logger = require('../../utils/logger');
 
 /**
- * Analyze screenshot using GPT-4 Vision API
+ * Analyze screenshot using Vision API
  * This is the PRIMARY analysis method - analyzes image directly
+ * Uses LiteLLM as primary, falls back to OpenAI on consecutive failures
  *
  * @param {Object} params - Analysis parameters
  * @param {Buffer} params.imageBuffer - Screenshot image buffer
@@ -19,10 +21,8 @@ const logger = require('../../utils/logger');
  * @returns {Promise<Object>} Analysis result
  */
 async function analyzeWithVision({ imageBuffer, windowTitle, applicationName, userAssignedIssues = [] }) {
-  const openai = getClient();
-
-  if (!openai) {
-    throw new Error('OpenAI client not initialized');
+  if (!isAIEnabled()) {
+    throw new Error('AI client not initialized - check API keys');
   }
 
   // Convert image buffer to base64
@@ -35,45 +35,62 @@ async function analyzeWithVision({ imageBuffer, windowTitle, applicationName, us
   // Build the prompt
   const userPrompt = buildVisionUserPrompt(applicationName, windowTitle, assignedIssuesText);
 
-  try {
-    const response = await openai.chat.completions.create({
-      model: getVisionModel(),
-      messages: [
+  // Build messages array
+  const messages = [
+    {
+      role: 'system',
+      content: VISION_SYSTEM_PROMPT
+    },
+    {
+      role: 'user',
+      content: [
         {
-          role: 'system',
-          content: VISION_SYSTEM_PROMPT
+          type: 'text',
+          text: userPrompt
         },
         {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: userPrompt
-            },
-            {
-              type: 'image_url',
-              image_url: {
-                url: imageDataUrl,
-                detail: 'high' // Use high detail for better analysis
-              }
-            }
-          ]
+          type: 'image_url',
+          image_url: {
+            url: imageDataUrl,
+            detail: 'high' // Use high detail for better analysis
+          }
         }
-      ],
-      temperature: 0.3, // Lower temperature for more consistent results
-      max_tokens: 800   // Enough for detailed content analysis
+      ]
+    }
+  ];
+
+  try {
+    // Use unified request with automatic fallback
+    const { response, provider, model } = await chatCompletionWithFallback({
+      messages,
+      temperature: 0.3,
+      max_tokens: 800,
+      isVision: true
     });
 
     const content = response.choices[0].message.content.trim();
+    logger.info('[AI] Vision analysis done | %s (%s)', provider, model);
 
     // Parse JSON from the response
     const aiResult = parseAIResponse(content);
 
-    // Validate and return the result
-    return validateAndFormatResult(aiResult, userAssignedIssues);
+    // Validate and return the result with provider info
+    const result = validateAndFormatResult(aiResult, userAssignedIssues);
+    result.aiProvider = provider;
+    result.aiModel = model;
+
+    // Log analysis result
+    logger.info('[AI] Result: %s | task: %s | confidence: %d%% | %s',
+      result.workType,
+      result.taskKey || 'none',
+      Math.round(result.confidenceScore * 100),
+      result.reasoning?.substring(0, 80) || 'no reasoning'
+    );
+
+    return result;
 
   } catch (error) {
-    logger.error('GPT-4 Vision analysis error:', error);
+    logger.error('[AI] Vision analysis failed: %s', error.message);
     throw error;
   }
 }
@@ -91,7 +108,7 @@ function parseAIResponse(content) {
     const jsonString = jsonMatch ? jsonMatch[1] : content;
     return JSON.parse(jsonString);
   } catch (parseError) {
-    logger.warn('Failed to parse AI response as JSON', { content: content.substring(0, 200) });
+    logger.warn('[AI] Failed to parse response as JSON');
     throw new Error('Invalid JSON response from AI');
   }
 }
@@ -105,7 +122,7 @@ function parseAIResponse(content) {
 function validateAndFormatResult(aiResult, userAssignedIssues) {
   // Validate work_type
   if (aiResult.workType !== 'office' && aiResult.workType !== 'non-office') {
-    logger.warn('Invalid work_type from AI, defaulting to office', { workType: aiResult.workType });
+    logger.warn('[AI] Invalid work_type "%s", defaulting to office', aiResult.workType);
     aiResult.workType = 'office';
   }
 
@@ -115,10 +132,7 @@ function validateAndFormatResult(aiResult, userAssignedIssues) {
   if (validatedTaskKey && userAssignedIssues && userAssignedIssues.length > 0) {
     const assignedIssueKeys = userAssignedIssues.map(issue => issue.key);
     if (!assignedIssueKeys.includes(validatedTaskKey)) {
-      logger.warn('AI returned task key not in assigned issues, setting to null', {
-        aiTaskKey: validatedTaskKey,
-        assignedKeys: assignedIssueKeys
-      });
+      logger.warn('[AI] Task key %s not in assigned issues, setting to null', validatedTaskKey);
       validatedTaskKey = null;
     }
   }
