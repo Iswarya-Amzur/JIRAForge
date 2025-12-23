@@ -55,24 +55,24 @@ function TimesheetSettings() {
     // Screenshot Monitoring
     screenshotMonitoringEnabled: true,
     screenshotIntervalSeconds: 900,
-    
+
     // Tracking Mode - Both can be enabled
     intervalTrackingEnabled: true,
     eventTrackingEnabled: false,
     trackWindowChanges: true,
     trackIdleTime: true,
     idleThresholdSeconds: 300,
-    
+
     // Whitelist
     whitelistEnabled: true,
     whitelistedApps: ['vscode', 'jira', 'zoom', 'chrome', 'postman', 'github'],
-    
+
     // Blacklist
     blacklistEnabled: true,
     blacklistedApps: ['netflix', 'spotify', 'telegram', 'tiktok', 'pinterest'],
     nonWorkThresholdPercent: 30,
     flagExcessiveNonWork: true,
-    
+
     // Private Sites
     privateSitesEnabled: true,
     privateSites: []
@@ -81,7 +81,7 @@ function TimesheetSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
-  
+
   // Input states for adding custom items
   const [customWhitelistApp, setCustomWhitelistApp] = useState('');
   const [customBlacklistApp, setCustomBlacklistApp] = useState('');
@@ -249,8 +249,8 @@ function TimesheetSettings() {
                 />
                 <div className="interval-marks">
                   {INTERVAL_MARKS.map(mark => (
-                    <span 
-                      key={mark.value} 
+                    <span
+                      key={mark.value}
                       className={`interval-mark ${settings.screenshotIntervalSeconds >= mark.value ? 'active' : ''}`}
                       style={{ left: `${((mark.value - 60) / (3600 - 60)) * 100}%` }}
                     >
@@ -260,7 +260,7 @@ function TimesheetSettings() {
                 </div>
               </div>
               <p className="field-hint">
-                ⏱️ Screenshots will be captured every {formatInterval(settings.screenshotIntervalSeconds)} during active time tracking sessions
+                Screenshots will be captured every {formatInterval(settings.screenshotIntervalSeconds)} during active time tracking sessions
               </p>
             </div>
 
@@ -374,7 +374,7 @@ function TimesheetSettings() {
                   onChange={(e) => setCustomWhitelistApp(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleAddCustomWhitelist()}
                 />
-                <button 
+                <button
                   className="add-button"
                   onClick={handleAddCustomWhitelist}
                   disabled={!customWhitelistApp.trim()}
@@ -391,7 +391,7 @@ function TimesheetSettings() {
                 {settings.whitelistedApps.map(app => (
                   <span key={app} className="tag whitelist-tag">
                     {app}
-                    <button 
+                    <button
                       className="tag-remove"
                       onClick={() => removeFromList('whitelistedApps', app)}
                     >
@@ -454,7 +454,7 @@ function TimesheetSettings() {
                   onChange={(e) => setCustomBlacklistApp(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleAddCustomBlacklist()}
                 />
-                <button 
+                <button
                   className="add-button blacklist-add"
                   onClick={handleAddCustomBlacklist}
                   disabled={!customBlacklistApp.trim()}
@@ -471,7 +471,7 @@ function TimesheetSettings() {
                 {settings.blacklistedApps.map(app => (
                   <span key={app} className="tag blacklist-tag">
                     {app}
-                    <button 
+                    <button
                       className="tag-remove"
                       onClick={() => removeFromList('blacklistedApps', app)}
                     >
@@ -489,7 +489,7 @@ function TimesheetSettings() {
                 <h3>Flag Users for Excessive Non-Work Activity</h3>
               </div>
               <p className="field-description">
-                Set the percentage threshold for weekly blacklisted app usage that will flag users for excessive non-work activities. 
+                Set the percentage threshold for weekly blacklisted app usage that will flag users for excessive non-work activities.
                 Users exceeding this threshold will be highlighted with a red indicator.
               </p>
               <div className="threshold-slider-container">
@@ -549,7 +549,7 @@ function TimesheetSettings() {
                   onChange={(e) => setCustomPrivateSite(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleAddPrivateSite()}
                 />
-                <button 
+                <button
                   className="add-button private-add"
                   onClick={handleAddPrivateSite}
                   disabled={!customPrivateSite.trim()}
@@ -569,7 +569,7 @@ function TimesheetSettings() {
                   {settings.privateSites.map(site => (
                     <span key={site} className="tag private-tag">
                       {site}
-                      <button 
+                      <button
                         className="tag-remove"
                         onClick={() => removeFromList('privateSites', site)}
                       >

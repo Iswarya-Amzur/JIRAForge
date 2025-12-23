@@ -1,0 +1,611 @@
+/* Time Analytics Tab Styles */
+
+.time-analytics {
+  background: var(--ds-background-neutral);
+  min-height: calc(100vh - 100px);
+}
+
+.time-analytics > h2 {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--ds-text);
+  margin: 0 0 var(--ds-space-100) 0;
+  letter-spacing: -0.3px;
+  padding: var(--ds-space-300) var(--ds-space-400);
+  background: var(--ds-background-default);
+  border-bottom: 1px solid var(--ds-border);
+  margin: -24px -24px var(--ds-space-300) -24px;
+  padding-bottom: var(--ds-space-300);
+}
+
+/* Analytics Summary Cards */
+.analytics-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--ds-space-200);
+  margin-bottom: var(--ds-space-300);
+  padding: 0 var(--ds-space-100);
+}
+
+.cumulative-card {
+  text-align: center;
+  background: var(--ds-background-default);
+  border: 1px solid var(--ds-border);
+  border-radius: 8px;
+  padding: var(--ds-space-200) var(--ds-space-300);
+  box-shadow: 0 1px 3px rgba(9, 30, 66, 0.08);
+  border-top: 3px solid var(--ds-background-brand-bold);
+}
+
+.cumulative-card:hover {
+  box-shadow: 0 4px 8px rgba(9, 30, 66, 0.12);
+  transform: translateY(-1px);
+}
+
+.cumulative-card h3 {
+  margin-bottom: var(--ds-space-100);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--ds-text-subtle);
+}
+
+.cumulative-card .stat-value {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--ds-text-brand);
+}
+
+.cumulative-card .cumulative-stat {
+  padding: var(--ds-space-100) 0;
+}
+
+/* Timesheet Tabs */
+.timesheet-tabs {
+  display: flex;
+  gap: var(--ds-space-050);
+  margin: 0 0 var(--ds-space-200) 0;
+  padding: var(--ds-space-050);
+  background: var(--ds-background-neutral-subtle);
+  border-radius: 8px;
+  width: fit-content;
+}
+
+.timesheet-tab {
+  padding: var(--ds-space-100) var(--ds-space-300);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ds-text-subtle);
+  transition: all 0.2s ease;
+  border-radius: 6px;
+}
+
+.timesheet-tab:hover {
+  color: var(--ds-text);
+  background: var(--ds-background-default);
+}
+
+.timesheet-tab.active {
+  color: var(--ds-text-inverse);
+  background: var(--ds-background-brand-bold);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 82, 204, 0.3);
+}
+
+/* Timesheet Content */
+.timesheet-content {
+  padding: var(--ds-space-300);
+  background: var(--ds-background-default);
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(9, 30, 66, 0.08);
+  border: 1px solid var(--ds-border);
+}
+
+.timesheet-day-view,
+.timesheet-week-view,
+.timesheet-month-view {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Month Header with Navigation */
+.month-header-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--ds-space-200);
+  padding-bottom: var(--ds-space-200);
+  border-bottom: 1px solid var(--ds-border);
+}
+
+.month-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-150);
+}
+
+.month-nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--ds-border);
+  border-radius: 6px;
+  background: var(--ds-background-default);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: var(--ds-text-subtle);
+}
+
+.month-nav-btn:hover {
+  background: var(--ds-background-neutral);
+  border-color: var(--ds-border-focused);
+  color: var(--ds-text);
+}
+
+.nav-arrow {
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.month-title-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 180px;
+}
+
+.month-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ds-text);
+  margin: 0;
+}
+
+.month-subtitle {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ds-text-subtle);
+  margin-top: 2px;
+}
+
+.today-btn {
+  padding: var(--ds-space-100) var(--ds-space-200);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ds-text-brand);
+  background: var(--ds-background-default);
+  border: 1px solid var(--ds-background-brand-bold);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.today-btn:hover {
+  background: var(--ds-background-brand-bold);
+  color: var(--ds-text-inverse);
+}
+
+.timesheet-header {
+  margin-bottom: var(--ds-space-200);
+  padding-bottom: var(--ds-space-200);
+  border-bottom: 1px solid var(--ds-border);
+}
+
+.timesheet-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ds-text);
+  margin: 0;
+}
+
+/* Day View Styles */
+.team-members-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-200);
+}
+
+.team-member-card {
+  background: var(--ds-background-neutral-subtle);
+  border: 1px solid var(--ds-border);
+  border-radius: 8px;
+  padding: var(--ds-space-200);
+  transition: all 0.2s ease;
+}
+
+.team-member-card:hover {
+  background: var(--ds-background-neutral);
+  border-color: var(--ds-border-focused);
+}
+
+.member-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-200);
+}
+
+.member-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--ds-background-brand-bold);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.member-avatar-small {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--ds-background-brand-bold);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.member-info {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--ds-space-200);
+}
+
+.member-name {
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--ds-text);
+}
+
+.member-total {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ds-text-brand);
+}
+
+.member-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-150);
+}
+
+.task-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--ds-space-150) var(--ds-space-200);
+  background: var(--ds-background-neutral-subtle);
+  border-radius: 4px;
+}
+
+.task-key {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ds-text);
+}
+
+.task-time {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ds-text-brand);
+}
+
+/* Week View Styles */
+.week-table-container {
+  overflow-x: auto;
+  background: var(--ds-background-default);
+  border: 1px solid var(--ds-border);
+  border-radius: 8px;
+}
+
+.week-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.week-table thead {
+  background: var(--ds-background-neutral-subtle);
+}
+
+.week-table th {
+  padding: var(--ds-space-150) var(--ds-space-200);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ds-text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--ds-border);
+  white-space: nowrap;
+}
+
+.week-table tbody tr {
+  border-bottom: 1px solid var(--ds-border);
+}
+
+.week-table tbody tr:hover {
+  background: var(--ds-background-neutral-subtle);
+}
+
+.week-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.week-table td {
+  padding: var(--ds-space-150) var(--ds-space-200);
+  font-size: 14px;
+  vertical-align: middle;
+}
+
+.time-cell {
+  text-align: center;
+  color: var(--ds-text);
+  font-weight: 500;
+  font-size: 13px;
+  min-width: 70px;
+}
+
+.total-cell {
+  text-align: center;
+  font-weight: 600;
+  color: var(--ds-text-brand);
+  font-size: 14px;
+  background: rgba(0, 82, 204, 0.05);
+}
+
+.totals-row {
+  background: var(--ds-background-neutral-subtle);
+  font-weight: 600;
+  border-top: 1px solid var(--ds-border);
+}
+
+.totals-row td {
+  border-bottom: none;
+  padding: var(--ds-space-150) var(--ds-space-200);
+  font-size: 13px;
+}
+
+.grand-total-cell {
+  text-align: center;
+  font-weight: 700;
+  color: var(--ds-text-brand);
+  font-size: 14px;
+}
+
+/* Month View Styles */
+.month-layout {
+  display: flex;
+  gap: var(--ds-space-300);
+  align-items: flex-start;
+}
+
+/* Calendar Card */
+.month-calendar-card {
+  flex: 1;
+  background: var(--ds-background-default);
+  border: 1px solid var(--ds-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.calendar-card-header {
+  padding: var(--ds-space-200) var(--ds-space-300);
+  border-bottom: 1px solid var(--ds-border);
+}
+
+.calendar-card-header h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ds-text);
+}
+
+/* Calendar Table */
+.calendar-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.calendar-table th {
+  padding: var(--ds-space-150) var(--ds-space-100);
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ds-text-subtle);
+  border-bottom: 1px solid var(--ds-border);
+  background: var(--ds-background-neutral-subtle);
+}
+
+.calendar-table th.weekend {
+  color: #DE350B;
+}
+
+.calendar-table td {
+  border: 1px solid var(--ds-border);
+  vertical-align: top;
+  height: 80px;
+  padding: 0;
+}
+
+/* Calendar Cells */
+.calendar-cell {
+  padding: var(--ds-space-100);
+  transition: background-color 0.2s ease;
+}
+
+.calendar-cell.empty {
+  background: var(--ds-background-neutral-subtle);
+}
+
+.calendar-cell.has-time {
+  background: linear-gradient(135deg, #E3FCEF 0%, #ABF5D1 50%);
+}
+
+.calendar-cell.today {
+  background: linear-gradient(135deg, #DEEBFF 0%, #B3D4FF 100%);
+  position: relative;
+}
+
+.calendar-cell.today::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--ds-background-brand-bold);
+}
+
+.calendar-cell.weekend:not(.empty) {
+  background: #FFFBF5;
+}
+
+.calendar-cell.weekend.has-time {
+  background: linear-gradient(135deg, #E3FCEF 0%, #ABF5D1 50%);
+}
+
+.calendar-cell:hover:not(.empty) {
+  background: var(--ds-background-neutral);
+}
+
+.cell-day {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ds-text);
+  margin-bottom: var(--ds-space-050);
+}
+
+.calendar-cell.today .cell-day {
+  color: var(--ds-text-brand);
+  font-weight: 700;
+}
+
+.cell-time {
+  font-size: 12px;
+  font-weight: 600;
+  color: #00875A;
+}
+
+/* Team Summary Sidebar */
+.team-summary {
+  width: 320px;
+  min-width: 280px;
+  max-width: 320px;
+  flex-shrink: 0;
+  background: var(--ds-background-default);
+  border: 1px solid var(--ds-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.team-summary h4 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ds-text);
+  margin: 0;
+  padding: var(--ds-space-200) var(--ds-space-300);
+  border-bottom: 1px solid var(--ds-border);
+  background: var(--ds-background-neutral-subtle);
+}
+
+.team-summary h4::before {
+  display: none;
+}
+
+.team-summary-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.team-summary-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--ds-space-200) var(--ds-space-300);
+  background: var(--ds-background-default);
+  border-bottom: 1px solid var(--ds-border);
+  transition: background-color 0.2s ease;
+}
+
+.team-summary-item:last-child {
+  border-bottom: none;
+}
+
+.team-summary-item::before {
+  display: none;
+}
+
+.team-summary-item:hover {
+  background: var(--ds-background-neutral-subtle);
+  transform: none;
+  box-shadow: none;
+}
+
+.summary-member {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-200);
+  flex: 1;
+  min-width: 0;
+}
+
+.summary-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-050);
+  flex: 1;
+  min-width: 0;
+}
+
+.summary-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ds-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.2px;
+}
+
+.summary-time {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ds-text-brand);
+}
+
+.summary-percentage {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ds-text-subtle);
+  min-width: 45px;
+  text-align: right;
+}

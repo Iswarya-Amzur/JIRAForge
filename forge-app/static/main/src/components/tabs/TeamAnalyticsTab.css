@@ -1,0 +1,436 @@
+/* Team Analytics Tab Styles */
+
+.team-analytics {
+  background: var(--ds-background-neutral);
+  min-height: calc(100vh - 100px);
+  padding: var(--ds-space-200);
+}
+
+.team-analytics > h2 {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--ds-text);
+  margin: 0 0 var(--ds-space-100) 0;
+  letter-spacing: -0.3px;
+  padding: var(--ds-space-300) var(--ds-space-400);
+  background: var(--ds-background-default);
+  border-bottom: 1px solid var(--ds-border);
+  margin: -24px -24px var(--ds-space-300) -24px;
+  padding-bottom: var(--ds-space-300);
+}
+
+.team-analytics-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--ds-space-300);
+  flex-wrap: wrap;
+  gap: var(--ds-space-200);
+}
+
+.team-analytics-header h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--ds-text);
+}
+
+.team-analytics-header .project-selector {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-100);
+}
+
+.team-analytics-header .project-selector label {
+  font-weight: 500;
+  color: var(--ds-text-subtle);
+}
+
+.team-analytics-header .project-selector select {
+  padding: 8px 12px;
+  border: 1px solid var(--ds-border);
+  border-radius: 4px;
+  font-size: 14px;
+  background: white;
+  min-width: 120px;
+}
+
+/* Team KPI Cards */
+.team-kpi-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--ds-space-200);
+  margin-bottom: var(--ds-space-300);
+}
+
+@media (max-width: 1200px) {
+  .team-kpi-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .team-kpi-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+.team-kpi-card {
+  background: white;
+  border-radius: 8px;
+  padding: var(--ds-space-200);
+  box-shadow: var(--ds-shadow-raised);
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-150);
+}
+
+.team-kpi-card .kpi-icon {
+  font-size: 28px;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ds-background-neutral-subtle);
+  border-radius: 8px;
+}
+
+.team-kpi-card .kpi-content {
+  flex: 1;
+}
+
+.team-kpi-card .kpi-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--ds-text);
+  line-height: 1.2;
+}
+
+.team-kpi-card .kpi-label {
+  font-size: 12px;
+  color: var(--ds-text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Team Analytics Grid (Two Column Layout) */
+.team-analytics-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--ds-space-300);
+  margin-bottom: var(--ds-space-300);
+}
+
+@media (max-width: 1000px) {
+  .team-analytics-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Team Section (Generic Card) */
+.team-section {
+  background: white;
+  border-radius: 8px;
+  padding: var(--ds-space-300);
+  box-shadow: var(--ds-shadow-raised);
+}
+
+.team-section .section-header {
+  margin-bottom: var(--ds-space-200);
+}
+
+.team-section .section-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ds-text);
+}
+
+.team-section .section-subtitle {
+  font-size: 13px;
+  color: var(--ds-text-subtle);
+}
+
+/* Team Member Table */
+.team-member-table-container {
+  overflow-x: auto;
+}
+
+.team-member-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.team-member-table thead {
+  background: var(--ds-background-neutral-subtle);
+}
+
+.team-member-table th {
+  padding: var(--ds-space-150) var(--ds-space-200);
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: var(--ds-text-subtle);
+  letter-spacing: 0.5px;
+}
+
+.team-member-table tbody tr {
+  border-bottom: 1px solid var(--ds-border);
+  transition: background-color 0.15s ease;
+}
+
+.team-member-table tbody tr:hover {
+  background: var(--ds-background-neutral-subtle);
+}
+
+.team-member-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.team-member-table td {
+  padding: var(--ds-space-150) var(--ds-space-200);
+  font-size: 14px;
+  color: var(--ds-text);
+  vertical-align: middle;
+}
+
+.member-name-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-100);
+}
+
+.member-avatar {
+  font-size: 18px;
+}
+
+.member-name {
+  font-weight: 500;
+  color: var(--ds-text);
+}
+
+.hours-cell {
+  font-size: 14px;
+  color: var(--ds-text);
+}
+
+.hours-cell strong {
+  font-weight: 600;
+}
+
+/* Activity Trend Chart */
+.trend-chart-container {
+  min-height: 200px;
+  display: flex;
+  align-items: flex-end;
+}
+
+.trend-chart {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 4px;
+  width: 100%;
+  height: 180px;
+  padding-top: 20px;
+}
+
+.trend-bar-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+}
+
+.trend-bar {
+  width: 100%;
+  max-width: 30px;
+  background: linear-gradient(180deg, #0052CC 0%, #0065FF 100%);
+  border-radius: 4px 4px 0 0;
+  min-height: 4px;
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  transition: background 0.2s ease;
+}
+
+.trend-bar:hover {
+  background: linear-gradient(180deg, #0747A6 0%, #0052CC 100%);
+}
+
+.trend-bar-value {
+  position: absolute;
+  top: -20px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ds-text);
+  white-space: nowrap;
+}
+
+.trend-bar-label {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ds-text);
+}
+
+.trend-bar-day {
+  font-size: 9px;
+  color: var(--ds-text-subtle);
+  text-transform: uppercase;
+}
+
+/* Time by Issue Section */
+.team-time-by-issue {
+  margin-top: 0;
+}
+
+.issue-bars-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-150);
+}
+
+.issue-bar-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.issue-bar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.issue-key-link {
+  font-weight: 600;
+  color: var(--ds-link);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.issue-key-link:hover {
+  text-decoration: underline;
+  color: var(--ds-link-pressed);
+}
+
+.issue-stats {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-150);
+}
+
+.issue-hours {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ds-text);
+}
+
+.issue-contributors {
+  font-size: 13px;
+  color: var(--ds-text-subtle);
+}
+
+.issue-bar-track {
+  height: 8px;
+  background: var(--ds-background-neutral);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.issue-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #36B37E 0%, #00875A 100%);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.issue-bar-item:nth-child(2) .issue-bar-fill {
+  background: linear-gradient(90deg, #0052CC 0%, #0065FF 100%);
+}
+
+.issue-bar-item:nth-child(3) .issue-bar-fill {
+  background: linear-gradient(90deg, #6554C0 0%, #8777D9 100%);
+}
+
+.issue-bar-item:nth-child(4) .issue-bar-fill {
+  background: linear-gradient(90deg, #FF991F 0%, #FFAB00 100%);
+}
+
+.issue-bar-item:nth-child(5) .issue-bar-fill {
+  background: linear-gradient(90deg, #00B8D9 0%, #00C7E6 100%);
+}
+
+.issue-bar-item:nth-child(n+6) .issue-bar-fill {
+  background: linear-gradient(90deg, #97A0AF 0%, #A5ADBA 100%);
+}
+
+/* Info Icon and Tooltip */
+.info-icon-wrapper {
+  position: relative;
+  display: inline-block;
+  margin-left: 6px;
+}
+
+.info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  font-style: normal;
+  background: var(--ds-background-neutral);
+  color: var(--ds-text-subtle);
+  border-radius: 50%;
+  cursor: help;
+  transition: background-color 0.15s ease;
+}
+
+.info-icon:hover {
+  background: var(--ds-background-neutral-hovered);
+  color: var(--ds-text);
+}
+
+.info-tooltip {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ds-background-neutral-bold, #172B4D);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: nowrap;
+  z-index: 1000;
+  margin-bottom: 6px;
+  box-shadow: var(--ds-shadow-overlay);
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+}
+
+.info-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 5px;
+  border-style: solid;
+  border-color: var(--ds-background-neutral-bold, #172B4D) transparent transparent transparent;
+}
+
+.info-icon-wrapper:hover .info-tooltip {
+  visibility: visible;
+  opacity: 1;
+}

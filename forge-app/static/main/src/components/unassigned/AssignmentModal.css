@@ -1,0 +1,172 @@
+/* Assignment Modal Styles */
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content.assignment-modal {
+  background: white;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 600px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  border-bottom: 1px solid #dfe1e6;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 20px;
+  color: #172b4d;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 28px;
+  color: #5e6c84;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-close:hover {
+  color: #172b4d;
+}
+
+.modal-body {
+  padding: 20px;
+}
+
+.assignment-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.radio-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 2px solid #dfe1e6;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.radio-option:hover {
+  border-color: #0052cc;
+  background: #f4f5f7;
+}
+
+.radio-option input[type="radio"] {
+  cursor: pointer;
+}
+
+.radio-option input[type="radio"]:checked + span {
+  font-weight: 600;
+  color: #0052cc;
+}
+
+.radio-option span {
+  font-size: 14px;
+  color: #172b4d;
+}
+
+.existing-issue-form,
+.new-issue-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.existing-issue-form label,
+.new-issue-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #172b4d;
+}
+
+.existing-issue-form select,
+.new-issue-form select,
+.new-issue-form input,
+.new-issue-form textarea {
+  padding: 8px 12px;
+  border: 2px solid #dfe1e6;
+  border-radius: 4px;
+  font-size: 14px;
+  font-family: inherit;
+  transition: border-color 0.2s;
+}
+
+.existing-issue-form select:focus,
+.new-issue-form select:focus,
+.new-issue-form input:focus,
+.new-issue-form textarea:focus {
+  outline: none;
+  border-color: #0052cc;
+}
+
+.time-preview {
+  padding: 12px;
+  background: #f4f5f7;
+  border-radius: 4px;
+  font-size: 14px;
+  color: #5e6c84;
+}
+
+.time-preview strong {
+  color: #172b4d;
+  font-weight: 600;
+}
+
+.submit-button {
+  padding: 12px;
+  background: #0052cc;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.submit-button:hover:not(:disabled) {
+  background: #0747a6;
+}
+
+.submit-button:active:not(:disabled) {
+  background: #003884;
+}
+
+.submit-button:disabled {
+  background: #a5adba;
+  cursor: not-allowed;
+}

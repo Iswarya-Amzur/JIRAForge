@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
+import { AssignmentModal, BulkEditModal, FullscreenViewer, GroupAccordion } from './unassigned';
 import './UnassignedWork.css';
 
 function UnassignedWork() {
@@ -7,9 +8,6 @@ function UnassignedWork() {
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selectedGroup, setSelectedGroup] = useState(null);
-  const [showAssignModal, setShowAssignModal] = useState(false);
-  const [assignmentType, setAssignmentType] = useState('existing'); // 'existing' or 'new'
   const [userIssues, setUserIssues] = useState([]);
   const [userProjects, setUserProjects] = useState([]);
 
@@ -20,60 +18,28 @@ function UnassignedWork() {
   const [totalGroups, setTotalGroups] = useState(0);
   const GROUPS_PER_PAGE = 10;
 
-  // Accordion states
-  const [expandedGroups, setExpandedGroups] = useState(new Set());
-  const [groupScreenshots, setGroupScreenshots] = useState({});
-  const [loadingScreenshots, setLoadingScreenshots] = useState({});
-  // Lazy loading: Store detailed group data (session_ids, etc.)
-  const [groupDetails, setGroupDetails] = useState({});
-  const [loadingDetails, setLoadingDetails] = useState({});
+  // Modal states
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState(null);
+  const [showBulkEditModal, setShowBulkEditModal] = useState(false);
 
   // Fullscreen screenshot state
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
-  const [fullscreenGroupId, setFullscreenGroupId] = useState(null);
+  const [fullscreenScreenshots, setFullscreenScreenshots] = useState([]);
   const [fullscreenIndex, setFullscreenIndex] = useState(0);
-
-  // Form states
-  const [selectedIssueKey, setSelectedIssueKey] = useState('');
-  const [newIssueSummary, setNewIssueSummary] = useState('');
-  const [newIssueDescription, setNewIssueDescription] = useState('');
-  const [selectedProject, setSelectedProject] = useState('');
-  const [issueType, setIssueType] = useState('Task');
-  const [assigning, setAssigning] = useState(false);
-  const [selectedStatus, setSelectedStatus] = useState('To Do');
-  const [availableStatuses, setAvailableStatuses] = useState([]);
-  const [assignToMe, setAssignToMe] = useState(true);
 
   // Notification settings state
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [savingNotificationSettings, setSavingNotificationSettings] = useState(false);
   const [notificationSettingsMessage, setNotificationSettingsMessage] = useState(null);
 
-  // Bulk Time Edit state
-  const [showBulkEditModal, setShowBulkEditModal] = useState(false);
-  const [bulkEditDate, setBulkEditDate] = useState(new Date().toISOString().split('T')[0]);
-  const [bulkEditStartTime, setBulkEditStartTime] = useState('09:00');
-  const [bulkEditEndTime, setBulkEditEndTime] = useState('17:00');
-  const [bulkEditTargetIssue, setBulkEditTargetIssue] = useState('');
-  const [bulkEditCreateWorklog, setBulkEditCreateWorklog] = useState(true);
-  const [bulkEditPreview, setBulkEditPreview] = useState(null);
-  const [bulkEditLoading, setBulkEditLoading] = useState(false);
-  const [bulkEditApplying, setBulkEditApplying] = useState(false);
-  const [bulkEditSuccess, setBulkEditSuccess] = useState(null);
-
   useEffect(() => {
     loadUnassignedWork();
     loadUserIssues();
     loadUserProjects();
     loadNotificationSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Load statuses when project changes
-  useEffect(() => {
-    if (selectedProject) {
-      loadProjectStatuses(selectedProject);
-    }
-  }, [selectedProject]);
 
   const loadNotificationSettings = async () => {
     try {
@@ -104,7 +70,6 @@ function UnassignedWork() {
           type: 'success',
           text: newValue ? 'Desktop notifications enabled' : 'Desktop notifications disabled'
         });
-        // Auto-dismiss after 3 seconds
         setTimeout(() => setNotificationSettingsMessage(null), 3000);
       } else {
         setNotificationSettingsMessage({
@@ -123,135 +88,32 @@ function UnassignedWork() {
     }
   };
 
-  // Bulk Time Edit handlers
-  const openBulkEditModal = () => {
-    // Reset state
-    setBulkEditDate(new Date().toISOString().split('T')[0]);
-    setBulkEditStartTime('09:00');
-    setBulkEditEndTime('17:00');
-    setBulkEditTargetIssue('');
-    setBulkEditCreateWorklog(true);
-    setBulkEditPreview(null);
-    setBulkEditSuccess(null);
-    setShowBulkEditModal(true);
-  };
-
-  const closeBulkEditModal = () => {
-    setShowBulkEditModal(false);
-    setBulkEditPreview(null);
-    setBulkEditSuccess(null);
-  };
-
-  const handlePreviewBulkEdit = async () => {
-    if (!bulkEditDate || !bulkEditStartTime || !bulkEditEndTime) {
-      alert('Please select date and time range');
-      return;
-    }
-
-    setBulkEditLoading(true);
-    setBulkEditPreview(null);
-
-    try {
-      const result = await invoke('previewBulkReassign', {
-        selectedDate: bulkEditDate,
-        startTime: bulkEditStartTime,
-        endTime: bulkEditEndTime
-      });
-
-      if (result.success) {
-        setBulkEditPreview(result.preview);
-      } else {
-        alert('Failed to preview: ' + result.error);
-      }
-    } catch (err) {
-      console.error('[UnassignedWork] Error previewing bulk edit:', err);
-      alert('Error previewing: ' + err.message);
-    } finally {
-      setBulkEditLoading(false);
-    }
-  };
-
-  const handleApplyBulkEdit = async () => {
-    if (!bulkEditTargetIssue) {
-      alert('Please select a target issue');
-      return;
-    }
-
-    if (!bulkEditPreview || bulkEditPreview.total_activities === 0) {
-      alert('No activities to reassign. Please preview first.');
-      return;
-    }
-
-    setBulkEditApplying(true);
-
-    try {
-      const result = await invoke('bulkReassignByTimeInterval', {
-        selectedDate: bulkEditDate,
-        startTime: bulkEditStartTime,
-        endTime: bulkEditEndTime,
-        targetIssueKey: bulkEditTargetIssue,
-        createWorklog: bulkEditCreateWorklog
-      });
-
-      if (result.success) {
-        setBulkEditSuccess(result.result);
-        // Reload unassigned work after successful bulk edit
-        loadUnassignedWork();
-      } else {
-        alert('Failed to apply bulk edit: ' + result.error);
-      }
-    } catch (err) {
-      console.error('[UnassignedWork] Error applying bulk edit:', err);
-      alert('Error applying bulk edit: ' + err.message);
-    } finally {
-      setBulkEditApplying(false);
-    }
-  };
-
-  const formatTimeForDisplay = (timestamp) => {
-    if (!timestamp) return '';
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    });
-  };
-
   const loadUnassignedWork = async (append = false) => {
     if (!append) {
       setLoading(true);
       setError(null);
     }
-    
+
     try {
-      // Load pre-clustered groups from database with pagination (lazy loading)
       const offset = append ? nextOffset : 0;
-      const groupsResult = await invoke('getUnassignedGroups', { 
-        limit: GROUPS_PER_PAGE, 
-        offset 
+      const groupsResult = await invoke('getUnassignedGroups', {
+        limit: GROUPS_PER_PAGE,
+        offset
       });
 
       if (groupsResult.success) {
         const newGroups = groupsResult.groups || [];
-        
+
         if (append) {
-          // Append to existing groups
           setGroups(prev => [...prev, ...newGroups]);
         } else {
-          // Replace groups (initial load or refresh)
           setGroups(newGroups);
-          // Reset details cache on fresh load
-          setGroupDetails({});
-          setGroupScreenshots({});
         }
-        
-        // Update pagination state
+
         setHasMoreGroups(groupsResult.has_more || false);
         setNextOffset(groupsResult.next_offset || 0);
         setTotalGroups(groupsResult.total_groups || 0);
 
-        // Only load individual sessions on initial load (for summary display)
         if (!append) {
           const sessionsResult = await invoke('getUnassignedWork', { limit: 100 });
           if (sessionsResult.success) {
@@ -270,7 +132,6 @@ function UnassignedWork() {
     }
   };
 
-  // Load more groups (pagination)
   const loadMoreGroups = async () => {
     if (loadingMore || !hasMoreGroups) return;
     setLoadingMore(true);
@@ -293,291 +154,59 @@ function UnassignedWork() {
       const result = await invoke('getUserProjects');
       if (result.success) {
         setUserProjects(result.projects || []);
-        if (result.projects?.length > 0) {
-          setSelectedProject(result.projects[0].key);
-        }
       }
     } catch (err) {
       console.error('Error loading user projects:', err);
     }
   };
 
-  const loadProjectStatuses = async (projectKey) => {
-    try {
-      const result = await invoke('getProjectStatuses', { projectKey });
-      if (result.success) {
-        setAvailableStatuses(result.statuses || []);
-        // Set default status if available
-        if (result.statuses && result.statuses.length > 0) {
-          const toDoStatus = result.statuses.find(s => s.name === 'To Do');
-          setSelectedStatus(toDoStatus ? 'To Do' : result.statuses[0].name);
-        }
-      }
-    } catch (err) {
-      console.error('Error loading project statuses:', err);
-      // Set default statuses
-      setAvailableStatuses([
-        { name: 'To Do', id: '1' },
-        { name: 'In Progress', id: '3' },
-        { name: 'Done', id: '10001' }
-      ]);
-    }
-  };
-
-  const toggleGroup = async (groupId) => {
-    const newExpanded = new Set(expandedGroups);
-
-    if (newExpanded.has(groupId)) {
-      // Collapse
-      newExpanded.delete(groupId);
-    } else {
-      // Expand - load group details and screenshots if not already loaded
-      newExpanded.add(groupId);
-
-      // LAZY LOADING: Load group details (session_ids) if not cached
-      if (!groupDetails[groupId]) {
-        setLoadingDetails(prev => ({ ...prev, [groupId]: true }));
-        try {
-          console.log('[UnassignedWork] Fetching details for group:', groupId);
-          const detailsResult = await invoke('getGroupDetails', { groupId });
-          
-          if (detailsResult.success) {
-            setGroupDetails(prev => ({ ...prev, [groupId]: detailsResult }));
-            
-            // Now load screenshots using the session_ids from details
-            if (detailsResult.session_ids && detailsResult.session_ids.length > 0) {
-              setLoadingScreenshots(prev => ({ ...prev, [groupId]: true }));
-              try {
-                const screenshotsResult = await invoke('getGroupScreenshots', { 
-                  sessionIds: detailsResult.session_ids 
-                });
-                if (screenshotsResult.success) {
-                  setGroupScreenshots(prev => ({ 
-                    ...prev, 
-                    [groupId]: screenshotsResult.screenshots || [] 
-                  }));
-                }
-              } catch (err) {
-                console.error('Error loading screenshots for group:', err);
-              } finally {
-                setLoadingScreenshots(prev => ({ ...prev, [groupId]: false }));
-              }
-            }
-          } else {
-            console.error('[UnassignedWork] Failed to load group details:', detailsResult.error);
-          }
-        } catch (err) {
-          console.error('Error loading group details:', err);
-        } finally {
-          setLoadingDetails(prev => ({ ...prev, [groupId]: false }));
-        }
-      } else {
-        // Details already loaded, just load screenshots if needed
-        const details = groupDetails[groupId];
-        if (!groupScreenshots[groupId] && details.session_ids && details.session_ids.length > 0) {
-          setLoadingScreenshots(prev => ({ ...prev, [groupId]: true }));
-          try {
-            const result = await invoke('getGroupScreenshots', { sessionIds: details.session_ids });
-            if (result.success) {
-              setGroupScreenshots(prev => ({ ...prev, [groupId]: result.screenshots || [] }));
-            }
-          } catch (err) {
-            console.error('Error loading screenshots for group:', err);
-          } finally {
-            setLoadingScreenshots(prev => ({ ...prev, [groupId]: false }));
-          }
-        }
-      }
-    }
-
-    setExpandedGroups(newExpanded);
-  };
-
-  const formatTimestamp = (timestamp) => {
-    const date = new Date(timestamp);
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    });
-  };
-
-  // NOTE: Clustering is now done automatically by the AI server
-  // Groups are fetched directly from database via getUnassignedGroups
-
-  // Fullscreen screenshot handlers
-  const openFullscreen = (groupId, index) => {
-    setFullscreenGroupId(groupId);
+  // Fullscreen handlers
+  const openFullscreen = (groupId, index, screenshots) => {
+    setFullscreenScreenshots(screenshots);
     setFullscreenIndex(index);
     setFullscreenOpen(true);
   };
 
   const closeFullscreen = () => {
     setFullscreenOpen(false);
-    setFullscreenGroupId(null);
+    setFullscreenScreenshots([]);
     setFullscreenIndex(0);
   };
 
-  const getFullscreenScreenshots = () => {
-    if (!fullscreenGroupId || !groupScreenshots[fullscreenGroupId]) return [];
-    return groupScreenshots[fullscreenGroupId];
-  };
-
   const nextFullscreenImage = () => {
-    const screenshots = getFullscreenScreenshots();
-    if (screenshots.length > 0) {
-      setFullscreenIndex((prev) => (prev < screenshots.length - 1 ? prev + 1 : 0));
+    if (fullscreenScreenshots.length > 0) {
+      setFullscreenIndex((prev) => (prev < fullscreenScreenshots.length - 1 ? prev + 1 : 0));
     }
   };
 
   const prevFullscreenImage = () => {
-    const screenshots = getFullscreenScreenshots();
-    if (screenshots.length > 0) {
-      setFullscreenIndex((prev) => (prev > 0 ? prev - 1 : screenshots.length - 1));
+    if (fullscreenScreenshots.length > 0) {
+      setFullscreenIndex((prev) => (prev > 0 ? prev - 1 : fullscreenScreenshots.length - 1));
     }
   };
 
-  const handleAssignClick = async (group) => {
-    // Get the detailed data (with session_ids) - either from cache or fetch
-    let details = groupDetails[group.id];
-    
-    if (!details) {
-      // Fetch details if not cached
-      try {
-        const detailsResult = await invoke('getGroupDetails', { groupId: group.id });
-        if (detailsResult.success) {
-          details = detailsResult;
-          setGroupDetails(prev => ({ ...prev, [group.id]: detailsResult }));
-        } else {
-          alert('Failed to load group details: ' + detailsResult.error);
-          return;
-        }
-      } catch (err) {
-        alert('Error loading group details: ' + err.message);
-        return;
-      }
-    }
-
-    // Merge group summary with detailed data for assignment
-    const groupWithDetails = {
-      ...group,
-      session_ids: details.session_ids,
-      session_count: details.session_count,
-      total_seconds: details.total_seconds,
-      total_time_formatted: details.total_time_formatted
-    };
-
+  // Assignment handlers
+  const handleAssignClick = (groupWithDetails) => {
     setSelectedGroup(groupWithDetails);
     setShowAssignModal(true);
-
-    // Pre-fill form with AI suggestions
-    if (group.recommendation?.action === 'assign_to_existing' && group.recommendation?.suggested_issue_key) {
-      setAssignmentType('existing');
-      setSelectedIssueKey(group.recommendation.suggested_issue_key);
-    } else if (group.recommendation?.action === 'create_new_issue') {
-      setAssignmentType('new');
-      setNewIssueSummary(group.label || '');
-      setNewIssueDescription(group.description || '');
-    }
   };
 
-  const handleAssignToExisting = async () => {
-    if (!selectedIssueKey) {
-      alert('Please select an issue');
-      return;
-    }
-
-    // Validate session IDs before proceeding
-    if (!selectedGroup.session_ids || !Array.isArray(selectedGroup.session_ids) || selectedGroup.session_ids.length === 0) {
-      alert('No sessions available in this group. Please select a different group.');
-      return;
-    }
-
-    setAssigning(true);
-    try {
-      const result = await invoke('assignToExistingIssue', {
-        sessionIds: selectedGroup.session_ids,
-        issueKey: selectedIssueKey,
-        groupId: selectedGroup.id, // Use actual UUID from database
-        totalSeconds: selectedGroup.total_seconds
-      });
-
-      if (result.success) {
-        alert(`Successfully assigned ${result.assigned_count} session(s) to ${result.issue_key}`);
-        setShowAssignModal(false);
-        setSelectedGroup(null);
-        // Reload unassigned work
-        loadUnassignedWork();
-      } else {
-        alert('Failed to assign work: ' + result.error);
-      }
-    } catch (err) {
-      console.error('Error assigning work:', err);
-      alert('Error assigning work: ' + err.message);
-    } finally {
-      setAssigning(false);
-    }
+  const handleAssignmentComplete = () => {
+    setSelectedGroup(null);
+    loadUnassignedWork();
   };
 
-  const handleCreateNewIssue = async () => {
-    if (!newIssueSummary) {
-      alert('Please enter issue summary');
-      return;
-    }
-
-    if (!selectedProject) {
-      alert('Please select a project');
-      return;
-    }
-
-    // Validate session IDs before proceeding
-    if (!selectedGroup.session_ids || !Array.isArray(selectedGroup.session_ids) || selectedGroup.session_ids.length === 0) {
-      alert('No sessions available in this group. Please select a different group.');
-      return;
-    }
-
-    setAssigning(true);
-    try {
-      const result = await invoke('createIssueAndAssign', {
-        sessionIds: selectedGroup.session_ids,
-        issueSummary: newIssueSummary,
-        issueDescription: newIssueDescription,
-        projectKey: selectedProject,
-        issueType: issueType,
-        totalSeconds: selectedGroup.total_seconds,
-        groupId: selectedGroup.id, // Use actual UUID from database
-        assigneeAccountId: assignToMe ? null : null, // null means use current user (default)
-        statusName: selectedStatus
-      });
-
-      if (result.success) {
-        alert(`Successfully created issue ${result.issue_key} and assigned ${result.assigned_count} session(s)`);
-        setShowAssignModal(false);
-        setSelectedGroup(null);
-        // Reload unassigned work
-        loadUnassignedWork();
-      } else {
-        alert('Failed to create issue: ' + result.error);
-      }
-    } catch (err) {
-      console.error('Error creating issue:', err);
-      alert('Error creating issue: ' + err.message);
-    } finally {
-      setAssigning(false);
-    }
+  // Bulk edit handlers
+  const handleBulkEditSuccess = () => {
+    loadUnassignedWork();
   };
 
-  // Removed generateGroupId - now using actual group.id from database
-
+  // Summary calculations
   const getTotalTime = () => {
-    // Calculate from groups instead of all sessions to match displayed data
     return groups.reduce((sum, g) => sum + (g.total_seconds || 0), 0);
   };
 
   const getTotalSessions = () => {
-    // Count sessions from groups instead of all sessions
     return groups.reduce((sum, g) => sum + (g.session_count || 0), 0);
   };
 
@@ -607,7 +236,7 @@ function UnassignedWork() {
       <div className="unassigned-work-container">
         <h2>Unassigned Work</h2>
         <div className="empty-state">
-          <p>🎉 Great job! You don't have any unassigned work sessions.</p>
+          <p>Great job! You don't have any unassigned work sessions.</p>
           <p className="empty-subtitle">All your work time has been assigned to Jira issues.</p>
         </div>
       </div>
@@ -620,10 +249,9 @@ function UnassignedWork() {
         <div className="header-top-row">
           <h2>Unassigned Work</h2>
           <div className="header-buttons-row">
-            {/* Bulk Time Edit Button */}
-            <button 
+            <button
               className="bulk-time-edit-btn"
-              onClick={openBulkEditModal}
+              onClick={() => setShowBulkEditModal(true)}
               title="Bulk reassign activities by time interval"
             >
               <span className="clock-icon">🕐</span>
@@ -682,598 +310,43 @@ function UnassignedWork() {
         </div>
       )}
 
-      <div className="groups-accordion">
-        {groups.map((group, index) => {
-          const isExpanded = expandedGroups.has(group.id);
-          const screenshots = groupScreenshots[group.id] || [];
-          const isLoadingScreenshots = loadingScreenshots[group.id];
-          const isLoadingGroupDetails = loadingDetails[group.id];
-          const details = groupDetails[group.id];
-
-          return (
-            <div key={group.id || index} className={`accordion-item confidence-${group.confidence}`}>
-              <div
-                className="accordion-header"
-                onClick={() => toggleGroup(group.id)}
-              >
-                <div className="accordion-header-left">
-                  <span className="accordion-toggle">
-                    {isExpanded ? '▼' : '▶'}
-                  </span>
-                  <div className="group-title-section">
-                    <h3 className="group-label">{group.label || 'Untitled Group'}</h3>
-                    {!isExpanded && group.description && (
-                      <p className="group-description-preview">{group.description}</p>
-                    )}
-                  </div>
-                  <span className={`confidence-badge confidence-${group.confidence}`}>
-                    {group.confidence}
-                  </span>
-                </div>
-                <div className="accordion-header-right">
-                  <div className="stat-compact">
-                    <span className="stat-icon">📸</span>
-                    <span className="stat-value">{group.session_count}</span>
-                  </div>
-                  <div className="stat-compact">
-                    <span className="stat-icon">⏱️</span>
-                    <span className="stat-value">{group.total_time_formatted}</span>
-                  </div>
-                  <button
-                    className="assign-button-compact"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleAssignClick(group);
-                    }}
-                  >
-                    Assign
-                  </button>
-                </div>
-              </div>
-
-              {isExpanded && (
-                <div className="accordion-content">
-                  <p className="group-description">{group.description}</p>
-
-                  {group.recommendation && (
-                    <div className={`group-recommendation recommendation-${group.recommendation.action}`}>
-                      <strong>AI Recommendation:</strong> {group.recommendation.reason}
-                      {group.recommendation.suggested_issue_key && (
-                        <div className="suggested-issue">
-                          Suggested Issue: <strong>{group.recommendation.suggested_issue_key}</strong>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Loading state for group details */}
-                  {isLoadingGroupDetails && (
-                    <div className="loading-details">
-                      <span className="spinner"></span>
-                      Loading group details...
-                    </div>
-                  )}
-
-                  {/* Show details when loaded */}
-                  {!isLoadingGroupDetails && details && (
-                    <>
-                      {/* Updated session count from details */}
-                      <div className="group-details-summary">
-                        <span>📸 {details.session_count} sessions</span>
-                        <span className="summary-divider">•</span>
-                        <span>⏱️ {details.total_time_formatted}</span>
-                      </div>
-
-                      <div className="screenshots-section">
-                        <h4 className="screenshots-title">
-                          Screenshots ({details.session_count})
-                        </h4>
-
-                        {isLoadingScreenshots && (
-                          <div className="loading-screenshots">Loading screenshots...</div>
-                        )}
-
-                        {!isLoadingScreenshots && screenshots.length === 0 && (
-                          <div className="no-screenshots">No screenshots available</div>
-                        )}
-
-                        {!isLoadingScreenshots && screenshots.length > 0 && (
-                          <div className="screenshots-grid">
-                            {screenshots.map((screenshot, idx) => (
-                              <div key={screenshot.id || idx} className="screenshot-card">
-                                <div
-                                  className="screenshot-thumbnail clickable"
-                                  onClick={() => openFullscreen(group.id, idx)}
-                                  title="Click to expand"
-                                >
-                                  {screenshot.signed_thumbnail_url ? (
-                                    <img
-                                      src={screenshot.signed_thumbnail_url}
-                                      alt={`Screenshot ${idx + 1}`}
-                                      loading="lazy"
-                                    />
-                                  ) : (
-                                    <div className="screenshot-placeholder">
-                                      📷 No preview
-                                    </div>
-                                  )}
-                                  <div className="expand-icon">🔍</div>
-                                </div>
-                                <div className="screenshot-info">
-                                  <div className="screenshot-time">
-                                    {formatTimestamp(screenshot.timestamp)}
-                                  </div>
-                                  <div className="screenshot-details">
-                                    <div className="screenshot-app" title={screenshot.application_name}>
-                                      {screenshot.application_name || 'Unknown'}
-                                    </div>
-                                    <div className="screenshot-window" title={screenshot.window_title}>
-                                      {screenshot.window_title || 'No title'}
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="accordion-actions">
-                        <button
-                          className="assign-button-full"
-                          onClick={() => handleAssignClick(group)}
-                        >
-                          Assign This Group
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Load More Button for Pagination */}
-      {hasMoreGroups && (
-        <div className="load-more-container">
-          <button 
-            className="load-more-btn"
-            onClick={loadMoreGroups}
-            disabled={loadingMore}
-          >
-            {loadingMore ? (
-              <>
-                <span className="spinner"></span>
-                Loading...
-              </>
-            ) : (
-              <>
-                Load More Groups ({groups.length} of {totalGroups})
-              </>
-            )}
-          </button>
-        </div>
-      )}
+      <GroupAccordion
+        groups={groups}
+        hasMoreGroups={hasMoreGroups}
+        totalGroups={totalGroups}
+        loadingMore={loadingMore}
+        onLoadMore={loadMoreGroups}
+        onAssignClick={handleAssignClick}
+        onOpenFullscreen={openFullscreen}
+      />
 
       {/* Assignment Modal */}
-      {showAssignModal && selectedGroup && (
-        <div className="modal-overlay" onClick={() => setShowAssignModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>Assign "{selectedGroup.label}"</h3>
-              <button className="modal-close" onClick={() => setShowAssignModal(false)}>×</button>
-            </div>
-
-            <div className="modal-body">
-              <div className="assignment-options">
-                <label className="radio-option">
-                  <input
-                    type="radio"
-                    name="assignment-type"
-                    value="existing"
-                    checked={assignmentType === 'existing'}
-                    onChange={() => setAssignmentType('existing')}
-                  />
-                  <span>Add to Existing Issue</span>
-                </label>
-
-                <label className="radio-option">
-                  <input
-                    type="radio"
-                    name="assignment-type"
-                    value="new"
-                    checked={assignmentType === 'new'}
-                    onChange={() => setAssignmentType('new')}
-                  />
-                  <span>Create New Issue</span>
-                </label>
-              </div>
-
-              {assignmentType === 'existing' && (
-                <div className="existing-issue-form">
-                  <label>
-                    Select Jira Issue:
-                    <select
-                      value={selectedIssueKey}
-                      onChange={(e) => setSelectedIssueKey(e.target.value)}
-                    >
-                      <option value="">-- Select Issue --</option>
-                      {userIssues.map(issue => (
-                        <option key={issue.key} value={issue.key}>
-                          {issue.key}: {issue.summary}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="time-preview">
-                    Time to log: <strong>{selectedGroup.total_time_formatted}</strong>
-                  </div>
-                  <button
-                    className="submit-button"
-                    onClick={handleAssignToExisting}
-                    disabled={assigning || !selectedIssueKey}
-                  >
-                    {assigning ? 'Assigning...' : 'Assign to Issue'}
-                  </button>
-                </div>
-              )}
-
-              {assignmentType === 'new' && (
-                <div className="new-issue-form">
-                  <label>
-                    Issue Summary: *
-                    <input
-                      type="text"
-                      value={newIssueSummary}
-                      onChange={(e) => setNewIssueSummary(e.target.value)}
-                      placeholder="Enter issue title"
-                      required
-                    />
-                  </label>
-
-                  <label>
-                    Description:
-                    <textarea
-                      value={newIssueDescription}
-                      onChange={(e) => setNewIssueDescription(e.target.value)}
-                      placeholder="Describe the work performed..."
-                      rows={4}
-                    />
-                  </label>
-
-                  <label>
-                    Project: *
-                    <select
-                      value={selectedProject}
-                      onChange={(e) => setSelectedProject(e.target.value)}
-                      required
-                    >
-                      {userProjects.map(project => (
-                        <option key={project.key} value={project.key}>
-                          {project.name} ({project.key})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    Issue Type:
-                    <select
-                      value={issueType}
-                      onChange={(e) => setIssueType(e.target.value)}
-                    >
-                      <option value="Task">Task</option>
-                      <option value="Bug">Bug</option>
-                      <option value="Story">Story</option>
-                    </select>
-                  </label>
-
-                  <label>
-                    Status: *
-                    <select
-                      value={selectedStatus}
-                      onChange={(e) => setSelectedStatus(e.target.value)}
-                      required
-                    >
-                      {availableStatuses.length > 0 ? (
-                        availableStatuses.map(status => (
-                          <option key={status.id || status.name} value={status.name}>
-                            {status.name}
-                          </option>
-                        ))
-                      ) : (
-                        <>
-                          <option value="To Do">To Do</option>
-                          <option value="In Progress">In Progress</option>
-                          <option value="Done">Done</option>
-                        </>
-                      )}
-                    </select>
-                    <small>Selecting a status prevents the issue from going to backlog</small>
-                  </label>
-
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={assignToMe}
-                      onChange={(e) => setAssignToMe(e.target.checked)}
-                    />
-                    Assign to me (current user)
-                  </label>
-
-                  <div className="time-preview">
-                    Time to log: <strong>{selectedGroup.total_time_formatted}</strong>
-                  </div>
-
-                  <button
-                    className="submit-button"
-                    onClick={handleCreateNewIssue}
-                    disabled={assigning || !newIssueSummary || !selectedProject}
-                  >
-                    {assigning ? 'Creating...' : 'Create Issue & Log Time'}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <AssignmentModal
+        isOpen={showAssignModal}
+        selectedGroup={selectedGroup}
+        userIssues={userIssues}
+        userProjects={userProjects}
+        onClose={() => setShowAssignModal(false)}
+        onAssignmentComplete={handleAssignmentComplete}
+      />
 
       {/* Fullscreen Screenshot View */}
-      {fullscreenOpen && getFullscreenScreenshots().length > 0 && (
-        <div className="fullscreen-overlay" onClick={closeFullscreen}>
-          <div className="fullscreen-content">
-            <button className="fullscreen-close" onClick={closeFullscreen}>
-              ✕ Close
-            </button>
-            <img
-              src={getFullscreenScreenshots()[fullscreenIndex]?.signed_thumbnail_url}
-              alt={`Screenshot ${fullscreenIndex + 1}`}
-              className="fullscreen-image"
-              onClick={(e) => e.stopPropagation()}
-            />
-            <div className="fullscreen-info">
-              <span>{getFullscreenScreenshots()[fullscreenIndex]?.application_name || 'Unknown App'}</span>
-              <span> | </span>
-              <span>{getFullscreenScreenshots()[fullscreenIndex]?.window_title || 'Unknown Window'}</span>
-              <span> | </span>
-              <span>{getFullscreenScreenshots()[fullscreenIndex]?.timestamp
-                ? new Date(getFullscreenScreenshots()[fullscreenIndex].timestamp).toLocaleString()
-                : 'Unknown'}</span>
-              <span> | </span>
-              <span>{fullscreenIndex + 1} of {getFullscreenScreenshots().length}</span>
-            </div>
-            {getFullscreenScreenshots().length > 1 && (
-              <>
-                <button
-                  className="fullscreen-nav fullscreen-prev"
-                  onClick={(e) => { e.stopPropagation(); prevFullscreenImage(); }}
-                >
-                  ◀
-                </button>
-                <button
-                  className="fullscreen-nav fullscreen-next"
-                  onClick={(e) => { e.stopPropagation(); nextFullscreenImage(); }}
-                >
-                  ▶
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      <FullscreenViewer
+        isOpen={fullscreenOpen}
+        screenshots={fullscreenScreenshots}
+        currentIndex={fullscreenIndex}
+        onClose={closeFullscreen}
+        onNext={nextFullscreenImage}
+        onPrev={prevFullscreenImage}
+      />
 
       {/* Bulk Time Edit Modal */}
-      {showBulkEditModal && (
-        <div className="modal-overlay bulk-edit-modal" onClick={closeBulkEditModal}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>🕐 Bulk Time Edit</h3>
-              <button className="modal-close" onClick={closeBulkEditModal}>×</button>
-            </div>
-
-            <div className="modal-body">
-              {bulkEditSuccess ? (
-                // Success state
-                <div className="bulk-edit-success">
-                  <div className="success-icon">✅</div>
-                  <h4>Successfully Reassigned!</h4>
-                  <div className="success-details">
-                    <p><strong>{bulkEditSuccess.total_reassigned}</strong> activities reassigned to <strong>{bulkEditSuccess.target_issue_key}</strong></p>
-                    <p>
-                      • {bulkEditSuccess.previously_tracked} were tracked to other issues<br />
-                      • {bulkEditSuccess.previously_unassigned} were unassigned
-                    </p>
-                    <p>Total time: <strong>{bulkEditSuccess.total_time_formatted}</strong></p>
-                    {bulkEditSuccess.worklog_id && (
-                      <p>Worklog created: #{bulkEditSuccess.worklog_id}</p>
-                    )}
-                  </div>
-                  <button 
-                    className="apply-bulk-edit-btn"
-                    onClick={closeBulkEditModal}
-                    style={{ marginTop: '20px' }}
-                  >
-                    Done
-                  </button>
-                </div>
-              ) : (
-                <>
-                  {/* Time Selection Section */}
-                  <div className="time-selection-section">
-                    <h4>📅 Select Time Interval</h4>
-                    <p style={{ fontSize: '13px', color: '#5e6c84', marginBottom: '16px' }}>
-                      Select a date and time range. All activities (tracked and untracked) within this interval will be reassigned.
-                    </p>
-                    <div className="time-selection-grid">
-                      <div className="time-input-group">
-                        <label>Date</label>
-                        <input 
-                          type="date" 
-                          value={bulkEditDate}
-                          onChange={(e) => setBulkEditDate(e.target.value)}
-                          max={new Date().toISOString().split('T')[0]}
-                        />
-                      </div>
-                      <div className="time-input-group">
-                        <label>Start Time</label>
-                        <input 
-                          type="time" 
-                          value={bulkEditStartTime}
-                          onChange={(e) => setBulkEditStartTime(e.target.value)}
-                        />
-                      </div>
-                      <div className="time-input-group">
-                        <label>End Time</label>
-                        <input 
-                          type="time" 
-                          value={bulkEditEndTime}
-                          onChange={(e) => setBulkEditEndTime(e.target.value)}
-                        />
-                      </div>
-                    </div>
-
-                    <button 
-                      className="preview-btn"
-                      onClick={handlePreviewBulkEdit}
-                      disabled={bulkEditLoading || !bulkEditDate || !bulkEditStartTime || !bulkEditEndTime}
-                    >
-                      {bulkEditLoading ? (
-                        <>
-                          <span className="spinner"></span>
-                          Loading Preview...
-                        </>
-                      ) : (
-                        <>
-                          🔍 Preview Activities
-                        </>
-                      )}
-                    </button>
-                  </div>
-
-                  {/* Preview Results Section */}
-                  {bulkEditPreview && (
-                    <div className="preview-results">
-                      <h4>📊 Activities Found</h4>
-                      
-                      {bulkEditPreview.total_activities === 0 ? (
-                        <div className="no-preview-results">
-                          <div className="empty-icon">📭</div>
-                          <p>No activities found in this time range.</p>
-                          <p>Try adjusting the date or time interval.</p>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="preview-stats">
-                            <div className="preview-stat">
-                              <div className="preview-stat-value">{bulkEditPreview.total_activities}</div>
-                              <div className="preview-stat-label">Total Activities</div>
-                            </div>
-                            <div className="preview-stat total-time">
-                              <div className="preview-stat-value">{bulkEditPreview.total_time_formatted}</div>
-                              <div className="preview-stat-label">Total Time</div>
-                            </div>
-                            <div className="preview-stat wrongly-tracked">
-                              <div className="preview-stat-value">{bulkEditPreview.wrongly_tracked_count}</div>
-                              <div className="preview-stat-label">Currently Tracked</div>
-                            </div>
-                            <div className="preview-stat unassigned">
-                              <div className="preview-stat-value">{bulkEditPreview.unassigned_count}</div>
-                              <div className="preview-stat-label">Unassigned</div>
-                            </div>
-                          </div>
-
-                          {bulkEditPreview.currently_assigned_issues.length > 0 && (
-                            <div className="current-issues-info">
-                              <strong>⚠️ Activities currently assigned to:</strong>
-                              <div style={{ marginTop: '8px' }}>
-                                {bulkEditPreview.currently_assigned_issues.map(issueKey => (
-                                  <span key={issueKey} className="issue-badge">{issueKey}</span>
-                                ))}
-                              </div>
-                              <p style={{ marginTop: '8px', marginBottom: 0, fontSize: '12px' }}>
-                                These will be reassigned to your selected target issue.
-                              </p>
-                            </div>
-                          )}
-
-                          {/* Activities Preview List */}
-                          <div className="activities-preview">
-                            {bulkEditPreview.activities.slice(0, 20).map((activity, index) => (
-                              <div key={activity.id || index} className="activity-preview-item">
-                                <span className="activity-time">
-                                  {formatTimeForDisplay(activity.timestamp)}
-                                </span>
-                                <span className="activity-app" title={activity.window_title}>
-                                  {activity.application_name || 'Unknown App'}
-                                </span>
-                                <span className={`activity-current-issue ${activity.is_unassigned ? 'unassigned' : 'assigned'}`}>
-                                  {activity.is_unassigned ? 'Unassigned' : activity.current_issue_key}
-                                </span>
-                              </div>
-                            ))}
-                            {bulkEditPreview.activities.length > 20 && (
-                              <div className="activity-preview-item" style={{ justifyContent: 'center', color: '#5e6c84' }}>
-                                ... and {bulkEditPreview.activities.length - 20} more activities
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Target Issue Selection */}
-                          <div className="target-issue-section">
-                            <h4>🎯 Select Target Issue</h4>
-                            <select
-                              value={bulkEditTargetIssue}
-                              onChange={(e) => setBulkEditTargetIssue(e.target.value)}
-                            >
-                              <option value="">-- Select Issue to Assign --</option>
-                              {userIssues.map(issue => (
-                                <option key={issue.key} value={issue.key}>
-                                  {issue.key}: {issue.summary}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          {/* Create Worklog Checkbox */}
-                          <label className="worklog-checkbox">
-                            <input
-                              type="checkbox"
-                              checked={bulkEditCreateWorklog}
-                              onChange={(e) => setBulkEditCreateWorklog(e.target.checked)}
-                            />
-                            Create worklog entry for this time ({bulkEditPreview.total_time_formatted})
-                          </label>
-
-                          {/* Apply Button */}
-                          <button
-                            className="apply-bulk-edit-btn"
-                            onClick={handleApplyBulkEdit}
-                            disabled={bulkEditApplying || !bulkEditTargetIssue}
-                          >
-                            {bulkEditApplying ? (
-                              <>
-                                <span className="spinner"></span>
-                                Reassigning...
-                              </>
-                            ) : (
-                              <>
-                                ✓ Reassign {bulkEditPreview.total_activities} Activities to {bulkEditTargetIssue || 'Selected Issue'}
-                              </>
-                            )}
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <BulkEditModal
+        isOpen={showBulkEditModal}
+        userIssues={userIssues}
+        onClose={() => setShowBulkEditModal(false)}
+        onSuccess={handleBulkEditSuccess}
+      />
     </div>
   );
 }
