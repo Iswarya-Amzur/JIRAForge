@@ -17,6 +17,7 @@ module.exports = {
   getOpenAIClient: openaiClient.getOpenAIClient,
   isAIEnabled: openaiClient.isAIEnabled,
   isLiteLLMEnabled: openaiClient.isLiteLLMEnabled,
+  isOpenAIEnabled: openaiClient.isOpenAIEnabled,
   shouldUseFallback: openaiClient.shouldUseFallback,
   getProviderStatus: openaiClient.getProviderStatus,
 

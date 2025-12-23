@@ -33,6 +33,15 @@ function isLiteLLMEnabled() {
 }
 
 /**
+ * Check if OpenAI is enabled via environment variable
+ * @returns {boolean} True if USE_OPENAI is set to 'true' (defaults to true for backward compatibility)
+ */
+function isOpenAIEnabled() {
+  // Default to true for backward compatibility (fallback behavior)
+  return process.env.USE_OPENAI !== 'false';
+}
+
+/**
  * Initialize the LiteLLM client
  * @returns {OpenAI|null} LiteLLM client or null if not configured
  */
@@ -63,6 +72,11 @@ function initializeLiteLLMClient() {
  * @returns {OpenAI|null} OpenAI client or null if not configured
  */
 function initializeOpenAIClient() {
+  if (!isOpenAIEnabled()) {
+    logger.info('[AI] OpenAI disabled (USE_OPENAI=false)');
+    return null;
+  }
+
   if (!process.env.OPENAI_API_KEY) {
     logger.warn('[AI] OpenAI API key not configured - fallback disabled');
     return null;
@@ -86,16 +100,27 @@ function initializeOpenAIClient() {
  */
 function initializeClient() {
   logger.info('[AI] Initializing AI clients...');
+  logger.info('[AI] Config: USE_LITELLM=%s | USE_OPENAI=%s', process.env.USE_LITELLM || 'false', process.env.USE_OPENAI !== 'false' ? 'true' : 'false');
 
-  // Always initialize direct OpenAI as fallback
-  initializeOpenAIClient();
+  // Initialize OpenAI if enabled (for fallback or primary)
+  if (isOpenAIEnabled()) {
+    initializeOpenAIClient();
+  } else {
+    logger.info('[AI] OpenAI disabled (USE_OPENAI=false)');
+  }
 
   // Initialize LiteLLM if enabled
   if (isLiteLLMEnabled()) {
     initializeLiteLLMClient();
-    logger.info('[AI] Mode: LiteLLM primary + OpenAI fallback | Threshold: %d failures | Cooldown: %d min', getFailureThreshold(), getCooldownMinutes());
+    if (isOpenAIEnabled()) {
+      logger.info('[AI] Mode: LiteLLM primary + OpenAI fallback | Threshold: %d failures | Cooldown: %d min', getFailureThreshold(), getCooldownMinutes());
+    } else {
+      logger.info('[AI] Mode: LiteLLM only (no fallback)');
+    }
+  } else if (isOpenAIEnabled()) {
+    logger.info('[AI] Mode: OpenAI only (USE_LITELLM=false)');
   } else {
-    logger.info('[AI] Mode: Direct OpenAI only (USE_LITELLM=false)');
+    logger.warn('[AI] WARNING: Both LiteLLM and OpenAI are disabled! AI features will not work.');
   }
 
   return getClient();
@@ -107,6 +132,9 @@ function initializeClient() {
  */
 function getLiteLLMClient() {
   if (!litellmClient && isLiteLLMEnabled() && process.env.LITELLM_API_KEY) {
+    logger.info('[AI] getLiteLLMClient() lazy init | USE_LITELLM=%s | API_KEY=%s', 
+      process.env.USE_LITELLM, 
+      process.env.LITELLM_API_KEY ? 'present' : 'missing');
     initializeLiteLLMClient();
   }
   return litellmClient;
@@ -117,7 +145,7 @@ function getLiteLLMClient() {
  * @returns {OpenAI|null} Direct OpenAI client or null
  */
 function getOpenAIClient() {
-  if (!openaiClient && process.env.OPENAI_API_KEY) {
+  if (!openaiClient && isOpenAIEnabled() && process.env.OPENAI_API_KEY) {
     initializeOpenAIClient();
   }
   return openaiClient;
@@ -270,12 +298,13 @@ function getLiteLLMUser() {
 function getProviderStatus() {
   return {
     litellmEnabled: isLiteLLMEnabled(),
+    openaiEnabled: isOpenAIEnabled(),
     fallbackActive,
     consecutiveFailures,
     cooldownRemaining: fallbackActive
       ? Math.max(0, getCooldownMinutes() * 60 * 1000 - (Date.now() - fallbackStartTime))
       : 0,
-    currentProvider: isLiteLLMEnabled() && !shouldUseFallback() ? 'litellm' : 'openai'
+    currentProvider: isLiteLLMEnabled() && !shouldUseFallback() ? 'litellm' : (isOpenAIEnabled() ? 'openai' : 'none')
   };
 }
 
@@ -325,7 +354,10 @@ async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tok
     }
   }
 
-  // Fallback to direct OpenAI
+  // Fallback to direct OpenAI (if enabled)
+  if (!isOpenAIEnabled()) {
+    logger.debug('[AI] OpenAI fallback skipped (USE_OPENAI=false)');
+  }
   const openai = getOpenAIClient();
   if (openai) {
     try {
@@ -367,6 +399,7 @@ module.exports = {
   // Status checks
   isAIEnabled,
   isLiteLLMEnabled,
+  isOpenAIEnabled,
   shouldUseFallback,
   getProviderStatus,
 
