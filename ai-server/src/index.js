@@ -10,6 +10,7 @@ const authMiddleware = require('./middleware/auth');
 const logger = require('./utils/logger');
 const pollingService = require('./services/polling-service');
 const clusteringPollingService = require('./services/clustering-polling-service');
+const aiService = require('./services/ai');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
