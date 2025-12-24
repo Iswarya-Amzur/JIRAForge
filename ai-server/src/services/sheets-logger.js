@@ -113,10 +113,12 @@ class SheetsLogger {
         creds = JSON.parse(creds);
       }
 
-      // Create JWT auth client
-      this._auth = new google.auth.JWT({
-        email: creds.client_email,
-        key: creds.private_key,
+      // Use GoogleAuth with credentials object (works better with Node.js 17+ / OpenSSL 3.0)
+      this._auth = new google.auth.GoogleAuth({
+        credentials: {
+          client_email: creds.client_email,
+          private_key: creds.private_key,
+        },
         scopes: ['https://www.googleapis.com/auth/spreadsheets']
       });
 
