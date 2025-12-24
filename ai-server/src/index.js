@@ -11,6 +11,7 @@ const logger = require('./utils/logger');
 const pollingService = require('./services/polling-service');
 const clusteringPollingService = require('./services/clustering-polling-service');
 const aiService = require('./services/ai');
+const { initializeSheetsLogger } = require('./services/sheets-logger');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -200,6 +201,9 @@ async function startServer() {
       // Initialize AI clients at startup
       logger.info('Initializing AI clients...');
       aiService.initializeClient();
+
+      // Initialize Google Sheets logger for LLM usage tracking
+      initializeSheetsLogger();
 
       // Step 1: Start clustering service first (includes startup clustering if needed)
       // This runs any missed clustering before we start processing new screenshots

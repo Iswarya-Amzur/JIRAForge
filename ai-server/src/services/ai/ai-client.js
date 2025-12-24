@@ -1,0 +1,444 @@
+/**
+ * AI Client Module
+ * Centralized AI client management with Fireworks AI primary + LiteLLM fallback
+ *
+ * Flow:
+ * 1. Fireworks AI is primary (if USE_FIREWORKS=true)
+ * 2. LiteLLM is fallback (if USE_LITELLM=true)
+ * 3. After consecutive failures, switch to fallback provider
+ */
+
+const OpenAI = require('openai');
+const logger = require('../../utils/logger');
+const { logLLMRequest } = require('../sheets-logger');
+
+// Client instances
+let fireworksClient = null;
+let litellmClient = null;
+
+// Failure tracking state
+let consecutiveFailures = 0;
+let fallbackActive = false;
+let fallbackStartTime = null;
+
+// Configuration (with defaults)
+const getFailureThreshold = () => parseInt(process.env.FAILURE_THRESHOLD) || 3;
+const getCooldownMinutes = () => parseInt(process.env.COOLDOWN_MINUTES) || 5;
+
+/**
+ * Check if Fireworks AI is enabled via environment variable
+ * @returns {boolean} True if USE_FIREWORKS is set to 'true'
+ */
+function isFireworksEnabled() {
+  return process.env.USE_FIREWORKS === 'true';
+}
+
+/**
+ * Check if LiteLLM is enabled via environment variable
+ * @returns {boolean} True if USE_LITELLM is set to 'true'
+ */
+function isLiteLLMEnabled() {
+  return process.env.USE_LITELLM === 'true';
+}
+
+/**
+ * Initialize the Fireworks AI client
+ * @returns {OpenAI|null} Fireworks client or null if not configured
+ */
+function initializeFireworksClient() {
+  const fireworksApiKey = process.env.FIREWORKS_API_KEY;
+  const fireworksBaseUrl = process.env.FIREWORKS_BASE_URL || 'https://api.fireworks.ai/inference/v1';
+
+  if (!fireworksApiKey) {
+    logger.warn('[AI] Fireworks API key not configured');
+    return null;
+  }
+
+  try {
+    fireworksClient = new OpenAI({
+      apiKey: fireworksApiKey,
+      baseURL: fireworksBaseUrl
+    });
+    const model = getFireworksModel();
+    logger.info('[AI] Fireworks initialized | Endpoint: %s | Model: %s', fireworksBaseUrl, getShortModelName(model));
+    return fireworksClient;
+  } catch (error) {
+    logger.error('[AI] Fireworks init failed: %s', error.message);
+    return null;
+  }
+}
+
+/**
+ * Initialize the LiteLLM client
+ * @returns {OpenAI|null} LiteLLM client or null if not configured
+ */
+function initializeLiteLLMClient() {
+  const litellmApiKey = process.env.LITELLM_API_KEY;
+  const litellmBaseUrl = process.env.LITELLM_BASE_URL || 'https://litellm.amzur.com';
+
+  if (!litellmApiKey) {
+    logger.warn('[AI] LiteLLM API key not configured');
+    return null;
+  }
+
+  try {
+    litellmClient = new OpenAI({
+      apiKey: litellmApiKey,
+      baseURL: litellmBaseUrl
+    });
+    logger.info('[AI] LiteLLM initialized | Endpoint: %s | Model: %s', litellmBaseUrl, getShortModelName(process.env.LITELLM_MODEL || 'llama-v3p2-90b-vision'));
+    return litellmClient;
+  } catch (error) {
+    logger.error('[AI] LiteLLM init failed: %s', error.message);
+    return null;
+  }
+}
+
+/**
+ * Initialize all clients
+ * Called once at application startup
+ */
+function initializeClient() {
+  logger.info('[AI] Initializing AI clients...');
+  logger.info('[AI] Config: USE_FIREWORKS=%s | USE_LITELLM=%s',
+    process.env.USE_FIREWORKS || 'false',
+    process.env.USE_LITELLM || 'false');
+
+  // Initialize Fireworks if enabled (primary)
+  if (isFireworksEnabled()) {
+    initializeFireworksClient();
+  }
+
+  // Initialize LiteLLM if enabled (fallback)
+  if (isLiteLLMEnabled()) {
+    initializeLiteLLMClient();
+  }
+
+  // Log the mode
+  const providers = [];
+  if (isFireworksEnabled()) providers.push('Fireworks');
+  if (isLiteLLMEnabled()) providers.push('LiteLLM');
+
+  if (providers.length === 0) {
+    logger.warn('[AI] WARNING: No AI providers enabled! AI features will not work.');
+  } else if (providers.length === 1) {
+    logger.info('[AI] Mode: %s only (no fallback)', providers[0]);
+  } else {
+    logger.info('[AI] Mode: %s (with fallback) | Threshold: %d failures | Cooldown: %d min',
+      providers.join(' -> '), getFailureThreshold(), getCooldownMinutes());
+  }
+
+  return getClient();
+}
+
+/**
+ * Get the Fireworks client instance
+ * @returns {OpenAI|null} Fireworks client or null
+ */
+function getFireworksClient() {
+  if (!fireworksClient && isFireworksEnabled() && process.env.FIREWORKS_API_KEY) {
+    logger.info('[AI] getFireworksClient() lazy init');
+    initializeFireworksClient();
+  }
+  return fireworksClient;
+}
+
+/**
+ * Get the LiteLLM client instance
+ * @returns {OpenAI|null} LiteLLM client or null
+ */
+function getLiteLLMClient() {
+  if (!litellmClient && isLiteLLMEnabled() && process.env.LITELLM_API_KEY) {
+    logger.info('[AI] getLiteLLMClient() lazy init');
+    initializeLiteLLMClient();
+  }
+  return litellmClient;
+}
+
+/**
+ * Get primary client based on configuration
+ * @returns {OpenAI|null} Primary client based on configuration
+ */
+function getClient() {
+  // Priority: Fireworks -> LiteLLM
+  if (isFireworksEnabled() && !shouldUseFallback()) {
+    return getFireworksClient() || getLiteLLMClient();
+  }
+  if (isLiteLLMEnabled()) {
+    return getLiteLLMClient();
+  }
+  return getFireworksClient();
+}
+
+/**
+ * Check if AI analysis is enabled
+ * @returns {boolean} True if any AI client is available
+ */
+function isAIEnabled() {
+  const hasClient = getFireworksClient() !== null || getLiteLLMClient() !== null;
+  return hasClient && process.env.USE_AI_FOR_SCREENSHOTS !== 'false';
+}
+
+/**
+ * Check if we should use fallback due to primary provider failures
+ * @returns {boolean} True if fallback mode is active and cooldown hasn't passed
+ */
+function shouldUseFallback() {
+  if (!fallbackActive) return false;
+
+  // Check if cooldown period has passed
+  const cooldownMs = getCooldownMinutes() * 60 * 1000;
+  const elapsed = Date.now() - fallbackStartTime;
+
+  if (elapsed >= cooldownMs) {
+    // Cooldown complete, reset and try primary again
+    logger.info('[AI] Cooldown complete - switching back to primary provider');
+    fallbackActive = false;
+    consecutiveFailures = 0;
+    return false;
+  }
+
+  const remainingMin = Math.ceil((cooldownMs - elapsed) / 60000);
+  logger.debug('[AI] Fallback active - %d min remaining', remainingMin);
+  return true;
+}
+
+/**
+ * Handle primary provider request failure
+ * Tracks consecutive failures and activates fallback if threshold reached
+ * @param {Error} error - The error that occurred
+ * @param {string} provider - The provider name (Fireworks, LiteLLM)
+ */
+function handlePrimaryFailure(error, provider) {
+  consecutiveFailures++;
+  logger.warn('[AI] %s failed (%d/%d): %s', provider, consecutiveFailures, getFailureThreshold(), error.message);
+
+  if (consecutiveFailures >= getFailureThreshold()) {
+    fallbackActive = true;
+    fallbackStartTime = Date.now();
+    logger.warn('[AI] Switching to fallback for %d minutes', getCooldownMinutes());
+  }
+}
+
+/**
+ * Handle successful primary provider request
+ * Resets failure counter
+ */
+function handlePrimarySuccess() {
+  if (consecutiveFailures > 0) {
+    logger.info('[AI] Primary provider recovered after %d failure(s)', consecutiveFailures);
+  }
+  consecutiveFailures = 0;
+}
+
+/**
+ * Get the Fireworks model name
+ * @returns {string} Model name for Fireworks requests
+ */
+function getFireworksModel() {
+  return process.env.FIREWORKS_MODEL || 'accounts/fireworks/models/qwen2p5-vl-32b-instruct';
+}
+
+/**
+ * Get the LiteLLM model name
+ * @returns {string} Model name for LiteLLM requests
+ */
+function getLiteLLMModel() {
+  return process.env.LITELLM_MODEL || 'fireworks_ai/accounts/fireworks/models/llama-v3p2-90b-vision-instruct';
+}
+
+/**
+ * Get short model name for logging
+ * @param {string} model - Full model name
+ * @returns {string} Short model name
+ */
+function getShortModelName(model) {
+  // Fireworks models
+  if (model.includes('qwen2p5-vl-32b')) return 'Qwen2.5-VL-32B';
+  if (model.includes('qwen2p5-vl-72b')) return 'Qwen2.5-VL-72B';
+  if (model.includes('llama-v3p2-90b-vision')) return 'Llama-90B-Vision';
+  if (model.includes('llama-v3p2-11b-vision')) return 'Llama-11B-Vision';
+  // Fallback: extract last part of model path
+  return model.split('/').pop() || model;
+}
+
+/**
+ * Get the configured vision model (based on current mode)
+ * @returns {string} Model name for vision analysis
+ */
+function getVisionModel() {
+  if (isFireworksEnabled() && !shouldUseFallback()) {
+    return getFireworksModel();
+  }
+  if (isLiteLLMEnabled()) {
+    return getLiteLLMModel();
+  }
+  return getFireworksModel();
+}
+
+/**
+ * Get the configured text model (based on current mode)
+ * @returns {string} Model name for text analysis
+ */
+function getTextModel() {
+  if (isFireworksEnabled() && !shouldUseFallback()) {
+    return getFireworksModel();
+  }
+  if (isLiteLLMEnabled()) {
+    return getLiteLLMModel();
+  }
+  return getFireworksModel();
+}
+
+/**
+ * Get user identifier for LiteLLM tracking
+ * @returns {string} User email for usage tracking
+ */
+function getLiteLLMUser() {
+  return process.env.LITELLM_USER || 'ai-server@amzur.com';
+}
+
+/**
+ * Get current provider status for logging/monitoring
+ * @returns {Object} Current AI provider status
+ */
+function getProviderStatus() {
+  let currentProvider = 'none';
+  if (isFireworksEnabled() && !shouldUseFallback()) {
+    currentProvider = 'fireworks';
+  } else if (isLiteLLMEnabled()) {
+    currentProvider = 'litellm';
+  }
+
+  return {
+    fireworksEnabled: isFireworksEnabled(),
+    litellmEnabled: isLiteLLMEnabled(),
+    fallbackActive,
+    consecutiveFailures,
+    cooldownRemaining: fallbackActive
+      ? Math.max(0, getCooldownMinutes() * 60 * 1000 - (Date.now() - fallbackStartTime))
+      : 0,
+    currentProvider
+  };
+}
+
+/**
+ * Execute a chat completion with automatic fallback: Fireworks -> LiteLLM
+ *
+ * @param {Object} params - Chat completion parameters
+ * @param {Array} params.messages - Messages array
+ * @param {number} params.temperature - Temperature setting (default: 0.3)
+ * @param {number} params.max_tokens - Max tokens (default: 800)
+ * @param {boolean} params.isVision - Whether this is a vision request (default: false)
+ * @returns {Promise<Object>} { response, provider, model }
+ */
+async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tokens = 800, isVision = false }) {
+  const errors = [];
+  const requestType = isVision ? 'vision' : 'text';
+
+  // Determine models
+  const fireworksModel = getFireworksModel();
+  const litellmModel = getLiteLLMModel();
+
+  // Try Fireworks first (if enabled and not in fallback mode)
+  if (isFireworksEnabled() && !shouldUseFallback()) {
+    const fireworks = getFireworksClient();
+    if (fireworks) {
+      try {
+        const startTime = Date.now();
+        logger.info('[AI] %s request via Fireworks (%s)', requestType, getShortModelName(fireworksModel));
+
+        const response = await fireworks.chat.completions.create({
+          model: fireworksModel,
+          messages,
+          temperature,
+          max_tokens
+        });
+
+        const duration = Date.now() - startTime;
+        handlePrimarySuccess();
+        logger.info('[AI] %s request completed | Fireworks | %dms', requestType, duration);
+
+        // Log to Google Sheets (async, don't block response)
+        const usage = response.usage || {};
+        logLLMRequest({
+          apiCallName: requestType,
+          provider: 'Fireworks',
+          model: fireworksModel,
+          inputTokens: usage.prompt_tokens || 0,
+          outputTokens: usage.completion_tokens || 0
+        }).catch(() => {}); // Ignore logging errors
+
+        return { response, provider: 'fireworks', model: fireworksModel };
+      } catch (error) {
+        handlePrimaryFailure(error, 'Fireworks');
+        errors.push({ provider: 'fireworks', error: error.message });
+        // Continue to LiteLLM fallback
+      }
+    }
+  }
+
+  // Fallback to LiteLLM (if enabled)
+  if (isLiteLLMEnabled()) {
+    const litellm = getLiteLLMClient();
+    if (litellm) {
+      try {
+        const startTime = Date.now();
+        const note = errors.length > 0 ? ' (Fireworks failed)' : '';
+        logger.info('[AI] %s request via LiteLLM%s (%s)', requestType, note, getShortModelName(litellmModel));
+
+        const response = await litellm.chat.completions.create({
+          model: litellmModel,
+          messages,
+          temperature,
+          max_tokens,
+          user: getLiteLLMUser()
+        });
+
+        const duration = Date.now() - startTime;
+        handlePrimarySuccess();
+        logger.info('[AI] %s request completed | LiteLLM | %dms', requestType, duration);
+
+        // Note: LiteLLM calls are NOT logged to Google Sheets
+        // Only direct Fireworks AI calls are logged for cost tracking
+
+        return { response, provider: 'litellm', model: litellmModel };
+      } catch (error) {
+        logger.error('[AI] LiteLLM request failed: %s', error.message);
+        errors.push({ provider: 'litellm', error: error.message });
+      }
+    }
+  }
+
+  // All providers failed
+  const errorMsg = errors.map(e => `${e.provider}: ${e.error}`).join('; ');
+  logger.error('[AI] All providers failed: %s', errorMsg);
+  throw new Error(`All AI providers failed: ${errorMsg}`);
+}
+
+module.exports = {
+  // Initialization
+  initializeClient,
+
+  // Client getters
+  getClient,
+  getFireworksClient,
+  getLiteLLMClient,
+
+  // Status checks
+  isAIEnabled,
+  isFireworksEnabled,
+  isLiteLLMEnabled,
+  shouldUseFallback,
+  getProviderStatus,
+
+  // Model getters
+  getVisionModel,
+  getTextModel,
+  getFireworksModel,
+  getLiteLLMModel,
+  getLiteLLMUser,
+
+  // Main request function with fallback
+  chatCompletionWithFallback
+};

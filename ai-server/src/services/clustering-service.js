@@ -1,10 +1,10 @@
 /**
  * Clustering Service
  * Groups unassigned work sessions using AI
- * Supports LiteLLM primary with automatic OpenAI fallback
+ * Supports Fireworks AI primary with automatic LiteLLM fallback
  */
 
-const { chatCompletionWithFallback, isAIEnabled } = require('./ai/openai-client');
+const { chatCompletionWithFallback, isAIEnabled } = require('./ai/ai-client');
 const logger = require('../utils/logger');
 
 // Applications that should ALWAYS be grouped separately (system/idle apps)
@@ -62,7 +62,7 @@ Duration: ${Math.round((session.time_spent_seconds || 0) / 60)} minutes
 
 /**
  * Cluster unassigned work sessions using AI
- * Uses LiteLLM as primary, falls back to OpenAI on consecutive failures
+ * Uses Fireworks AI as primary, falls back to LiteLLM on consecutive failures
  *
  * @param {Array} sessions - Array of unassigned work sessions
  * @param {Array} userIssues - User's assigned Jira issues for suggestion

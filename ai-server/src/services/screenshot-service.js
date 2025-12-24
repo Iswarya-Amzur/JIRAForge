@@ -2,15 +2,23 @@
  * Screenshot Service
  * Main service for screenshot analysis - orchestrates AI-based analysis
  *
- * Refactored to use modular AI services:
- * - ai/openai-client.js - OpenAI client management
+ * Uses modular AI services:
+ * - ai/ai-client.js - AI client management (Fireworks + LiteLLM)
  * - ai/prompts.js - AI prompts
- * - ai/vision-analyzer.js - GPT-4 Vision analysis
- * - ai/ocr-analyzer.js - OCR + GPT-4 text analysis
+ * - ai/vision-analyzer.js - Vision-based analysis
+ * - ai/ocr-analyzer.js - OCR + AI text analysis
  */
 
 const logger = require('../utils/logger');
 const { isAIEnabled, analyzeWithVision, analyzeWithOCRPipeline } = require('./ai');
+
+/**
+ * Check if OCR fallback is enabled via environment variable
+ * @returns {boolean} True if USE_OCR_FALLBACK is not set to 'false'
+ */
+function isOCRFallbackEnabled() {
+  return process.env.USE_OCR_FALLBACK !== 'false';
+}
 
 /**
  * Analyze activity using AI (GPT-4 Vision primary, OCR fallback)
@@ -57,7 +65,7 @@ exports.analyzeActivity = async ({ imageBuffer, windowTitle, applicationName, ti
     }
 
     // If Vision analysis failed or not available, fall back to OCR + GPT-4 text
-    if (!visionAnalysis && imageBuffer) {
+    if (!visionAnalysis && imageBuffer && isOCRFallbackEnabled()) {
       logger.info('Falling back to OCR-based analysis');
       try {
         visionAnalysis = await analyzeWithOCRPipeline({
@@ -83,6 +91,16 @@ exports.analyzeActivity = async ({ imageBuffer, windowTitle, applicationName, ti
           extractedText: ''
         };
       }
+    } else if (!visionAnalysis && imageBuffer && !isOCRFallbackEnabled()) {
+      logger.info('OCR fallback disabled (USE_OCR_FALLBACK=false), using basic heuristics');
+      visionAnalysis = {
+        taskKey: null,
+        projectKey: null,
+        workType: 'office',
+        confidenceScore: 0.3,
+        reasoning: 'OCR fallback disabled - using basic heuristics',
+        extractedText: ''
+      };
     }
 
     // Extract final results

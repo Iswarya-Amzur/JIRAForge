@@ -1,12 +1,12 @@
 /**
  * OCR Analyzer Module
  * Handles OCR text extraction and AI text-based analysis (fallback method)
- * Supports LiteLLM primary with automatic OpenAI fallback
+ * Supports Fireworks AI primary with automatic LiteLLM fallback
  */
 
 const Tesseract = require('tesseract.js');
 const sharp = require('sharp');
-const { chatCompletionWithFallback, isAIEnabled } = require('./openai-client');
+const { chatCompletionWithFallback, isAIEnabled } = require('./ai-client');
 const { OCR_SYSTEM_PROMPT, buildOCRUserPrompt, formatAssignedIssues } = require('./prompts');
 const { parseAIResponse, validateAndFormatResult } = require('./vision-analyzer');
 const logger = require('../../utils/logger');
@@ -47,7 +47,7 @@ async function extractText(imageBuffer) {
 
 /**
  * Analyze screenshot using AI text model with OCR (fallback method)
- * Uses LiteLLM as primary, falls back to OpenAI on consecutive failures
+ * Uses Fireworks AI as primary, falls back to LiteLLM on consecutive failures
  *
  * @param {Object} params - Analysis parameters
  * @param {string} params.extractedText - OCR extracted text

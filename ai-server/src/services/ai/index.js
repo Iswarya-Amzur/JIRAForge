@@ -1,36 +1,35 @@
 /**
  * AI Services Module - Re-exports
  * Provides a single entry point for all AI-related services
- * Supports LiteLLM primary with automatic OpenAI fallback
+ * Supports Fireworks AI primary with automatic LiteLLM fallback
  */
 
-const openaiClient = require('./openai-client');
+const aiClient = require('./ai-client');
 const prompts = require('./prompts');
 const visionAnalyzer = require('./vision-analyzer');
 const ocrAnalyzer = require('./ocr-analyzer');
 
 module.exports = {
-  // OpenAI/LiteLLM Client
-  initializeClient: openaiClient.initializeClient,
-  getClient: openaiClient.getClient,
-  getLiteLLMClient: openaiClient.getLiteLLMClient,
-  getOpenAIClient: openaiClient.getOpenAIClient,
-  isAIEnabled: openaiClient.isAIEnabled,
-  isLiteLLMEnabled: openaiClient.isLiteLLMEnabled,
-  isOpenAIEnabled: openaiClient.isOpenAIEnabled,
-  shouldUseFallback: openaiClient.shouldUseFallback,
-  getProviderStatus: openaiClient.getProviderStatus,
+  // AI Client (Fireworks + LiteLLM)
+  initializeClient: aiClient.initializeClient,
+  getClient: aiClient.getClient,
+  getFireworksClient: aiClient.getFireworksClient,
+  getLiteLLMClient: aiClient.getLiteLLMClient,
+  isAIEnabled: aiClient.isAIEnabled,
+  isFireworksEnabled: aiClient.isFireworksEnabled,
+  isLiteLLMEnabled: aiClient.isLiteLLMEnabled,
+  shouldUseFallback: aiClient.shouldUseFallback,
+  getProviderStatus: aiClient.getProviderStatus,
 
   // Model getters
-  getVisionModel: openaiClient.getVisionModel,
-  getTextModel: openaiClient.getTextModel,
-  getLiteLLMModel: openaiClient.getLiteLLMModel,
-  getOpenAIVisionModel: openaiClient.getOpenAIVisionModel,
-  getOpenAITextModel: openaiClient.getOpenAITextModel,
-  getLiteLLMUser: openaiClient.getLiteLLMUser,
+  getVisionModel: aiClient.getVisionModel,
+  getTextModel: aiClient.getTextModel,
+  getFireworksModel: aiClient.getFireworksModel,
+  getLiteLLMModel: aiClient.getLiteLLMModel,
+  getLiteLLMUser: aiClient.getLiteLLMUser,
 
   // Main request function with fallback
-  chatCompletionWithFallback: openaiClient.chatCompletionWithFallback,
+  chatCompletionWithFallback: aiClient.chatCompletionWithFallback,
 
   // Prompts
   VISION_SYSTEM_PROMPT: prompts.VISION_SYSTEM_PROMPT,

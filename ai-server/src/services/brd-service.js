@@ -1,12 +1,7 @@
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
-const OpenAI = require('openai');
+const { chatCompletionWithFallback, isAIEnabled } = require('./ai/ai-client');
 const logger = require('../utils/logger');
-
-// Initialize OpenAI client (or use Gemini API)
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
 
 /**
  * Extract text from PDF document
@@ -36,36 +31,63 @@ exports.extractTextFromDocx = async (docxBuffer) => {
 
 /**
  * Parse requirements from BRD text using AI
+ * Uses Fireworks AI as primary, falls back to LiteLLM on consecutive failures
  */
 exports.parseRequirements = async (text, context = {}) => {
+  if (!isAIEnabled()) {
+    throw new Error('AI client not initialized - check API keys');
+  }
+
   try {
     const prompt = buildPrompt(text, context);
 
-    const response = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are an expert business analyst who extracts structured requirements from Business Requirements Documents (BRDs). You parse the document and create a hierarchical structure of Epics, Stories, and Tasks suitable for Jira.'
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      temperature: 0.3, // Lower temperature for more consistent output
-      response_format: { type: 'json_object' }
+    const messages = [
+      {
+        role: 'system',
+        content: 'You are an expert business analyst who extracts structured requirements from Business Requirements Documents (BRDs). You parse the document and create a hierarchical structure of Epics, Stories, and Tasks suitable for Jira. Always respond with valid JSON only.'
+      },
+      {
+        role: 'user',
+        content: prompt
+      }
+    ];
+
+    const { response, provider, model } = await chatCompletionWithFallback({
+      messages,
+      temperature: 0.3,
+      max_tokens: 4000,
+      isVision: false
     });
 
-    const parsedData = JSON.parse(response.choices[0].message.content);
+    const content = response.choices[0].message.content.trim();
+
+    // Parse JSON from the response (handle markdown code blocks)
+    let parsedData;
+    try {
+      const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) ||
+                        content.match(/```\s*([\s\S]*?)\s*```/);
+      const jsonString = jsonMatch ? jsonMatch[1] : content;
+      parsedData = JSON.parse(jsonString);
+    } catch (parseError) {
+      logger.error('Failed to parse BRD response as JSON:', content.substring(0, 200));
+      throw new Error('Invalid JSON response from AI');
+    }
+
+    logger.info('[BRD] Requirements parsed | %s (%s) | epics: %d, stories: %d, tasks: %d',
+      provider, model,
+      parsedData.epics?.length || 0,
+      parsedData.stories?.length || 0,
+      parsedData.tasks?.length || 0
+    );
 
     return {
       epics: parsedData.epics || [],
       stories: parsedData.stories || [],
       tasks: parsedData.tasks || [],
-      modelVersion: response.model,
+      modelVersion: model,
+      aiProvider: provider,
       metadata: {
-        tokensUsed: response.usage.total_tokens,
+        tokensUsed: response.usage?.total_tokens || 0,
         finishReason: response.choices[0].finish_reason
       }
     };

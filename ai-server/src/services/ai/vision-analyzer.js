@@ -1,17 +1,17 @@
 /**
  * Vision Analyzer Module
  * Handles Vision-based screenshot analysis
- * Supports LiteLLM primary with automatic OpenAI fallback
+ * Supports Fireworks AI primary with automatic LiteLLM fallback
  */
 
-const { chatCompletionWithFallback, isAIEnabled } = require('./openai-client');
+const { chatCompletionWithFallback, isAIEnabled } = require('./ai-client');
 const { VISION_SYSTEM_PROMPT, buildVisionUserPrompt, formatAssignedIssues } = require('./prompts');
 const logger = require('../../utils/logger');
 
 /**
  * Analyze screenshot using Vision API
  * This is the PRIMARY analysis method - analyzes image directly
- * Uses LiteLLM as primary, falls back to OpenAI on consecutive failures
+ * Uses Fireworks AI as primary, falls back to LiteLLM on consecutive failures
  *
  * @param {Object} params - Analysis parameters
  * @param {Buffer} params.imageBuffer - Screenshot image buffer
