@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 import { AssignmentModal, BulkEditModal, FullscreenViewer, GroupAccordion } from './unassigned';
+import { AiDisclaimer } from './common/AiDisclaimer';
 import './UnassignedWork.css';
 
 function UnassignedWork() {
@@ -301,6 +302,8 @@ function UnassignedWork() {
           )}
         </div>
       </div>
+
+      {groups.length > 0 && <AiDisclaimer />}
 
       {groups.length === 0 && sessions.length > 0 && (
         <div className="no-groups-message">
