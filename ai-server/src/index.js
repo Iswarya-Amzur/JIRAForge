@@ -6,6 +6,7 @@ require('dotenv').config();
 
 const screenshotController = require('./controllers/screenshot-controller');
 const brdController = require('./controllers/brd-controller');
+const authController = require('./controllers/auth-controller');
 const authMiddleware = require('./middleware/auth');
 const logger = require('./utils/logger');
 const pollingService = require('./services/polling-service');
@@ -47,6 +48,39 @@ app.get('/health', (req, res) => {
     uptime: process.uptime()
   });
 });
+
+// =============================================================================
+// AUTH ROUTES (Public - no authMiddleware)
+// These endpoints handle secure token exchange for the desktop app
+// =============================================================================
+
+// Rate limiter specifically for auth endpoints (stricter to prevent abuse)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30, // 30 requests per 15 minutes per IP
+  message: 'Too many authentication attempts, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
+  }
+});
+
+// Exchange OAuth code for tokens (Atlassian OAuth callback proxy)
+app.post('/api/auth/atlassian/callback', authLimiter, authController.atlassianCallback);
+
+// Refresh Atlassian access token
+app.post('/api/auth/refresh-token', authLimiter, authController.refreshToken);
+
+// Exchange Atlassian token for Supabase JWT
+app.post('/api/auth/exchange-token', authLimiter, authController.exchangeToken);
+
+// Verify Atlassian token
+app.post('/api/auth/verify', authLimiter, authController.verifyToken);
+
+// =============================================================================
+// PROTECTED ROUTES (require authMiddleware)
+// =============================================================================
 
 // Routes
 app.post('/api/analyze-screenshot', authMiddleware, screenshotController.analyzeScreenshot);

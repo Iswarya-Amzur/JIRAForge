@@ -159,12 +159,14 @@ load_dotenv()
 # ============================================================================
 
 # Embedded credentials (for production builds - no .env file needed)
+# SECURITY: Secrets (CLIENT_SECRET, SERVICE_ROLE_KEY) are now on AI Server only
 EMBEDDED_CONFIG = {
     'ATLASSIAN_CLIENT_ID': 'Q8HT4Jn205AuTiAarj088oWNDrOqwvM5',
-    'ATLASSIAN_CLIENT_SECRET': 'ATOANevmtov-6HclDUksQLt6lUpelk9nof-k3wQXLrJIy0Z79QNkrO0orGoLLg3cDYrf91FBCBB3',
+    # REMOVED: ATLASSIAN_CLIENT_SECRET - now on AI Server only (security fix)
     'SUPABASE_URL': 'https://jvijitdewbypqbatfboi.supabase.co',
     'SUPABASE_ANON_KEY': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2aWppdGRld2J5cHFiYXRmYm9pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI3NTU1OTAsImV4cCI6MjA3ODMzMTU5MH0.OvoIgXKqYTK_9S_bIJtUa6N2TVgtgcp94iOVjE3rdRM',
-    'SUPABASE_SERVICE_ROLE_KEY': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2aWppdGRld2J5cHFiYXRmYm9pIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2Mjc1NTU5MCwiZXhwIjoyMDc4MzMxNTkwfQ.2Pbdo2DHHfCIpUVPP390P2Y3rF7_hdsYM-38g26XTUY',
+    # REMOVED: SUPABASE_SERVICE_ROLE_KEY - now on AI Server only (security fix)
+    'AI_SERVER_URL': 'http://216.48.190.255:3001',  # AI Server for secure token exchange
     'CAPTURE_INTERVAL': '300',
     'WEB_PORT': '51777',
     'ADMIN_PASSWORD': 'admin123'
@@ -491,14 +493,15 @@ def is_in_startup():
 # ============================================================================
 
 class AtlassianAuthManager:
-    """Manages Atlassian OAuth 3LO flow"""
-    
+    """Manages Atlassian OAuth 3LO flow via AI Server (secure token exchange)"""
+
     def __init__(self, web_port=51777, store_path=None):
         self.client_id = get_env_var('ATLASSIAN_CLIENT_ID', '')
-        self.client_secret = get_env_var('ATLASSIAN_CLIENT_SECRET', '')
+        # SECURITY: client_secret is now on AI Server only, not in desktop app
         self.redirect_uri = f'http://localhost:{web_port}/auth/callback'
         self.authorization_url = 'https://auth.atlassian.com/authorize'
-        self.token_url = 'https://auth.atlassian.com/oauth/token'
+        # Token exchange now goes through AI Server
+        self.ai_server_url = get_env_var('AI_SERVER_URL', 'http://216.48.190.255:3001')
         self.store_path = store_path or os.path.join(get_app_data_dir(), 'brd_tracker_auth.json')
         self.tokens = self._load_tokens()
         
@@ -544,38 +547,42 @@ class AtlassianAuthManager:
         return auth_url
     
     def handle_callback(self, code, state):
-        """Handle OAuth callback and exchange code for tokens"""
+        """Handle OAuth callback and exchange code for tokens via AI Server"""
         # Verify state
         stored_state = self.tokens.get('oauth_state')
         if state != stored_state:
             raise ValueError("Invalid state parameter - possible CSRF attack")
-        
-        # Exchange code for tokens
+
+        # Exchange code for tokens via AI Server (client_secret is on server only)
+        print("[INFO] Exchanging OAuth code via AI Server...")
         response = requests.post(
-            self.token_url,
+            f"{self.ai_server_url}/api/auth/atlassian/callback",
             json={
-                'grant_type': 'authorization_code',
-                'client_id': self.client_id,
-                'client_secret': self.client_secret,
                 'code': code,
                 'redirect_uri': self.redirect_uri
             },
-            headers={'Content-Type': 'application/json'}
+            headers={'Content-Type': 'application/json'},
+            timeout=30
         )
-        
+
         if response.status_code != 200:
-            error = response.json().get('error_description', response.text)
+            error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
+            error = error_data.get('error', response.text)
             raise Exception(f"Token exchange failed: {error}")
-        
-        tokens = response.json()
+
+        result = response.json()
+        if not result.get('success'):
+            raise Exception(f"Token exchange failed: {result.get('error', 'Unknown error')}")
+
         self.tokens.update({
-            'access_token': tokens.get('access_token'),
-            'refresh_token': tokens.get('refresh_token'),
-            'expires_at': time.time() + tokens.get('expires_in', 3600)
+            'access_token': result.get('access_token'),
+            'refresh_token': result.get('refresh_token'),
+            'expires_at': time.time() + result.get('expires_in', 3600)
         })
         self._save_tokens()
-        
-        return tokens
+
+        print("[OK] OAuth tokens received via AI Server")
+        return result
     
     def get_user_info(self):
         """Get Atlassian user information with automatic token refresh on 401"""
@@ -625,39 +632,45 @@ class AtlassianAuthManager:
             return None
     
     def refresh_access_token(self):
-        """Refresh access token using refresh token"""
+        """Refresh access token using refresh token via AI Server"""
         refresh_token = self.tokens.get('refresh_token')
         if not refresh_token:
             print("[ERROR] No refresh token available")
             return False
 
-        print("[INFO] Refreshing access token...")
+        print("[INFO] Refreshing access token via AI Server...")
         try:
             response = requests.post(
-                self.token_url,
+                f"{self.ai_server_url}/api/auth/refresh-token",
                 json={
-                    'grant_type': 'refresh_token',
-                    'client_id': self.client_id,
-                    'client_secret': self.client_secret,
                     'refresh_token': refresh_token
                 },
-                headers={'Content-Type': 'application/json'}
+                headers={'Content-Type': 'application/json'},
+                timeout=30
             )
 
             if response.status_code != 200:
-                error = response.json().get('error_description', response.text)
+                error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
+                error = error_data.get('error', response.text)
                 print(f"[ERROR] Token refresh failed: {error}")
+                # Check if re-authentication is required
+                if error_data.get('requiresReauth'):
+                    print("[WARN] Refresh token expired - user must re-authenticate")
                 return False
 
-            tokens = response.json()
+            result = response.json()
+            if not result.get('success'):
+                print(f"[ERROR] Token refresh failed: {result.get('error', 'Unknown error')}")
+                return False
+
             self.tokens.update({
-                'access_token': tokens.get('access_token'),
-                'refresh_token': tokens.get('refresh_token', refresh_token),  # Use new refresh token if provided, otherwise keep old one
-                'expires_at': time.time() + tokens.get('expires_in', 3600)
+                'access_token': result.get('access_token'),
+                'refresh_token': result.get('refresh_token', refresh_token),
+                'expires_at': time.time() + result.get('expires_in', 3600)
             })
             self._save_tokens()
 
-            print("[OK] Access token refreshed successfully")
+            print("[OK] Access token refreshed successfully via AI Server")
             return True
         except Exception as e:
             print(f"[ERROR] Failed to refresh access token: {e}")
@@ -666,6 +679,72 @@ class AtlassianAuthManager:
     def is_authenticated(self):
         """Check if user is authenticated"""
         return bool(self.tokens.get('access_token'))
+
+    def get_supabase_token(self):
+        """Get Supabase JWT from AI Server using Atlassian token"""
+        access_token = self.tokens.get('access_token')
+        if not access_token:
+            print("[ERROR] No Atlassian access token available")
+            return None
+
+        print("[INFO] Requesting Supabase token from AI Server...")
+        try:
+            response = requests.post(
+                f"{self.ai_server_url}/api/auth/exchange-token",
+                json={
+                    'atlassian_token': access_token
+                },
+                headers={'Content-Type': 'application/json'},
+                timeout=30
+            )
+
+            if response.status_code == 401:
+                # Atlassian token expired, try to refresh
+                print("[WARN] Atlassian token expired, attempting refresh...")
+                if self.refresh_access_token():
+                    # Retry with new token
+                    return self.get_supabase_token()
+                print("[ERROR] Could not refresh Atlassian token")
+                return None
+
+            if response.status_code != 200:
+                error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
+                error = error_data.get('error', response.text)
+                print(f"[ERROR] Failed to get Supabase token: {error}")
+                return None
+
+            result = response.json()
+            if not result.get('success'):
+                print(f"[ERROR] Failed to get Supabase token: {result.get('error', 'Unknown error')}")
+                return None
+
+            supabase_token = result.get('supabase_token')
+            expires_in = result.get('expires_in', 3600)
+
+            # Store the Supabase token
+            self.tokens['supabase_token'] = supabase_token
+            self.tokens['supabase_token_expires_at'] = time.time() + expires_in
+            self._save_tokens()
+
+            print(f"[OK] Supabase token received (expires in {expires_in}s)")
+            return supabase_token
+
+        except Exception as e:
+            print(f"[ERROR] Failed to get Supabase token: {e}")
+            return None
+
+    def get_valid_supabase_token(self):
+        """Get a valid Supabase token, refreshing if needed"""
+        supabase_token = self.tokens.get('supabase_token')
+        expires_at = self.tokens.get('supabase_token_expires_at', 0)
+
+        # Check if token exists and is not expired (with 5 min buffer)
+        if supabase_token and time.time() < (expires_at - 300):
+            return supabase_token
+
+        # Token expired or doesn't exist, get a new one
+        print("[INFO] Supabase token expired or missing, getting new one...")
+        return self.get_supabase_token()
 
     def logout(self):
         """Clear authentication tokens"""
@@ -1312,19 +1391,18 @@ class BRDTimeTracker:
         # Initialize Supabase
         supabase_url = get_env_var('SUPABASE_URL')
         supabase_anon_key = get_env_var('SUPABASE_ANON_KEY')
-        supabase_service_key = get_env_var('SUPABASE_SERVICE_ROLE_KEY')
-        
+        self.supabase_url = supabase_url  # Store for later use
+
         if not supabase_url or not supabase_anon_key:
             raise ValueError("SUPABASE_URL and SUPABASE_ANON_KEY must be set")
-        
+
+        # Initialize with anon key (for public operations)
         self.supabase: Client = create_client(supabase_url, supabase_anon_key)
-        
-        if supabase_service_key:
-            self.supabase_service: Client = create_client(supabase_url, supabase_service_key)
-            print("[OK] Supabase service role client initialized")
-        else:
-            self.supabase_service = None
-            print("[WARN] SUPABASE_SERVICE_ROLE_KEY not set - storage operations may fail due to RLS")
+
+        # SECURITY: Service role key is no longer used in desktop app
+        # Storage operations will use user-scoped JWT from AI Server
+        self.supabase_service = None  # Will be initialized with user token after login
+        print("[OK] Supabase client initialized (secure token mode - service role key removed)")
         
         # Initialize Atlassian Auth
         self.auth_manager = AtlassianAuthManager(web_port=self.web_port)
@@ -1474,17 +1552,22 @@ class BRDTimeTracker:
                 return "Authentication failed: no code", 400
             
             try:
-                # Exchange code for tokens
+                # Exchange code for tokens via AI Server
                 tokens = self.auth_manager.handle_callback(code, state)
-                
+
                 # Get user info from Atlassian
                 user_info = self.auth_manager.get_user_info()
                 if not user_info:
                     return "Failed to get user information", 500
-                
+
+                # Refresh Supabase client with user-scoped token from AI Server
+                # This replaces the old service_role_key approach
+                if not self.refresh_supabase_client():
+                    print("[WARN] Could not get Supabase token, some operations may fail")
+
                 # Check if we had anonymous tracking before login
                 had_anonymous = self.current_user_id and self.current_user_id.startswith('anonymous_')
-                
+
                 # Create or update user in Supabase
                 self.current_user = user_info
                 self.current_user_id = self.ensure_user_exists(user_info)
@@ -1875,6 +1958,30 @@ class BRDTimeTracker:
         # Keep only last N entries
         if len(self.admin_logs) > self.max_log_entries:
             self.admin_logs = self.admin_logs[-self.max_log_entries:]
+
+    def refresh_supabase_client(self):
+        """Refresh Supabase client with user-scoped JWT from AI Server"""
+        try:
+            # Get a valid Supabase token from the auth manager
+            supabase_token = self.auth_manager.get_valid_supabase_token()
+
+            if not supabase_token:
+                print("[WARN] Could not get Supabase token - using anon key only")
+                return False
+
+            # Create a new Supabase client with the user token
+            # This client will have RLS-scoped access based on the user's identity
+            self.supabase_service = create_client(
+                self.supabase_url,
+                supabase_token
+            )
+            print("[OK] Supabase service client refreshed with user token")
+            return True
+
+        except Exception as e:
+            print(f"[ERROR] Failed to refresh Supabase client: {e}")
+            self.supabase_service = None
+            return False
 
     def ensure_user_exists(self, atlassian_user):
         """Ensure user exists in Supabase users table and is linked to organization"""
@@ -2999,7 +3106,11 @@ class BRDTimeTracker:
         # Track time for refreshing settings
         last_settings_refresh = time.time()
         settings_refresh_interval = 300  # Refresh settings every 5 minutes
-        
+
+        # Track time for Supabase token refresh (token expires in 1 hour, refresh every 45 min)
+        last_token_refresh = time.time()
+        token_refresh_interval = 2700  # Refresh token every 45 minutes
+
         # Track time for notification checks
         last_notification_check = 0
         notification_check_interval = 1800  # Check every 30 minutes
@@ -3019,7 +3130,13 @@ class BRDTimeTracker:
                 if time.time() - last_settings_refresh > settings_refresh_interval:
                     self.fetch_tracking_settings()
                     last_settings_refresh = time.time()
-                
+
+                # Periodically refresh Supabase token (expires in 1 hour)
+                if time.time() - last_token_refresh > token_refresh_interval:
+                    print("[INFO] Refreshing Supabase token...")
+                    self.refresh_supabase_client()
+                    last_token_refresh = time.time()
+
                 # Periodically check for unassigned work and send notifications
                 if time.time() - last_notification_check > notification_check_interval:
                     self.check_and_notify_unassigned_work()
