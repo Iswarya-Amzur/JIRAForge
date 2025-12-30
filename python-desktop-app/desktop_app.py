@@ -159,13 +159,14 @@ load_dotenv()
 # ============================================================================
 
 # Embedded credentials (for production builds - no .env file needed)
-# SECURITY: Secrets (CLIENT_SECRET, SERVICE_ROLE_KEY) are now on AI Server only
+# SECURITY: ATLASSIAN_CLIENT_SECRET moved to AI Server (OAuth is now secure)
+# NOTE: SUPABASE_SERVICE_ROLE_KEY kept here temporarily - Supabase Python SDK limitation
 EMBEDDED_CONFIG = {
     'ATLASSIAN_CLIENT_ID': 'Q8HT4Jn205AuTiAarj088oWNDrOqwvM5',
     # REMOVED: ATLASSIAN_CLIENT_SECRET - now on AI Server only (security fix)
     'SUPABASE_URL': 'https://jvijitdewbypqbatfboi.supabase.co',
     'SUPABASE_ANON_KEY': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2aWppdGRld2J5cHFiYXRmYm9pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI3NTU1OTAsImV4cCI6MjA3ODMzMTU5MH0.OvoIgXKqYTK_9S_bIJtUa6N2TVgtgcp94iOVjE3rdRM',
-    # REMOVED: SUPABASE_SERVICE_ROLE_KEY - now on AI Server only (security fix)
+    'SUPABASE_SERVICE_ROLE_KEY': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2aWppdGRld2J5cHFiYXRmYm9pIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2Mjc1NTU5MCwiZXhwIjoyMDc4MzMxNTkwfQ.2Pbdo2DHHfCIpUVPP390P2Y3rF7_hdsYM-38g26XTUY',
     'AI_SERVER_URL': 'http://216.48.190.255:3001',  # AI Server for secure token exchange
     'CAPTURE_INTERVAL': '300',
     'WEB_PORT': '51777',
@@ -1391,6 +1392,7 @@ class BRDTimeTracker:
         # Initialize Supabase
         supabase_url = get_env_var('SUPABASE_URL')
         supabase_anon_key = get_env_var('SUPABASE_ANON_KEY')
+        supabase_service_key = get_env_var('SUPABASE_SERVICE_ROLE_KEY')
         self.supabase_url = supabase_url  # Store for later use
 
         if not supabase_url or not supabase_anon_key:
@@ -1399,10 +1401,14 @@ class BRDTimeTracker:
         # Initialize with anon key (for public operations)
         self.supabase: Client = create_client(supabase_url, supabase_anon_key)
 
-        # SECURITY: Service role key is no longer used in desktop app
-        # Storage operations will use user-scoped JWT from AI Server
-        self.supabase_service = None  # Will be initialized with user token after login
-        print("[OK] Supabase client initialized (secure token mode - service role key removed)")
+        # Initialize service client for storage operations
+        # NOTE: Kept temporarily due to Supabase Python SDK limitation with custom JWTs
+        if supabase_service_key:
+            self.supabase_service: Client = create_client(supabase_url, supabase_service_key)
+            print("[OK] Supabase service role client initialized")
+        else:
+            self.supabase_service = None
+            print("[WARN] SUPABASE_SERVICE_ROLE_KEY not set - storage operations may fail")
         
         # Initialize Atlassian Auth
         self.auth_manager = AtlassianAuthManager(web_port=self.web_port)
@@ -1461,6 +1467,7 @@ class BRDTimeTracker:
         self.current_window_key = None  # Unique identifier for current window (app + title)
         self.current_window_start_time = None  # When current window became active (updated after each screenshot)
         self.current_window_db_start_time = None  # Actual start_time saved to database (for accurate duration calc)
+        self.current_window_record_created_at = None  # When the record was actually inserted (for interval safeguard)
         self.current_window_screenshot_id = None  # ID of the current screenshot (to update later when switching)
         self.last_interval_time = None  # When last INTERVAL screenshot was taken (fixed 5-min clock)
         self.last_screenshot_end_time = None  # End time of last screenshot record (to ensure no gaps)
@@ -1552,18 +1559,13 @@ class BRDTimeTracker:
                 return "Authentication failed: no code", 400
             
             try:
-                # Exchange code for tokens via AI Server
+                # Exchange code for tokens via AI Server (ATLASSIAN_CLIENT_SECRET is on server)
                 tokens = self.auth_manager.handle_callback(code, state)
 
                 # Get user info from Atlassian
                 user_info = self.auth_manager.get_user_info()
                 if not user_info:
                     return "Failed to get user information", 500
-
-                # Refresh Supabase client with user-scoped token from AI Server
-                # This replaces the old service_role_key approach
-                if not self.refresh_supabase_client():
-                    print("[WARN] Could not get Supabase token, some operations may fail")
 
                 # Check if we had anonymous tracking before login
                 had_anonymous = self.current_user_id and self.current_user_id.startswith('anonymous_')
@@ -1946,13 +1948,21 @@ class BRDTimeTracker:
     # ADMIN HELPER METHODS
     # ============================================================================
 
-    def add_admin_log(self, level, message):
-        """Add a log entry for admin panel"""
+    def add_admin_log(self, level, message, details=None):
+        """Add a log entry for admin panel
+
+        Args:
+            level: Log level (INFO, WARN, ERROR)
+            message: Log message
+            details: Optional dict with additional details to display
+        """
         log_entry = {
             'timestamp': datetime.now().isoformat(),
             'level': level.upper(),
             'message': message
         }
+        if details:
+            log_entry['details'] = details
         self.admin_logs.append(log_entry)
 
         # Keep only last N entries
@@ -2770,11 +2780,16 @@ class BRDTimeTracker:
                 self.current_window_key = window_key
                 self.current_window_start_time = datetime.now()
                 self.current_window_screenshot_id = None  # Reset - will be set when screenshot is captured
+                self.current_window_record_created_at = None  # Reset - will be set when screenshot is captured
                 if self.current_window_key and self.current_window_key != 'unknown':
                     print(f"[INFO] Window switched at {self.current_window_start_time.strftime('%H:%M:%S')}:")
                     print(f"     - App: {app_name}")
                     print(f"     - Title: {title[:50]}")
-                    self.add_admin_log('INFO', f'Window switch: {app_name}')
+                    self.add_admin_log('INFO', f'Window switch: {app_name}', {
+                        'app': app_name,
+                        'title': title[:60] if title else '',
+                        'time': self.current_window_start_time.strftime('%H:%M:%S')
+                    })
             
             return {
                 'title': title,
@@ -2848,9 +2863,12 @@ class BRDTimeTracker:
             # Calculate duration in seconds
             duration_seconds = int((end_time - start_time).total_seconds())
             # Ensure minimum duration of 1 second (for database constraints)
+            # IMPORTANT: Do NOT adjust start_time backwards - this causes overlaps!
+            # Keep start_time unchanged to maintain continuity with previous record's end_time
             if duration_seconds < 1:
                 duration_seconds = 1
-                start_time = end_time - timedelta(seconds=1)
+                # Don't modify start_time - accept that actual duration was < 1 second
+                # The database will show 1s duration but time ranges won't overlap
             
             # Prepare screenshot data for both online and offline storage
             work_type = window_info.get('work_type', 'office')  # Default to 'office'
@@ -2944,7 +2962,18 @@ class BRDTimeTracker:
                     print(f"     - End:   {end_time.strftime('%H:%M:%S')}")
                     print(f"     - Duration: {duration_seconds}s")
                     print(f"     - App: {window_info['app']}")
-                    self.add_admin_log('INFO', f"Screenshot captured: {window_info['app']} ({duration_seconds}s)")
+                    self.add_admin_log('INFO', f"Screenshot captured: {window_info['app']} ({duration_seconds}s)", {
+                        'file': filename,
+                        'id': screenshot_id[:8] + '...',  # Short ID for display
+                        'full_id': screenshot_id,
+                        'storage': storage_path,
+                        'size': len(img_bytes),
+                        'start': start_time.strftime('%H:%M:%S'),
+                        'end': end_time.strftime('%H:%M:%S'),
+                        'duration': duration_seconds,
+                        'app': window_info['app'],
+                        'title': window_info.get('title', '')[:50]  # Truncate long titles
+                    })
                     
                     # Store the screenshot ID so we can update end_time/duration later
                     # When user switches windows OR when interval is reached, this record will be updated
@@ -2953,6 +2982,10 @@ class BRDTimeTracker:
                     # IMPORTANT: Track the actual start_time saved to database
                     # This may differ from current_window_start_time due to gap-free continuity logic
                     self.current_window_db_start_time = start_time
+
+                    # Track when this record was actually created (for interval safeguard)
+                    # This is different from start_time which may be from last_screenshot_end_time
+                    self.current_window_record_created_at = datetime.now()
 
                     # Track end_time for continuity - next screenshot will start from here
                     # This ensures no gaps between records
@@ -3107,10 +3140,6 @@ class BRDTimeTracker:
         last_settings_refresh = time.time()
         settings_refresh_interval = 300  # Refresh settings every 5 minutes
 
-        # Track time for Supabase token refresh (token expires in 1 hour, refresh every 45 min)
-        last_token_refresh = time.time()
-        token_refresh_interval = 2700  # Refresh token every 45 minutes
-
         # Track time for notification checks
         last_notification_check = 0
         notification_check_interval = 1800  # Check every 30 minutes
@@ -3130,12 +3159,6 @@ class BRDTimeTracker:
                 if time.time() - last_settings_refresh > settings_refresh_interval:
                     self.fetch_tracking_settings()
                     last_settings_refresh = time.time()
-
-                # Periodically refresh Supabase token (expires in 1 hour)
-                if time.time() - last_token_refresh > token_refresh_interval:
-                    print("[INFO] Refreshing Supabase token...")
-                    self.refresh_supabase_client()
-                    last_token_refresh = time.time()
 
                 # Periodically check for unassigned work and send notifications
                 if time.time() - last_notification_check > notification_check_interval:
@@ -3188,6 +3211,7 @@ class BRDTimeTracker:
 
                                 # Reset tracking state - will start fresh when resuming
                                 self.current_window_screenshot_id = None
+                                self.current_window_record_created_at = None
                                 self.current_window_start_time = None
                                 self.current_window_db_start_time = None
                                 self.last_screenshot_end_time = end_time
@@ -3221,6 +3245,7 @@ class BRDTimeTracker:
                     self.current_window_start_time = None
                     self.current_window_db_start_time = None
                     self.current_window_screenshot_id = None
+                    self.current_window_record_created_at = None
                     self.last_screenshot_end_time = None  # Critical: prevents idle time from being counted
                     self.previous_window_key = None
                     self.previous_window_screenshot_id = None
@@ -3257,7 +3282,13 @@ class BRDTimeTracker:
                 window_switched = window_info.get('is_new_window', False)
                 time_since_last_screenshot = current_time - last_screenshot_time
                 time_since_last_interval = current_time - self.last_interval_time
-                
+
+                # Debug: Log interval progress every 60 seconds
+                if int(time_since_last_interval) % 60 == 0 and int(time_since_last_interval) > 0:
+                    remaining = current_capture_interval - time_since_last_interval
+                    if remaining > 0:
+                        print(f"[INTERVAL] {int(time_since_last_interval)}s elapsed, {int(remaining)}s until next interval capture")
+
                 # IMPORTANT: Always update the previous window record when switching, regardless of interval
                 # The interval check only applies to creating NEW screenshots, not updating existing ones
                 if window_switched:
@@ -3313,7 +3344,15 @@ class BRDTimeTracker:
                         self.previous_window_info = None
                         self.previous_window_screenshot_id = None
                         self.previous_window_db_start_time = None
-                
+                    else:
+                        # No previous screenshot to update
+                        # IMPORTANT: Only set last_screenshot_end_time if it's not already set
+                        # This maintains continuity from the last actual screenshot's end_time
+                        # If we always reset to now(), we'd create gaps when window switches are
+                        # skipped due to min_screenshot_interval cooldown
+                        if self.last_screenshot_end_time is None:
+                            self.last_screenshot_end_time = datetime.now()
+
                 # Decide whether to capture a new screenshot
                 should_capture = False
                 capture_reason = None
@@ -3327,14 +3366,6 @@ class BRDTimeTracker:
                     # This ensures clean, non-overlapping time periods
                     updated_existing_record = False  # Track if we updated a previous record
                     if self.current_window_screenshot_id is not None and self.current_window_db_start_time is not None:
-                        # SAFEGUARD: Skip if the current record was just created (less than interval seconds ago)
-                        # This prevents the bug where delays (settings fetch, network) cause duplicate interval updates
-                        record_age = (datetime.now() - self.current_window_db_start_time).total_seconds()
-                        if record_age < current_capture_interval:
-                            print(f"[DEBUG] Skipping interval update - record only {int(record_age)}s old (need {current_capture_interval}s)")
-                            # Reset interval timer to prevent continuous triggering
-                            self.last_interval_time = time.time()
-                            continue
                         # IMPORTANT: Capture timestamp BEFORE any operations
                         # This exact timestamp will be used for both:
                         # 1. Current record's end_time
@@ -3374,7 +3405,8 @@ class BRDTimeTracker:
                         self.current_window_start_time = end_time
                         self.current_window_db_start_time = None  # Will be set when new screenshot is uploaded
                         self.current_window_screenshot_id = None
-                    
+                        self.current_window_record_created_at = None  # Will be set when new screenshot is uploaded
+
                     should_capture = True
                     capture_reason = "interval"
                 
@@ -3402,6 +3434,7 @@ class BRDTimeTracker:
                                 print(f"[INFO] Fresh interval capture - record is final (won't be extended)")
                                 self.current_window_screenshot_id = None
                                 self.current_window_db_start_time = None
+                                self.current_window_record_created_at = None
 
                         # Always update last_screenshot_time (for min_screenshot_interval check)
                         last_screenshot_time = time.time()  # Also use fresh time here
@@ -3440,6 +3473,7 @@ class BRDTimeTracker:
         self.current_window_key = None
         self.current_window_start_time = None
         self.current_window_db_start_time = None
+        self.current_window_record_created_at = None
         self.current_window_screenshot_id = None
         self.last_interval_time = None  # Will be set on first screenshot
         self.last_screenshot_end_time = None  # Tracks last record's end_time for continuity
@@ -5410,35 +5444,117 @@ class BRDTimeTracker:
         .logs-container {
             background: #0f0f1a;
             border-radius: 8px;
-            height: 400px;
+            height: 450px;
             overflow-y: auto;
             font-family: 'Monaco', 'Menlo', monospace;
-            font-size: 12px;
+            font-size: 13px;
         }
         .log-entry {
-            padding: 8px 12px;
+            padding: 10px 14px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.05);
             display: flex;
+            align-items: center;
             gap: 12px;
+            transition: background 0.15s;
         }
         .log-entry:hover {
-            background: rgba(255, 255, 255, 0.02);
+            background: rgba(255, 255, 255, 0.04);
+        }
+        .log-entry.screenshot { background: rgba(74, 222, 128, 0.05); border-left: 3px solid #4ade80; }
+        .log-entry.window-switch { background: rgba(96, 165, 250, 0.05); border-left: 3px solid #60a5fa; }
+        .log-entry.settings { background: rgba(251, 191, 36, 0.05); border-left: 3px solid #fbbf24; }
+        .log-entry.tracking { background: rgba(167, 139, 250, 0.05); border-left: 3px solid #a78bfa; }
+        .log-entry.user { background: rgba(236, 72, 153, 0.05); border-left: 3px solid #ec4899; }
+        .log-entry.error { background: rgba(248, 113, 113, 0.08); border-left: 3px solid #f87171; }
+        .log-entry.warning { background: rgba(251, 191, 36, 0.08); border-left: 3px solid #fbbf24; }
+        .log-icon {
+            font-size: 16px;
+            width: 24px;
+            text-align: center;
+            flex-shrink: 0;
         }
         .log-time {
             color: #6b7280;
             flex-shrink: 0;
+            font-size: 11px;
+            min-width: 70px;
         }
         .log-level {
             font-weight: 600;
             flex-shrink: 0;
             width: 50px;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            text-align: center;
         }
-        .log-level.INFO { color: #4ade80; }
-        .log-level.WARN { color: #fbbf24; }
-        .log-level.ERROR { color: #f87171; }
+        .log-level.INFO { color: #4ade80; background: rgba(74, 222, 128, 0.15); }
+        .log-level.WARN { color: #fbbf24; background: rgba(251, 191, 36, 0.15); }
+        .log-level.ERROR { color: #f87171; background: rgba(248, 113, 113, 0.15); }
         .log-message {
             color: #e5e7eb;
             word-break: break-word;
+            flex: 1;
+        }
+        .log-message .app-name { color: #60a5fa; font-weight: 500; }
+        .log-message .duration { color: #4ade80; font-weight: 500; }
+        .log-message .user-email { color: #ec4899; }
+        .log-message .setting-value { color: #fbbf24; font-weight: 500; }
+        .log-details {
+            display: none;
+            margin-top: 8px;
+            padding: 10px 12px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            font-size: 11px;
+            line-height: 1.6;
+            border-left: 2px solid rgba(255, 255, 255, 0.1);
+        }
+        .log-entry.expanded .log-details {
+            display: block;
+        }
+        .log-details-row {
+            display: flex;
+            gap: 8px;
+            padding: 2px 0;
+        }
+        .log-details-label {
+            color: #6b7280;
+            min-width: 70px;
+            flex-shrink: 0;
+        }
+        .log-details-value {
+            color: #e5e7eb;
+            word-break: break-all;
+        }
+        .log-details-value.file { color: #fbbf24; }
+        .log-details-value.id { color: #a78bfa; font-family: monospace; }
+        .log-details-value.storage { color: #6b7280; font-family: monospace; font-size: 10px; }
+        .log-details-value.size { color: #60a5fa; }
+        .log-details-value.time { color: #4ade80; }
+        .log-details-value.app { color: #60a5fa; font-weight: 500; }
+        .log-details-value.title { color: #9ca3af; font-style: italic; }
+        .log-expand-btn {
+            background: none;
+            border: none;
+            color: #6b7280;
+            cursor: pointer;
+            font-size: 10px;
+            padding: 2px 6px;
+            margin-left: 8px;
+            border-radius: 3px;
+            transition: all 0.15s;
+        }
+        .log-expand-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+        }
+        .log-entry.expanded .log-expand-btn {
+            color: #4ade80;
+        }
+        .log-content-wrapper {
+            flex: 1;
+            min-width: 0;
         }
         .logs-toolbar {
             display: flex;
@@ -5552,6 +5668,123 @@ class BRDTimeTracker:
     <script>
         let currentFilter = 'all';
 
+        function formatLogMessage(message, level) {
+            let icon = '📋';
+            let category = '';
+            let formattedMsg = message;
+
+            // Determine icon and category based on message content
+            if (message.includes('Screenshot captured:')) {
+                icon = '📸';
+                category = 'screenshot';
+                // Format: "Screenshot captured: chrome.exe (10s)"
+                const match = message.match(/Screenshot captured: (.+?) \((\d+)s\)/);
+                if (match) {
+                    formattedMsg = `Screenshot captured: <span class="app-name">${match[1]}</span> <span class="duration">(${match[2]}s)</span>`;
+                }
+            } else if (message.includes('Window switch:')) {
+                icon = '🔄';
+                category = 'window-switch';
+                const match = message.match(/Window switch: (.+)/);
+                if (match) {
+                    formattedMsg = `Switched to <span class="app-name">${match[1]}</span>`;
+                }
+            } else if (message.includes('Settings loaded:')) {
+                icon = '⚙️';
+                category = 'settings';
+                const match = message.match(/Settings loaded: interval=(\d+)s/);
+                if (match) {
+                    formattedMsg = `Settings loaded: interval = <span class="setting-value">${match[1]}s</span>`;
+                }
+            } else if (message.includes('Tracking started')) {
+                icon = '▶️';
+                category = 'tracking';
+                const match = message.match(/Tracking started \(interval: (\d+)s\)/);
+                if (match) {
+                    formattedMsg = `Tracking started (interval: <span class="setting-value">${match[1]}s</span>)`;
+                }
+            } else if (message.includes('Tracking stopped')) {
+                icon = '⏹️';
+                category = 'tracking';
+            } else if (message.includes('User idle')) {
+                icon = '💤';
+                category = 'tracking';
+                const match = message.match(/User idle \(no activity for (\d+)s\)/);
+                if (match) {
+                    formattedMsg = `User idle (no activity for <span class="duration">${match[1]}s</span>)`;
+                }
+            } else if (message.includes('User active')) {
+                icon = '✨';
+                category = 'tracking';
+            } else if (message.includes('granted consent') || message.includes('logged in:')) {
+                icon = '👤';
+                category = 'user';
+                const match = message.match(/User (.+?) granted consent/);
+                if (match) {
+                    formattedMsg = `<span class="user-email">${match[1]}</span> granted consent`;
+                }
+            } else if (message.includes('Admin logged in')) {
+                icon = '🔐';
+                category = 'user';
+            } else if (message.includes('Application started')) {
+                icon = '🚀';
+                category = 'tracking';
+            } else if (message.includes('Sync') || message.includes('sync')) {
+                icon = '☁️';
+                category = 'settings';
+            } else if (level === 'ERROR') {
+                icon = '❌';
+                category = 'error';
+            } else if (level === 'WARN') {
+                icon = '⚠️';
+                category = 'warning';
+            }
+
+            return { icon, category, formattedMsg };
+        }
+
+        function formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+
+        function formatDetails(details, category) {
+            if (!details) return '';
+
+            let html = '<div class="log-details">';
+
+            if (category === 'screenshot') {
+                // Screenshot details
+                if (details.file) html += `<div class="log-details-row"><span class="log-details-label">File:</span><span class="log-details-value file">${details.file}</span></div>`;
+                if (details.id) html += `<div class="log-details-row"><span class="log-details-label">ID:</span><span class="log-details-value id">${details.id}</span></div>`;
+                if (details.storage) html += `<div class="log-details-row"><span class="log-details-label">Storage:</span><span class="log-details-value storage">${details.storage}</span></div>`;
+                if (details.size) html += `<div class="log-details-row"><span class="log-details-label">Size:</span><span class="log-details-value size">${formatBytes(details.size)}</span></div>`;
+                if (details.start && details.end) html += `<div class="log-details-row"><span class="log-details-label">Time:</span><span class="log-details-value time">${details.start} → ${details.end}</span></div>`;
+                if (details.duration) html += `<div class="log-details-row"><span class="log-details-label">Duration:</span><span class="log-details-value time">${details.duration}s</span></div>`;
+                if (details.title) html += `<div class="log-details-row"><span class="log-details-label">Title:</span><span class="log-details-value title">${details.title}</span></div>`;
+            } else if (category === 'window-switch') {
+                // Window switch details
+                if (details.app) html += `<div class="log-details-row"><span class="log-details-label">App:</span><span class="log-details-value app">${details.app}</span></div>`;
+                if (details.title) html += `<div class="log-details-row"><span class="log-details-label">Title:</span><span class="log-details-value title">${details.title}</span></div>`;
+                if (details.time) html += `<div class="log-details-row"><span class="log-details-label">Time:</span><span class="log-details-value time">${details.time}</span></div>`;
+            } else {
+                // Generic details
+                for (const [key, value] of Object.entries(details)) {
+                    html += `<div class="log-details-row"><span class="log-details-label">${key}:</span><span class="log-details-value">${value}</span></div>`;
+                }
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        function toggleLogDetails(btn) {
+            const entry = btn.closest('.log-entry');
+            entry.classList.toggle('expanded');
+            btn.textContent = entry.classList.contains('expanded') ? '▼ Hide' : '▶ Details';
+        }
+
         function loadStatus() {
             fetch('/api/admin/status')
                 .then(r => r.json())
@@ -5604,11 +5837,20 @@ class BRDTimeTracker:
 
                     container.innerHTML = data.logs.reverse().map(log => {
                         const time = new Date(log.timestamp).toLocaleTimeString();
+                        const { icon, category, formattedMsg } = formatLogMessage(log.message, log.level);
+                        const hasDetails = log.details && Object.keys(log.details).length > 0;
+                        const detailsHtml = hasDetails ? formatDetails(log.details, category) : '';
+                        const expandBtn = hasDetails ? `<button class="log-expand-btn" onclick="toggleLogDetails(this)">▶ Details</button>` : '';
+
                         return `
-                            <div class="log-entry">
+                            <div class="log-entry ${category}">
+                                <span class="log-icon">${icon}</span>
                                 <span class="log-time">${time}</span>
                                 <span class="log-level ${log.level}">${log.level}</span>
-                                <span class="log-message">${log.message}</span>
+                                <div class="log-content-wrapper">
+                                    <span class="log-message">${formattedMsg}${expandBtn}</span>
+                                    ${detailsHtml}
+                                </div>
                             </div>
                         `;
                     }).join('');

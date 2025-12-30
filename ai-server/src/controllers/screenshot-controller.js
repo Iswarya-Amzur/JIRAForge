@@ -108,13 +108,15 @@ exports.analyzeScreenshot = async (req, res) => {
     // Update screenshot with duration data for event-based tracking
     // IMPORTANT: Only update if desktop app hasn't already set the values
     // Desktop app's event-based tracking provides accurate duration based on actual window switches
-    if (!duration_seconds || !start_time || !end_time) {
+    // NOTE: Use "== null" to check for null/undefined, NOT "!" which treats 0 as falsy
+    // Duration of 0 is a valid value set by desktop app (will be updated later with actual duration)
+    if (duration_seconds == null || !start_time || !end_time) {
       // Fallback: Calculate duration for legacy screenshots that don't have event-based data
       const calculatedEndTime = timestamp || new Date().toISOString();
       const calculatedStartTime = new Date(new Date(calculatedEndTime).getTime() - (actualDuration * 1000)).toISOString();
 
       await supabaseService.updateScreenshotDuration(screenshot_id, {
-        duration_seconds: actualDuration,
+        duration_seconds: duration_seconds != null ? duration_seconds : actualDuration,
         start_time: start_time || calculatedStartTime,  // Use desktop app's value if available
         end_time: end_time || calculatedEndTime         // Use desktop app's value if available
       });

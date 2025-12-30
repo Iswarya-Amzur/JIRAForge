@@ -48,7 +48,7 @@ function getIpAddress() {
  * Calculate cost based on provider and token usage
  * Pricing as of Dec 2024 (per 1M tokens):
  * - Fireworks Qwen2.5-VL-32B: $0.40 input, $0.40 output (estimated)
- * - LiteLLM Llama 90B Vision: $0.90 input, $0.90 output (Fireworks pricing)
+ * - Gemini 2.0 Flash: $0.10 input, $0.40 output (Google pricing via LiteLLM)
  */
 function calculateCost(provider, model, inputTokens, outputTokens) {
   // Pricing per 1M tokens
@@ -56,12 +56,14 @@ function calculateCost(provider, model, inputTokens, outputTokens) {
     fireworks: {
       'qwen2p5-vl-32b': { input: 0.40, output: 0.40 },
       'qwen2p5-vl-72b': { input: 0.90, output: 0.90 },
-      'llama-v3p2-90b-vision': { input: 0.90, output: 0.90 },
       'llama-v3p2-11b-vision': { input: 0.20, output: 0.20 },
       'default': { input: 0.50, output: 0.50 }
     },
     litellm: {
-      'default': { input: 0.90, output: 0.90 }
+      'gemini-2.0-flash': { input: 0.10, output: 0.40 },
+      'gemini-1.5-flash': { input: 0.075, output: 0.30 },
+      'gemini-1.5-pro': { input: 1.25, output: 5.00 },
+      'default': { input: 0.10, output: 0.40 }
     }
   };
 
