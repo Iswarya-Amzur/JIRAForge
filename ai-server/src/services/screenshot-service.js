@@ -21,7 +21,7 @@ function isOCRFallbackEnabled() {
 }
 
 /**
- * Analyze activity using AI (GPT-4 Vision primary, OCR fallback)
+ * Analyze activity using AI (Vision primary, OCR fallback)
  *
  * @param {Object} params - Analysis parameters
  * @param {Buffer} params.imageBuffer - Screenshot image buffer
@@ -37,7 +37,7 @@ exports.analyzeActivity = async ({ imageBuffer, windowTitle, applicationName, ti
     // Calculate time spent (based on screenshot interval)
     const timeSpentSeconds = parseInt(process.env.SCREENSHOT_INTERVAL || '300');
 
-    // Use GPT-4 Vision as primary analysis method
+    // Use AI Vision as primary analysis method
     let visionAnalysis = null;
     const useVision = isAIEnabled();
 
@@ -49,7 +49,11 @@ exports.analyzeActivity = async ({ imageBuffer, windowTitle, applicationName, ti
           applicationName,
           userAssignedIssues
         });
-        logger.info('GPT-4 Vision analysis completed', {
+        const providerName = visionAnalysis.aiProvider || 'AI';
+        const modelName = visionAnalysis.aiModel || 'unknown';
+        logger.info(`${providerName} Vision analysis completed`, {
+          provider: providerName,
+          model: modelName,
           taskKey: visionAnalysis.taskKey,
           workType: visionAnalysis.workType,
           confidence: visionAnalysis.confidenceScore,
@@ -59,12 +63,12 @@ exports.analyzeActivity = async ({ imageBuffer, windowTitle, applicationName, ti
           reasoning: visionAnalysis.reasoning || 'No reasoning provided'
         });
       } catch (visionError) {
-        logger.warn('GPT-4 Vision analysis failed, falling back to OCR + AI', { error: visionError.message });
+        logger.warn('AI Vision analysis failed, falling back to OCR + AI', { error: visionError.message });
         // Fall back to OCR-based analysis
       }
     }
 
-    // If Vision analysis failed or not available, fall back to OCR + GPT-4 text
+    // If Vision analysis failed or not available, fall back to OCR + AI text
     if (!visionAnalysis && imageBuffer && isOCRFallbackEnabled()) {
       logger.info('Falling back to OCR-based analysis');
       try {
@@ -74,7 +78,11 @@ exports.analyzeActivity = async ({ imageBuffer, windowTitle, applicationName, ti
           applicationName,
           userAssignedIssues
         });
-        logger.info('OCR + AI analysis completed', {
+        const ocrProviderName = visionAnalysis.aiProvider || 'AI';
+        const ocrModelName = visionAnalysis.aiModel || 'unknown';
+        logger.info(`OCR + ${ocrProviderName} analysis completed`, {
+          provider: ocrProviderName,
+          model: ocrModelName,
           taskKey: visionAnalysis.taskKey,
           workType: visionAnalysis.workType,
           confidence: visionAnalysis.confidenceScore
