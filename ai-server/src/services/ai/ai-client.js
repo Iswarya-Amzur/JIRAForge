@@ -86,7 +86,7 @@ function initializeLiteLLMClient() {
       apiKey: litellmApiKey,
       baseURL: litellmBaseUrl
     });
-    logger.info('[AI] LiteLLM initialized | Endpoint: %s | Model: %s', litellmBaseUrl, getShortModelName(process.env.LITELLM_MODEL || 'gemini/gemini-2.0-flash'));
+    logger.info('[AI] LiteLLM initialized | Endpoint: %s | Model: %s', litellmBaseUrl, getShortModelName(process.env.LITELLM_MODEL || 'gemini/gemini-2.0-flash-lite'));
     return litellmClient;
   } catch (error) {
     logger.error('[AI] LiteLLM init failed: %s', error.message);
@@ -244,7 +244,7 @@ function getFireworksModel() {
  * @returns {string} Model name for LiteLLM requests
  */
 function getLiteLLMModel() {
-  return process.env.LITELLM_MODEL || 'gemini/gemini-2.0-flash';
+  return process.env.LITELLM_MODEL || 'gemini/gemini-2.0-flash-lite';
 }
 
 /**
@@ -258,6 +258,7 @@ function getShortModelName(model) {
   if (model.includes('qwen2p5-vl-72b')) return 'Qwen2.5-VL-72B';
   if (model.includes('llama-v3p2-11b-vision')) return 'Llama-11B-Vision';
   // Gemini models
+  if (model.includes('gemini-2.0-flash-lite')) return 'Gemini-2.0-Flash-Lite';
   if (model.includes('gemini-2.0-flash')) return 'Gemini-2.0-Flash';
   if (model.includes('gemini-1.5-flash')) return 'Gemini-1.5-Flash';
   if (model.includes('gemini-1.5-pro')) return 'Gemini-1.5-Pro';
