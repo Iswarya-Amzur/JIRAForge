@@ -86,7 +86,7 @@ function initializeLiteLLMClient() {
       apiKey: litellmApiKey,
       baseURL: litellmBaseUrl
     });
-    logger.info('[AI] LiteLLM initialized | Endpoint: %s | Model: %s', litellmBaseUrl, getShortModelName(process.env.LITELLM_MODEL || 'gemini/gemini-2.0-flash-lite'));
+    logger.info('[AI] LiteLLM initialized | Endpoint: %s | Model: %s', litellmBaseUrl, getShortModelName(process.env.LITELLM_MODEL || 'openai/gpt-4o'));
     return litellmClient;
   } catch (error) {
     logger.error('[AI] LiteLLM init failed: %s', error.message);
@@ -244,7 +244,7 @@ function getFireworksModel() {
  * @returns {string} Model name for LiteLLM requests
  */
 function getLiteLLMModel() {
-  return process.env.LITELLM_MODEL || 'gemini/gemini-2.0-flash-lite';
+  return process.env.LITELLM_MODEL || 'openai/gpt-4o';
 }
 
 /**
@@ -257,6 +257,11 @@ function getShortModelName(model) {
   if (model.includes('qwen2p5-vl-32b')) return 'Qwen2.5-VL-32B';
   if (model.includes('qwen2p5-vl-72b')) return 'Qwen2.5-VL-72B';
   if (model.includes('llama-v3p2-11b-vision')) return 'Llama-11B-Vision';
+  // OpenAI models
+  if (model.includes('gpt-4o-mini')) return 'GPT-4o-Mini';
+  if (model.includes('gpt-4o')) return 'GPT-4o';
+  if (model.includes('gpt-4-turbo')) return 'GPT-4-Turbo';
+  if (model.includes('gpt-4')) return 'GPT-4';
   // Gemini models
   if (model.includes('gemini-2.0-flash-lite')) return 'Gemini-2.0-Flash-Lite';
   if (model.includes('gemini-2.0-flash')) return 'Gemini-2.0-Flash';
