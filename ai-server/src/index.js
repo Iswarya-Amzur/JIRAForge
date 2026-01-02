@@ -78,6 +78,9 @@ app.post('/api/auth/exchange-token', authLimiter, authController.exchangeToken);
 // Verify Atlassian token
 app.post('/api/auth/verify', authLimiter, authController.verifyToken);
 
+// Get Supabase configuration (returns credentials after verifying Atlassian token)
+app.post('/api/auth/supabase-config', authLimiter, authController.getSupabaseConfig);
+
 // =============================================================================
 // PROTECTED ROUTES (require authMiddleware)
 // =============================================================================

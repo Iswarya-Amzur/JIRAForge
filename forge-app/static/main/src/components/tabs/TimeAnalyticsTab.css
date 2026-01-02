@@ -18,6 +18,100 @@
   padding-bottom: var(--ds-space-300);
 }
 
+/* Download Banner */
+.download-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-300);
+  padding: var(--ds-space-200) var(--ds-space-300);
+  background: linear-gradient(135deg, #DEEBFF 0%, #B3D4FF 100%);
+  border: 1px solid #B3D4FF;
+  border-radius: 8px;
+  margin-bottom: var(--ds-space-300);
+}
+
+.download-banner-content {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-200);
+}
+
+.download-banner-icon {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.download-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.download-banner-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ds-text);
+}
+
+.download-banner-subtitle {
+  font-size: 13px;
+  color: var(--ds-text-subtle);
+}
+
+.download-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-100);
+  padding: var(--ds-space-150) var(--ds-space-300);
+  background: var(--ds-background-brand-bold);
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  box-shadow: 0 2px 4px rgba(0, 82, 204, 0.3);
+}
+
+.download-button:hover {
+  background: #0747A6;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 82, 204, 0.4);
+  color: white;
+  text-decoration: none;
+}
+
+.download-button:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(0, 82, 204, 0.3);
+}
+
+.download-icon {
+  font-size: 16px;
+}
+
+/* Responsive adjustments for download banner */
+@media (max-width: 600px) {
+  .download-banner {
+    flex-direction: column;
+    text-align: center;
+    gap: var(--ds-space-200);
+  }
+
+  .download-banner-content {
+    flex-direction: column;
+  }
+
+  .download-button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
 /* Analytics Summary Cards */
 .analytics-summary-cards {
   display: grid;

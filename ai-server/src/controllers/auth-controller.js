@@ -308,6 +308,72 @@ exports.exchangeToken = async (req, res) => {
 };
 
 /**
+ * Get Supabase configuration for authenticated users
+ * Desktop app calls this after Atlassian login to get Supabase credentials
+ *
+ * POST /api/auth/supabase-config
+ * Body: { atlassian_token: string }
+ */
+exports.getSupabaseConfig = async (req, res) => {
+  try {
+    const { atlassian_token } = req.body;
+
+    if (!atlassian_token) {
+      return res.status(400).json({
+        success: false,
+        error: 'Atlassian token is required'
+      });
+    }
+
+    // Verify the Atlassian token first
+    try {
+      await axios.get(ATLASSIAN_ME_URL, {
+        headers: {
+          'Authorization': `Bearer ${atlassian_token}`,
+          'Accept': 'application/json'
+        },
+        timeout: 10000
+      });
+    } catch (error) {
+      logger.warn('[Auth] Invalid Atlassian token for Supabase config:', error.response?.status);
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid or expired Atlassian token'
+      });
+    }
+
+    // Get Supabase credentials from environment
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+    const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
+      logger.error('[Auth] Supabase credentials not configured on server');
+      return res.status(500).json({
+        success: false,
+        error: 'Server configuration error - Supabase credentials not configured'
+      });
+    }
+
+    logger.info('[Auth] Providing Supabase config to authenticated user');
+
+    res.json({
+      success: true,
+      supabase_url: supabaseUrl,
+      supabase_anon_key: supabaseAnonKey,
+      supabase_service_role_key: supabaseServiceRoleKey
+    });
+
+  } catch (error) {
+    logger.error('[Auth] Supabase config error:', error);
+    res.status(500).json({
+      success: false,
+      error: `Failed to get Supabase config: ${error.message}`
+    });
+  }
+};
+
+/**
  * Verify Atlassian token and return user info
  * Utility endpoint for desktop app to validate tokens
  *

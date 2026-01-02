@@ -109,6 +109,33 @@ async function processUserUnassignedWork(userId, organizationId) {
   logger.info(`[Clustering] Successfully saved ${clusteringResult.groups.length} groups for user ${userId}`);
 }
 
+// Valid values for recommended_action (must match database check constraint)
+const VALID_RECOMMENDED_ACTIONS = ['assign_to_existing', 'create_new_issue'];
+
+/**
+ * Validate and normalize the recommended_action value
+ * Maps invalid values (like 'none', 'ignore') to valid database values
+ * @param {string} action - Raw action from AI
+ * @returns {string} Valid action for database
+ */
+function normalizeRecommendedAction(action) {
+  if (!action) {
+    return 'create_new_issue';
+  }
+
+  const normalizedAction = action.toLowerCase().trim();
+
+  // If it's a valid action, use it
+  if (VALID_RECOMMENDED_ACTIONS.includes(normalizedAction)) {
+    return normalizedAction;
+  }
+
+  // Map common invalid values to valid ones
+  // 'none', 'ignore', 'skip', 'dismiss' etc. -> 'create_new_issue' (for idle/break time)
+  logger.warn(`[Clustering] Invalid recommended_action "${action}", defaulting to "create_new_issue"`);
+  return 'create_new_issue';
+}
+
 /**
  * Save a clustered group to the database
  * @param {string} userId - User ID
@@ -119,6 +146,9 @@ async function saveGroupToDatabase(userId, organizationId, group) {
   try {
     logger.info(`[Clustering] Saving group "${group.label}" with ${group.session_count} sessions`);
 
+    // Validate and normalize the recommended action
+    const recommendedAction = normalizeRecommendedAction(group.recommendation?.action);
+
     // 1. Create the group record
     const groupRecord = await supabaseService.createUnassignedGroup({
       user_id: userId,
@@ -126,7 +156,7 @@ async function saveGroupToDatabase(userId, organizationId, group) {
       group_label: group.label,
       group_description: group.description,
       confidence_level: group.confidence,
-      recommended_action: group.recommendation?.action || 'create_new_issue',
+      recommended_action: recommendedAction,
       suggested_issue_key: group.recommendation?.suggested_issue_key || null,
       recommendation_reason: group.recommendation?.reason || '',
       session_count: group.session_count,

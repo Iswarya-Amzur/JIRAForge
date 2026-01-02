@@ -37,15 +37,13 @@ export const ISSUE_CACHE_TTL = 120000; // 2 minutes in milliseconds
 export const STORAGE_BUCKET_SCREENSHOTS = 'screenshots';
 export const STORAGE_BUCKET_DOCUMENTS = 'documents';
 
-// Default Settings
+// Default Settings (Global Admin Settings - stored in Forge storage)
 export const DEFAULT_SETTINGS = {
   supabaseUrl: '',
   supabaseAnonKey: '',
   supabaseServiceRoleKey: '',
   aiServerUrl: '',
-  aiServerApiKey: '',
-  screenshotInterval: DEFAULT_SCREENSHOT_INTERVAL,
-  autoWorklogEnabled: true
+  aiServerApiKey: ''
 };
 
 // Default Tracking/Timesheet Settings (for screenshot monitoring, app lists, etc.)

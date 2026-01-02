@@ -7,8 +7,6 @@ function App() {
     supabaseUrl: '',
     supabaseAnonKey: '',
     supabaseServiceRoleKey: '',
-    screenshotInterval: 300,
-    autoWorklogEnabled: true,
     aiServerUrl: '',
     aiServerApiKey: ''
   });
@@ -178,40 +176,6 @@ function App() {
               placeholder="Enter your service role key"
             />
             <small>Your Supabase service role key (for backend operations). Keep this secure!</small>
-          </div>
-        </section>
-
-        <section className="settings-section">
-          <h2>Time Tracking Configuration</h2>
-          <p className="section-description">
-            Configure how the desktop app captures screenshots and tracks time.
-          </p>
-
-          <div className="form-group">
-            <label htmlFor="screenshotInterval">Screenshot Interval (seconds)</label>
-            <input
-              type="number"
-              id="screenshotInterval"
-              name="screenshotInterval"
-              value={settings.screenshotInterval}
-              onChange={handleChange}
-              min="60"
-              max="3600"
-            />
-            <small>How often to capture screenshots (60-3600 seconds)</small>
-          </div>
-
-          <div className="form-group checkbox-group">
-            <label>
-              <input
-                type="checkbox"
-                name="autoWorklogEnabled"
-                checked={settings.autoWorklogEnabled}
-                onChange={handleChange}
-              />
-              <span>Automatically create work logs in Jira</span>
-            </label>
-            <small>Enable automatic worklog creation based on tracked time</small>
           </div>
         </section>
 

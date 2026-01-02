@@ -51,9 +51,7 @@ export async function saveUserSettings(accountId, settings) {
     supabaseAnonKey: settings.supabaseAnonKey || '',
     supabaseServiceRoleKey: settings.supabaseServiceRoleKey || '',
     aiServerUrl: settings.aiServerUrl || '',
-    aiServerApiKey: settings.aiServerApiKey || '',
-    screenshotInterval: settings.screenshotInterval || DEFAULT_SETTINGS.screenshotInterval,
-    autoWorklogEnabled: settings.autoWorklogEnabled !== undefined ? settings.autoWorklogEnabled : DEFAULT_SETTINGS.autoWorklogEnabled
+    aiServerApiKey: settings.aiServerApiKey || ''
   });
 }
 
