@@ -178,18 +178,20 @@ export async function getGroupDetails(req) {
     console.log(`[getGroupDetails] Loading details for group: ${groupId}`);
 
     // Fetch group members with activity data in a single query
+    // IMPORTANT: Use screenshots.duration_seconds (source of truth) instead of unassigned_activity.time_spent_seconds (stale)
     const members = await supabaseRequest(
       supabaseConfig,
-      `unassigned_group_members?group_id=eq.${groupId}&select=id,unassigned_activity_id,unassigned_activity(id,time_spent_seconds,window_title,application_name,timestamp)`
+      `unassigned_group_members?group_id=eq.${groupId}&select=id,unassigned_activity_id,unassigned_activity(id,window_title,application_name,timestamp,screenshot_id,screenshots(duration_seconds))`
     );
 
     const membersArray = Array.isArray(members) ? members : (members ? [members] : []);
 
-    // Calculate accurate total_seconds from actual activities
+    // Calculate accurate total_seconds from screenshots.duration_seconds (source of truth)
     let totalSeconds = 0;
     membersArray.forEach(member => {
-      if (member?.unassigned_activity?.time_spent_seconds) {
-        totalSeconds += member.unassigned_activity.time_spent_seconds;
+      const durationSeconds = member?.unassigned_activity?.screenshots?.duration_seconds;
+      if (durationSeconds) {
+        totalSeconds += durationSeconds;
       }
     });
 
@@ -247,11 +249,12 @@ export async function getGroupScreenshots(req) {
     const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
 
     // Get unassigned_activity records with their screenshot information
+    // IMPORTANT: Use screenshots.duration_seconds (source of truth) instead of time_spent_seconds (stale)
     const sessionIdsParam = sessionIds.join(',');
     console.log(`[getGroupScreenshots] Querying unassigned_activity with ${sessionIds.length} IDs`);
     const activities = await supabaseRequest(
       supabaseConfig,
-      `unassigned_activity?id=in.(${sessionIdsParam})&user_id=eq.${userId}&select=id,analysis_result_id,window_title,application_name,time_spent_seconds,timestamp`
+      `unassigned_activity?id=in.(${sessionIdsParam})&user_id=eq.${userId}&select=id,analysis_result_id,window_title,application_name,timestamp,screenshot_id,screenshots(duration_seconds)`
     );
 
     console.log(`[getGroupScreenshots] Found ${activities?.length || 0} unassigned_activity records`);
@@ -273,11 +276,12 @@ export async function getGroupScreenshots(req) {
     }
 
     // Fetch analysis_results with screenshot data
+    // Include duration_seconds from screenshots (source of truth)
     const analysisIdsParam = analysisResultIds.join(',');
     console.log(`[getGroupScreenshots] Querying analysis_results with ${analysisResultIds.length} IDs`);
     const analysisResults = await supabaseRequest(
       supabaseConfig,
-      `analysis_results?id=in.(${analysisIdsParam})&select=id,screenshot_id,screenshots(id,timestamp,storage_path,thumbnail_url,window_title,application_name)`
+      `analysis_results?id=in.(${analysisIdsParam})&select=id,screenshot_id,screenshots(id,timestamp,storage_path,thumbnail_url,window_title,application_name,duration_seconds)`
     );
 
     const resultsArray = Array.isArray(analysisResults) ? analysisResults : (analysisResults ? [analysisResults] : []);

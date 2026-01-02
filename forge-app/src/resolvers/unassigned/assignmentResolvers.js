@@ -459,9 +459,10 @@ export async function previewBulkReassign(req) {
 
     // Query analysis_results within the time range (includes both assigned and unassigned)
     // Use screenshots.timestamp for accurate time-based filtering
+    // IMPORTANT: Use screenshots.duration_seconds (source of truth) instead of analysis_results.time_spent_seconds (stale)
     const analysisResults = await supabaseRequest(
       supabaseConfig,
-      `analysis_results?select=id,active_task_key,time_spent_seconds,confidence_score,work_type,manually_assigned,screenshots(id,timestamp,window_title,application_name,thumbnail_url)&user_id=eq.${userId}&organization_id=eq.${organization.id}&work_type=eq.office&order=created_at.asc`
+      `analysis_results?select=id,active_task_key,confidence_score,work_type,manually_assigned,screenshots(id,timestamp,window_title,application_name,thumbnail_url,duration_seconds)&user_id=eq.${userId}&organization_id=eq.${organization.id}&work_type=eq.office&order=created_at.asc`
     );
 
     // Filter by screenshot timestamp within the time range
@@ -480,13 +481,13 @@ export async function previewBulkReassign(req) {
     const wronglyTracked = activitiesInRange.filter(a => a.active_task_key !== null);
     const unassigned = activitiesInRange.filter(a => a.active_task_key === null);
 
-    // Calculate totals
-    const totalSeconds = activitiesInRange.reduce((sum, a) => sum + (a.time_spent_seconds || 0), 0);
+    // Calculate totals using screenshots.duration_seconds (source of truth)
+    const totalSeconds = activitiesInRange.reduce((sum, a) => sum + (a.screenshots?.duration_seconds || 0), 0);
 
     // Get unique issue keys that are currently assigned
     const currentlyAssignedIssues = [...new Set(wronglyTracked.map(a => a.active_task_key).filter(Boolean))];
 
-    // Format activities for display
+    // Format activities for display - use screenshots.duration_seconds
     const formattedActivities = activitiesInRange.map(a => ({
       id: a.id,
       screenshot_id: a.screenshots?.id,
@@ -495,7 +496,7 @@ export async function previewBulkReassign(req) {
       application_name: a.screenshots?.application_name,
       thumbnail_url: a.screenshots?.thumbnail_url,
       current_issue_key: a.active_task_key,
-      time_spent_seconds: a.time_spent_seconds,
+      time_spent_seconds: a.screenshots?.duration_seconds || 0,
       is_unassigned: a.active_task_key === null
     }));
 
@@ -560,9 +561,10 @@ export async function bulkReassignByTimeInterval(req) {
     console.log(`[bulkReassignByTimeInterval] Reassigning activities from ${startDateTime} to ${endDateTime} to ${targetIssueKey}`);
 
     // First, get all analysis_results in the time range
+    // IMPORTANT: Use screenshots.duration_seconds (source of truth) instead of analysis_results.time_spent_seconds (stale)
     const analysisResults = await supabaseRequest(
       supabaseConfig,
-      `analysis_results?select=id,active_task_key,time_spent_seconds,screenshot_id,screenshots(id,timestamp)&user_id=eq.${userId}&organization_id=eq.${organization.id}&work_type=eq.office`
+      `analysis_results?select=id,active_task_key,screenshot_id,screenshots(id,timestamp,duration_seconds)&user_id=eq.${userId}&organization_id=eq.${organization.id}&work_type=eq.office`
     );
 
     // Filter by screenshot timestamp
@@ -582,7 +584,8 @@ export async function bulkReassignByTimeInterval(req) {
     }
 
     const analysisResultIds = activitiesInRange.map(a => a.id);
-    const totalSeconds = activitiesInRange.reduce((sum, a) => sum + (a.time_spent_seconds || 0), 0);
+    // Use screenshots.duration_seconds (source of truth) instead of time_spent_seconds (stale)
+    const totalSeconds = activitiesInRange.reduce((sum, a) => sum + (a.screenshots?.duration_seconds || 0), 0);
     const previouslyAssignedCount = activitiesInRange.filter(a => a.active_task_key !== null).length;
     const previouslyUnassignedCount = activitiesInRange.filter(a => a.active_task_key === null).length;
 
