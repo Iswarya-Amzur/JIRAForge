@@ -5,6 +5,7 @@
 
 const { getClient, isNetworkError } = require('./supabase-client');
 const logger = require('../../utils/logger');
+const { getLocalISOString, toLocalISOString } = require('../../utils/datetime');
 
 /**
  * Update screenshot status
@@ -18,8 +19,8 @@ async function updateScreenshotStatus(screenshotId, status, errorMessage = null)
     const supabase = getClient();
     const updateData = {
       status,
-      analyzed_at: status === 'analyzed' ? new Date().toISOString() : null,
-      updated_at: new Date().toISOString()
+      analyzed_at: status === 'analyzed' ? getLocalISOString() : null,
+      updated_at: getLocalISOString()
     };
 
     if (errorMessage) {
@@ -67,7 +68,7 @@ async function updateScreenshotDuration(screenshotId, { duration_seconds, start_
     const updateData = {
       duration_seconds,
       start_time,
-      end_time: end_time || new Date().toISOString()
+      end_time: end_time || getLocalISOString()
     };
 
     const { error } = await supabase
@@ -110,7 +111,7 @@ async function getPendingScreenshots(limit = 10) {
 
     // Fetch failed screenshots for retry (only those with retry_count < MAX_RETRIES)
     // Also only retry screenshots that failed more than 1 minute ago (backoff)
-    const oneMinuteAgo = new Date(Date.now() - 60 * 1000).toISOString();
+    const oneMinuteAgo = toLocalISOString(new Date(Date.now() - 60 * 1000));
     const { data: failedData, error: failedError } = await supabase
       .from('screenshots')
       .select('*')

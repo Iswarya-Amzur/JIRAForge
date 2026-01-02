@@ -5,6 +5,7 @@
 
 const { getClient } = require('./supabase-client');
 const logger = require('../../utils/logger');
+const { toLocalISOString } = require('../../utils/datetime');
 
 /**
  * Get all users who have unassigned activities (grouped by user and organization)
@@ -48,6 +49,8 @@ async function getUsersWithUnassignedWork() {
 async function getUnassignedActivities(userId, organizationId) {
   try {
     const supabase = getClient();
+    // IMPORTANT: JOIN with screenshots to get duration_seconds (source of truth)
+    // instead of using unassigned_activity.time_spent_seconds (stale)
     let query = supabase
       .from('unassigned_activity')
       .select(`
@@ -57,12 +60,12 @@ async function getUnassignedActivities(userId, organizationId) {
         window_title,
         application_name,
         extracted_text,
-        time_spent_seconds,
         reason,
         confidence_score,
         metadata,
         analysis_result_id,
-        organization_id
+        organization_id,
+        screenshots(duration_seconds)
       `)
       .eq('user_id', userId)
       .eq('manually_assigned', false)
@@ -80,6 +83,7 @@ async function getUnassignedActivities(userId, organizationId) {
     }
 
     // Fetch analysis_metadata for each activity to get AI reasoning
+    // Also map screenshots.duration_seconds to time_spent_seconds for compatibility
     const enrichedData = await Promise.all(
       data.map(async (activity) => {
         const { data: analysisData } = await supabase
@@ -90,6 +94,8 @@ async function getUnassignedActivities(userId, organizationId) {
 
         return {
           ...activity,
+          // Use screenshots.duration_seconds (source of truth) as time_spent_seconds
+          time_spent_seconds: activity.screenshots?.duration_seconds || 0,
           reasoning: analysisData?.analysis_metadata?.reasoning || 'No description available'
         };
       })
@@ -112,7 +118,7 @@ async function getUnassignedActivities(userId, organizationId) {
 async function getRecentGroups(userId, hoursAgo = 24, organizationId = null) {
   try {
     const supabase = getClient();
-    const cutoffTime = new Date(Date.now() - hoursAgo * 60 * 60 * 1000).toISOString();
+    const cutoffTime = toLocalISOString(new Date(Date.now() - hoursAgo * 60 * 60 * 1000));
 
     let query = supabase
       .from('unassigned_work_groups')

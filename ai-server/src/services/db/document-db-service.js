@@ -5,6 +5,7 @@
 
 const { getClient } = require('./supabase-client');
 const logger = require('../../utils/logger');
+const { getLocalISOString } = require('../../utils/datetime');
 
 /**
  * Update document status
@@ -18,7 +19,7 @@ async function updateDocumentStatus(documentId, status, errorMessage = null) {
     const supabase = getClient();
     const updateData = {
       processing_status: status,
-      processed_at: status === 'completed' ? new Date().toISOString() : null
+      processed_at: status === 'completed' ? getLocalISOString() : null
     };
 
     if (errorMessage) {

@@ -6,6 +6,7 @@
 
 const { chatCompletionWithFallback, isAIEnabled } = require('./ai/ai-client');
 const logger = require('../utils/logger');
+const { toLocalISOString } = require('../utils/datetime');
 
 // Applications that should ALWAYS be grouped separately (system/idle apps)
 const SYSTEM_APPS = [
@@ -395,8 +396,8 @@ exports.getUnassignedWorkSummary = async (sessions) => {
     total_time_formatted: formatDuration(totalSeconds),
     applications: applications,
     date_range: {
-      earliest: sessions.length > 0 ? new Date(Math.min(...sessions.map(s => new Date(s.timestamp)))).toISOString() : null,
-      latest: sessions.length > 0 ? new Date(Math.max(...sessions.map(s => new Date(s.timestamp)))).toISOString() : null
+      earliest: sessions.length > 0 ? toLocalISOString(new Date(Math.min(...sessions.map(s => new Date(s.timestamp))))) : null,
+      latest: sessions.length > 0 ? toLocalISOString(new Date(Math.max(...sessions.map(s => new Date(s.timestamp))))) : null
     }
   };
 };

@@ -5,6 +5,7 @@
 
 const { getClient } = require('./supabase-client');
 const logger = require('../../utils/logger');
+const { getLocalISOString } = require('../../utils/datetime');
 
 /**
  * Save analysis result to database
@@ -45,7 +46,7 @@ async function markWorklogCreated(screenshotId, worklogId) {
       .update({
         worklog_created: true,
         worklog_id: worklogId,
-        worklog_created_at: new Date().toISOString()
+        worklog_created_at: getLocalISOString()
       })
       .eq('screenshot_id', screenshotId);
 
@@ -144,7 +145,7 @@ async function assignWorkGroup(sessionIds, issueKey, metadata = {}) {
         active_task_key: issueKey,
         manually_assigned: true,
         assignment_group_id: metadata.groupId || null,
-        updated_at: new Date().toISOString()
+        updated_at: getLocalISOString()
       })
       .in('screenshot_id', sessionIds);
 

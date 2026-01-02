@@ -11,6 +11,7 @@ const authMiddleware = require('./middleware/auth');
 const logger = require('./utils/logger');
 const pollingService = require('./services/polling-service');
 const clusteringPollingService = require('./services/clustering-polling-service');
+const cleanupService = require('./services/cleanup-service');
 const aiService = require('./services/ai');
 const { initializeSheetsLogger } = require('./services/sheets-logger');
 
@@ -209,6 +210,33 @@ app.post('/api/cluster-unassigned-work', async (req, res, next) => {
   }
 });
 
+// Manual trigger for cleanup - deletes old screenshot files from storage
+app.post('/api/trigger-cleanup', authMiddleware, async (req, res, next) => {
+  try {
+    // Check if cleanup is already running
+    if (cleanupService.isCleanupRunning()) {
+      return res.status(409).json({
+        success: false,
+        error: 'Cleanup is already in progress. Please wait for it to complete.'
+      });
+    }
+
+    logger.info('[API] Manual cleanup triggered');
+
+    const result = await cleanupService.runCleanup();
+
+    res.json({
+      success: result.success,
+      message: `Cleanup completed. ${result.deleted} files deleted, ${result.errors} errors.`,
+      filesDeleted: result.deleted,
+      errors: result.errors
+    });
+  } catch (error) {
+    logger.error('[API] Error in manual cleanup:', error);
+    next(error);
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   logger.error('Unhandled error:', err);
@@ -253,6 +281,11 @@ async function startServer() {
       pollingService.start();
       logger.info('Screenshot analysis polling service started - will process pending screenshots automatically');
 
+      // Step 3: Start cleanup service for old screenshot files
+      // Runs monthly to delete files older than 2 months
+      await cleanupService.start();
+      logger.info('Cleanup service started - monthly cleanup scheduled');
+
       resolve();
     });
   });
@@ -269,6 +302,7 @@ process.on('SIGTERM', () => {
   logger.info('SIGTERM received, shutting down gracefully');
   pollingService.stop();
   clusteringPollingService.stop();
+  cleanupService.stop();
   process.exit(0);
 });
 
@@ -276,5 +310,6 @@ process.on('SIGINT', () => {
   logger.info('SIGINT received, shutting down gracefully');
   pollingService.stop();
   clusteringPollingService.stop();
+  cleanupService.stop();
   process.exit(0);
 });

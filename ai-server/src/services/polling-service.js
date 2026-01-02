@@ -1,6 +1,7 @@
 const screenshotService = require('./screenshot-service');
 const supabaseService = require('./supabase-service');
 const logger = require('../utils/logger');
+const { getLocalISOString, toLocalISOString } = require('../utils/datetime');
 
 class PollingService {
   constructor() {
@@ -210,7 +211,9 @@ class PollingService {
 
     // Use actual duration from desktop app if available, otherwise use AI's calculated value
     // Desktop app sets duration_seconds based on actual window tracking (event-based)
-    const actualDuration = duration_seconds || analysis.timeSpentSeconds;
+    // IMPORTANT: Use ?? (nullish coalescing) instead of || to handle duration_seconds: 0 correctly
+    // The || operator treats 0 as falsy, which would incorrectly fall back to 300
+    const actualDuration = duration_seconds ?? analysis.timeSpentSeconds;
 
     // Save analysis results to Supabase - include organization_id for multi-tenancy
     await supabaseService.saveAnalysisResult({
@@ -234,8 +237,8 @@ class PollingService {
     // Duration of 0 is a valid value set by desktop app (will be updated later with actual duration)
     if (duration_seconds == null || !start_time || !end_time) {
       // Fallback: Calculate duration for legacy screenshots that don't have event-based data
-      const calculatedEndTime = timestamp || new Date().toISOString();
-      const calculatedStartTime = new Date(new Date(calculatedEndTime).getTime() - (actualDuration * 1000)).toISOString();
+      const calculatedEndTime = timestamp || getLocalISOString();
+      const calculatedStartTime = toLocalISOString(new Date(new Date(calculatedEndTime).getTime() - (actualDuration * 1000)));
 
       await supabaseService.updateScreenshotDuration(screenshot_id, {
         duration_seconds: duration_seconds != null ? duration_seconds : actualDuration,
