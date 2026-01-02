@@ -159,31 +159,46 @@ load_dotenv()
 # ============================================================================
 
 # Embedded credentials (for production builds - no .env file needed)
-# SECURITY: ATLASSIAN_CLIENT_SECRET moved to AI Server (OAuth is now secure)
-# NOTE: SUPABASE_SERVICE_ROLE_KEY kept here temporarily - Supabase Python SDK limitation
+# SECURITY: All sensitive keys moved to AI Server - fetched at runtime after authentication
 EMBEDDED_CONFIG = {
     'ATLASSIAN_CLIENT_ID': 'Q8HT4Jn205AuTiAarj088oWNDrOqwvM5',
     # REMOVED: ATLASSIAN_CLIENT_SECRET - now on AI Server only (security fix)
-    'SUPABASE_URL': 'https://jvijitdewbypqbatfboi.supabase.co',
-    'SUPABASE_ANON_KEY': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2aWppdGRld2J5cHFiYXRmYm9pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI3NTU1OTAsImV4cCI6MjA3ODMzMTU5MH0.OvoIgXKqYTK_9S_bIJtUa6N2TVgtgcp94iOVjE3rdRM',
-    'SUPABASE_SERVICE_ROLE_KEY': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2aWppdGRld2J5cHFiYXRmYm9pIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2Mjc1NTU5MCwiZXhwIjoyMDc4MzMxNTkwfQ.2Pbdo2DHHfCIpUVPP390P2Y3rF7_hdsYM-38g26XTUY',
-    'AI_SERVER_URL': 'http://216.48.190.255:3001',  # AI Server for secure token exchange
+    # REMOVED: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY - fetched from AI Server
+    'AI_SERVER_URL': 'http://216.48.190.255:3001',  # AI Server for secure token exchange & config
     'CAPTURE_INTERVAL': '300',
     'WEB_PORT': '51777',
     'ADMIN_PASSWORD': 'admin123'
 }
 
+# Runtime Supabase config (fetched from AI server after authentication)
+RUNTIME_SUPABASE_CONFIG = {
+    'SUPABASE_URL': None,
+    'SUPABASE_ANON_KEY': None,
+    'SUPABASE_SERVICE_ROLE_KEY': None
+}
+
 def get_env_var(key, default=None):
-    """Get environment variable with fallback to embedded values"""
+    """Get environment variable with fallback to embedded/runtime values"""
     # First try environment variable (for development with .env)
     value = os.getenv(key)
     if value:
         return value
+    # Then try runtime Supabase config (fetched from AI server)
+    if key in RUNTIME_SUPABASE_CONFIG and RUNTIME_SUPABASE_CONFIG[key]:
+        return RUNTIME_SUPABASE_CONFIG[key]
     # Then try embedded config (for production builds)
     if key in EMBEDDED_CONFIG:
         return EMBEDDED_CONFIG[key]
     # Finally use default
     return default
+
+def set_runtime_supabase_config(url, anon_key, service_role_key):
+    """Set Supabase config fetched from AI server"""
+    global RUNTIME_SUPABASE_CONFIG
+    RUNTIME_SUPABASE_CONFIG['SUPABASE_URL'] = url
+    RUNTIME_SUPABASE_CONFIG['SUPABASE_ANON_KEY'] = anon_key
+    RUNTIME_SUPABASE_CONFIG['SUPABASE_SERVICE_ROLE_KEY'] = service_role_key
+    print(f"[OK] Supabase config loaded from AI server")
 
 def get_app_data_dir():
     """Get the application data directory in LocalAppData"""
@@ -746,6 +761,54 @@ class AtlassianAuthManager:
         # Token expired or doesn't exist, get a new one
         print("[INFO] Supabase token expired or missing, getting new one...")
         return self.get_supabase_token()
+
+    def get_supabase_config(self):
+        """Fetch Supabase configuration from AI Server (requires valid Atlassian token)"""
+        access_token = self.tokens.get('access_token')
+        if not access_token:
+            print("[ERROR] No valid Atlassian token - cannot fetch Supabase config")
+            return False
+
+        try:
+            ai_server_url = get_env_var('AI_SERVER_URL')
+            print("[INFO] Fetching Supabase config from AI Server...")
+
+            response = requests.post(
+                f"{ai_server_url}/api/auth/supabase-config",
+                json={'atlassian_token': access_token},
+                timeout=30
+            )
+
+            if response.status_code == 401:
+                # Token might be expired, try refreshing
+                print("[WARN] Atlassian token rejected, attempting refresh...")
+                if self.refresh_access_token():
+                    return self.get_supabase_config()
+                else:
+                    print("[ERROR] Token refresh failed")
+                    return False
+
+            if response.status_code != 200:
+                error = response.json().get('error', 'Unknown error')
+                print(f"[ERROR] Failed to get Supabase config: {error}")
+                return False
+
+            result = response.json()
+            if not result.get('success'):
+                print(f"[ERROR] Failed to get Supabase config: {result.get('error', 'Unknown error')}")
+                return False
+
+            # Store the Supabase config in runtime config
+            set_runtime_supabase_config(
+                result.get('supabase_url'),
+                result.get('supabase_anon_key'),
+                result.get('supabase_service_role_key')
+            )
+            return True
+
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch Supabase config: {e}")
+            return False
 
     def logout(self):
         """Clear authentication tokens"""
@@ -1381,36 +1444,21 @@ class ConsentManager:
 
 class BRDTimeTracker:
     """Main application class"""
-    
+
     def __init__(self):
         print("[INFO] Initializing BRD Time Tracker...")
-        
+
         # Configuration (defaults, will be overridden by server settings)
         self.capture_interval = int(get_env_var('CAPTURE_INTERVAL', 300))
         self.web_port = int(get_env_var('WEB_PORT', 51777))
-        
-        # Initialize Supabase
-        supabase_url = get_env_var('SUPABASE_URL')
-        supabase_anon_key = get_env_var('SUPABASE_ANON_KEY')
-        supabase_service_key = get_env_var('SUPABASE_SERVICE_ROLE_KEY')
-        self.supabase_url = supabase_url  # Store for later use
 
-        if not supabase_url or not supabase_anon_key:
-            raise ValueError("SUPABASE_URL and SUPABASE_ANON_KEY must be set")
+        # Supabase clients (initialized after authentication)
+        self.supabase = None
+        self.supabase_service = None
+        self.supabase_url = None
+        self.supabase_initialized = False
 
-        # Initialize with anon key (for public operations)
-        self.supabase: Client = create_client(supabase_url, supabase_anon_key)
-
-        # Initialize service client for storage operations
-        # NOTE: Kept temporarily due to Supabase Python SDK limitation with custom JWTs
-        if supabase_service_key:
-            self.supabase_service: Client = create_client(supabase_url, supabase_service_key)
-            print("[OK] Supabase service role client initialized")
-        else:
-            self.supabase_service = None
-            print("[WARN] SUPABASE_SERVICE_ROLE_KEY not set - storage operations may fail")
-        
-        # Initialize Atlassian Auth
+        # Initialize Atlassian Auth FIRST (needed to fetch Supabase config)
         self.auth_manager = AtlassianAuthManager(web_port=self.web_port)
         
         # User state
@@ -1519,7 +1567,51 @@ class BRDTimeTracker:
 
         print("[OK] Application initialized")
         self.add_admin_log('INFO', 'Application started')
-    
+
+    def initialize_supabase(self):
+        """Initialize Supabase clients after fetching config from AI server.
+        Must be called after successful authentication."""
+        if self.supabase_initialized:
+            print("[INFO] Supabase already initialized")
+            return True
+
+        # Fetch Supabase config from AI server (requires valid Atlassian token)
+        print("[INFO] Fetching Supabase configuration from AI server...")
+        if not self.auth_manager.get_supabase_config():
+            print("[ERROR] Failed to get Supabase config from AI server")
+            return False
+
+        # Now initialize Supabase clients with runtime config
+        try:
+            self.supabase_url = get_env_var('SUPABASE_URL')
+            supabase_anon_key = get_env_var('SUPABASE_ANON_KEY')
+            supabase_service_key = get_env_var('SUPABASE_SERVICE_ROLE_KEY')
+
+            if not self.supabase_url or not supabase_anon_key:
+                print("[ERROR] Supabase URL or anon key not available")
+                return False
+
+            # Initialize anonymous client
+            self.supabase: Client = create_client(self.supabase_url, supabase_anon_key)
+            print(f"[OK] Supabase client initialized for {self.supabase_url}")
+
+            # Initialize service client for admin operations (bypasses RLS)
+            if supabase_service_key:
+                self.supabase_service: Client = create_client(self.supabase_url, supabase_service_key)
+                print("[OK] Supabase service client initialized")
+            else:
+                self.supabase_service = self.supabase
+                print("[WARN] No service role key - using anon client for all operations")
+
+            self.supabase_initialized = True
+            self.add_admin_log('INFO', 'Supabase initialized from AI server config')
+            return True
+
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize Supabase clients: {e}")
+            traceback.print_exc()
+            return False
+
     def setup_routes(self):
         """Setup Flask routes"""
         
@@ -1566,6 +1658,10 @@ class BRDTimeTracker:
                 user_info = self.auth_manager.get_user_info()
                 if not user_info:
                     return "Failed to get user information", 500
+
+                # Initialize Supabase clients (fetches config from AI server)
+                if not self.initialize_supabase():
+                    return "Failed to initialize database connection", 500
 
                 # Check if we had anonymous tracking before login
                 had_anonymous = self.current_user_id and self.current_user_id.startswith('anonymous_')
@@ -2019,17 +2115,30 @@ class BRDTimeTracker:
             existing_org_id = result.data[0].get('organization_id')
             print(f"[OK] Found existing user: {user_id}")
 
-            # Update user's organization if not set or different
-            if self.organization_id and existing_org_id != self.organization_id:
-                client.table('users').update({
-                    'organization_id': self.organization_id,
-                    'display_name': name,
-                    'email': email
-                }).eq('id', user_id).execute()
-                print(f"[OK] Updated user organization to: {self.organization_id}")
+            # Check if we need to update user details
+            existing_user = client.table('users').select('display_name, email').eq('id', user_id).execute()
+            existing_display_name = existing_user.data[0].get('display_name') if existing_user.data else None
+            existing_email = existing_user.data[0].get('email') if existing_user.data else None
+
+            # Update if organization changed OR if details are missing
+            needs_update = (
+                (self.organization_id and existing_org_id != self.organization_id) or
+                (not existing_display_name and name) or
+                (not existing_email and email)
+            )
+
+            if needs_update:
+                update_data = {
+                    'organization_id': self.organization_id or existing_org_id,
+                    'display_name': name or existing_display_name,
+                    'email': email or existing_email
+                }
+                client.table('users').update(update_data).eq('id', user_id).execute()
+                print(f"[OK] Updated user details: org={self.organization_id}, name={name}")
 
                 # Ensure organization membership exists
-                self._ensure_organization_membership(user_id)
+                if self.organization_id:
+                    self._ensure_organization_membership(user_id)
         else:
             # Create new user with organization
             user_data = {
@@ -3807,9 +3916,14 @@ class BRDTimeTracker:
                 if user_info:
                     self.current_user = user_info
                     try:
-                        self.current_user_id = self.ensure_user_exists(user_info)
-                        # Associate any anonymous offline records with this user
-                        self._associate_offline_records()
+                        # Initialize Supabase clients (fetches config from AI server)
+                        if not self.initialize_supabase():
+                            print("[WARN] Could not initialize Supabase, using cached user ID")
+                            self.current_user_id = self._load_cached_user_id()
+                        else:
+                            self.current_user_id = self.ensure_user_exists(user_info)
+                            # Associate any anonymous offline records with this user
+                            self._associate_offline_records()
                     except Exception as e:
                         print(f"[WARN] Could not sync user to database: {e}")
                         # Try to load cached user_id from local storage
