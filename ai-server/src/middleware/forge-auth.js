@@ -3,7 +3,6 @@
  * Validates requests from Atlassian Forge apps using JWT verification
  */
 
-const jose = require('jose');
 const logger = require('../utils/logger');
 
 // Atlassian's JWKS endpoint for FIT token verification
@@ -12,14 +11,26 @@ const JWKS_URL = 'https://forge.cdn.prod.atlassian-dev.net/.well-known/jwks.json
 // Your Forge App ID (from manifest.yml)
 const FORGE_APP_ID = process.env.FORGE_APP_ID || 'ari:cloud:ecosystem::app/c8bab1dc-ae32-4e6f-9dbd-eb242cc6c14a';
 
-// Cache the JWKS to avoid fetching on every request
+// Cache the JWKS and jose module
 let cachedJWKS = null;
+let joseModule = null;
+
+/**
+ * Load jose module (ES Module) dynamically
+ */
+async function getJose() {
+  if (!joseModule) {
+    joseModule = await import('jose');
+  }
+  return joseModule;
+}
 
 /**
  * Get the JWKS (JSON Web Key Set) from Atlassian
  * @returns {Promise<jose.JWKS>}
  */
 async function getJWKS() {
+  const jose = await getJose();
   if (!cachedJWKS) {
     cachedJWKS = jose.createRemoteJWKSet(new URL(JWKS_URL));
   }
@@ -33,6 +44,7 @@ async function getJWKS() {
  */
 async function validateFIT(token) {
   try {
+    const jose = await getJose();
     const JWKS = await getJWKS();
 
     const { payload } = await jose.jwtVerify(token, JWKS, {
