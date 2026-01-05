@@ -40,18 +40,26 @@ export function getTodayStr() {
 
 /**
  * Get week dates array up to today
+ * Week starts on Monday (ISO week standard, consistent with Team Analytics)
  * @param {Date} today - Reference date
  * @returns {Array<{dateStr: string, dayOfWeek: number, date: Date}>} Week dates
  */
 export function getWeekDates(today = new Date()) {
-  const year = today.getFullYear();
-  const month = today.getMonth();
-  const date = today.getDate();
   const todayStr = formatLocalDate(today);
-  const startOfWeek = new Date(year, month, date - today.getDay());
+
+  // Calculate start of week (Monday) - ISO week standard
+  // getDay() returns 0 for Sunday, 1 for Monday, etc.
+  const startOfWeek = new Date(today);
+  const dayOfWeek = startOfWeek.getDay();
+  // If Sunday (0), go back 6 days. Otherwise, go back (dayOfWeek - 1) days.
+  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  startOfWeek.setDate(today.getDate() - daysToMonday);
+  startOfWeek.setHours(0, 0, 0, 0);
 
   return Array.from({ length: 7 }, (_, i) => {
-    const weekDate = new Date(year, month, startOfWeek.getDate() + i);
+    // Create each day by adding days to startOfWeek
+    const weekDate = new Date(startOfWeek);
+    weekDate.setDate(startOfWeek.getDate() + i);
     const dateStr = formatLocalDate(weekDate);
     return {
       dateStr,

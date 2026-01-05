@@ -19,14 +19,20 @@ function SummaryCards({ loading, timeData }) {
 
   const calculateWeekTotal = () => {
     const today = new Date();
-    const year = today.getFullYear();
-    const month = today.getMonth();
-    const date = today.getDate();
     const todayStr = formatLocalDate(today);
-    const startOfWeek = new Date(year, month, date - today.getDay());
 
+    // Calculate start of week (Monday) - ISO week standard, consistent with Team Analytics
+    const startOfWeek = new Date(today);
+    const dayOfWeek = startOfWeek.getDay();
+    // If Sunday (0), go back 6 days. Otherwise, go back (dayOfWeek - 1) days.
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    startOfWeek.setDate(today.getDate() - daysToMonday);
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    // Build array of date strings for this week up to today
     const weekDates = Array.from({ length: 7 }, (_, i) => {
-      const weekDate = new Date(year, month, startOfWeek.getDate() + i);
+      const weekDate = new Date(startOfWeek);
+      weekDate.setDate(startOfWeek.getDate() + i);
       return formatLocalDate(weekDate);
     }).filter(dateStr => dateStr <= todayStr);
 

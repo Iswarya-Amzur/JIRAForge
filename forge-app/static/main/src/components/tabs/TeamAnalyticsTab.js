@@ -71,29 +71,46 @@ function TeamAnalyticsTab() {
             <div className="team-kpi-card">
               <div className="kpi-icon">📊</div>
               <div className="kpi-content">
-                <div className="kpi-value">{teamAnalytics?.teamSummary?.totalHoursThisMonth || 0}h</div>
+                <div className="kpi-value-row">
+                  <div className="kpi-value">{teamAnalytics?.teamSummary?.totalHoursThisMonth || 0}h</div>
+                  <div className="kpi-info-wrapper">
+                    <span className="kpi-info-icon">i</span>
+                    <span className="kpi-info-tooltip">
+                      Total hours tracked by all team members on this project during the current month.
+                    </span>
+                  </div>
+                </div>
                 <div className="kpi-label">Total Hours This Month</div>
               </div>
             </div>
             <div className="team-kpi-card">
               <div className="kpi-icon">👥</div>
               <div className="kpi-content">
-                <div className="kpi-value">{teamAnalytics?.teamSummary?.activeMembers || 0}</div>
+                <div className="kpi-value-row">
+                  <div className="kpi-value">{teamAnalytics?.teamSummary?.activeMembers || 0}</div>
+                  <div className="kpi-info-wrapper">
+                    <span className="kpi-info-icon">i</span>
+                    <span className="kpi-info-tooltip">
+                      Number of team members who have tracked at least some time on this project this month.
+                    </span>
+                  </div>
+                </div>
                 <div className="kpi-label">Active Members</div>
               </div>
             </div>
             <div className="team-kpi-card">
               <div className="kpi-icon">📋</div>
               <div className="kpi-content">
-                <div className="kpi-value">{teamAnalytics?.teamSummary?.issuesWorked || 0}</div>
+                <div className="kpi-value-row">
+                  <div className="kpi-value">{teamAnalytics?.teamSummary?.issuesWorked || 0}</div>
+                  <div className="kpi-info-wrapper">
+                    <span className="kpi-info-icon">i</span>
+                    <span className="kpi-info-tooltip">
+                      Number of unique Jira issues with tracked time entries this month.
+                    </span>
+                  </div>
+                </div>
                 <div className="kpi-label">Issues Worked</div>
-              </div>
-            </div>
-            <div className="team-kpi-card">
-              <div className="kpi-icon">⏱️</div>
-              <div className="kpi-content">
-                <div className="kpi-value">{teamAnalytics?.teamSummary?.avgHoursPerMember || 0}h</div>
-                <div className="kpi-label">Avg Hours/Member</div>
               </div>
             </div>
           </div>
@@ -103,7 +120,15 @@ function TeamAnalyticsTab() {
             {/* Team Member Activity Table */}
             <div className="team-section team-member-activity">
               <div className="section-header">
-                <h3>Team Member Activity</h3>
+                <div className="section-title-row">
+                  <h3>Team Member Activity</h3>
+                  <div className="section-info-wrapper">
+                    <span className="section-info-icon">i</span>
+                    <span className="section-info-tooltip">
+                      Breakdown of hours tracked by each team member for today, this week (Mon-Sun), and this month.
+                    </span>
+                  </div>
+                </div>
                 <span className="section-subtitle">Hours tracked by each team member</span>
               </div>
               <div className="team-member-table-container">
@@ -176,29 +201,44 @@ function TeamAnalyticsTab() {
             {/* Activity Trend Chart */}
             <div className="team-section team-activity-trend">
               <div className="section-header">
-                <h3>Activity Trend</h3>
+                <div className="section-title-row">
+                  <h3>Activity Trend</h3>
+                  <div className="section-info-wrapper">
+                    <span className="section-info-icon">i</span>
+                    <span className="section-info-tooltip">
+                      Visual representation of daily team work hours over the last 14 days. Taller bars indicate more hours tracked.
+                    </span>
+                  </div>
+                </div>
                 <span className="section-subtitle">Daily team hours - Last 14 days</span>
               </div>
               <div className="trend-chart-container">
                 {teamAnalytics?.activityTrend?.length > 0 ? (
                   <div className="trend-chart">
                     {(() => {
-                      const maxHours = Math.max(...teamAnalytics.activityTrend.map(d => d.totalHours), 1);
-                      return teamAnalytics.activityTrend.map((day, idx) => (
-                        <div key={idx} className="trend-bar-wrapper">
-                          <div
-                            className="trend-bar"
-                            style={{ height: `${(day.totalHours / maxHours) * 100}%` }}
-                            title={`${day.date}: ${day.totalHours}h`}
-                          >
-                            {day.totalHours > 0 && (
-                              <span className="trend-bar-value">{day.totalHours}h</span>
-                            )}
+                      const maxHours = Math.max(...teamAnalytics.activityTrend.map(d => d.totalHours), 0.1);
+                      const maxBarHeight = 140; // Fixed pixel height for the tallest bar
+                      return teamAnalytics.activityTrend.map((day, idx) => {
+                        // Calculate bar height in pixels (minimum 4px if there's any value)
+                        const barHeight = day.totalHours > 0
+                          ? Math.max(4, Math.round((day.totalHours / maxHours) * maxBarHeight))
+                          : 0;
+                        return (
+                          <div key={idx} className="trend-bar-wrapper">
+                            <div
+                              className={`trend-bar ${day.totalHours === 0 ? 'empty-bar' : ''}`}
+                              style={{ height: `${barHeight}px` }}
+                              title={`${day.date}: ${day.totalHours}h`}
+                            >
+                              {day.totalHours > 0 && (
+                                <span className="trend-bar-value">{day.totalHours}h</span>
+                              )}
+                            </div>
+                            <span className="trend-bar-label">{day.dayOfMonth}</span>
+                            <span className="trend-bar-day">{day.dayOfWeek}</span>
                           </div>
-                          <span className="trend-bar-label">{day.dayOfMonth}</span>
-                          <span className="trend-bar-day">{day.dayOfWeek}</span>
-                        </div>
-                      ));
+                        );
+                      });
                     })()}
                   </div>
                 ) : (
@@ -211,7 +251,15 @@ function TeamAnalyticsTab() {
           {/* Time by Issue Section */}
           <div className="team-section team-time-by-issue">
             <div className="section-header">
-              <h3>Time by Issue</h3>
+              <div className="section-title-row">
+                <h3>Time by Issue</h3>
+                <div className="section-info-wrapper">
+                  <span className="section-info-icon">i</span>
+                  <span className="section-info-tooltip">
+                    Top issues by time tracked. Shows total hours and number of team members who contributed to each issue.
+                  </span>
+                </div>
+              </div>
               <span className="section-subtitle">Team effort distribution across issues</span>
             </div>
             <div className="issue-bars-container">

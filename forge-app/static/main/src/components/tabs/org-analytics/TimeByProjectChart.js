@@ -11,7 +11,15 @@ function TimeByProjectChart({ projects = [] }) {
     return (
       <div className="org-chart-card">
         <div className="chart-header">
-          <h3>Time By Project</h3>
+          <div className="chart-title-row">
+            <h3>Time By Project</h3>
+            <div className="chart-info-wrapper">
+              <span className="chart-info-icon">i</span>
+              <span className="chart-info-tooltip">
+                Hours tracked per project this month. Bar length shows relative time spent. Includes contributor count and month-over-month trend.
+              </span>
+            </div>
+          </div>
           <span className="chart-subtitle">Hours tracked this month</span>
         </div>
         <div className="project-bars">
@@ -24,7 +32,15 @@ function TimeByProjectChart({ projects = [] }) {
   return (
     <div className="org-chart-card">
       <div className="chart-header">
-        <h3>Time By Project</h3>
+        <div className="chart-title-row">
+          <h3>Time By Project</h3>
+          <div className="chart-info-wrapper">
+            <span className="chart-info-icon">i</span>
+            <span className="chart-info-tooltip">
+              Hours tracked per project this month. Bar length shows relative time spent. Includes contributor count and month-over-month trend.
+            </span>
+          </div>
+        </div>
         <span className="chart-subtitle">Hours tracked this month</span>
       </div>
       <div className="project-bars">

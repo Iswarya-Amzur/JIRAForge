@@ -56,11 +56,21 @@
 }
 
 .accordion-toggle {
-  font-size: 14px;
+  font-size: 24px;
   color: #5e6c84;
   flex-shrink: 0;
-  width: 20px;
-  text-align: center;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.accordion-toggle.expanded {
+  transform: rotate(90deg);
 }
 
 .group-title-section {

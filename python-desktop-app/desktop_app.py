@@ -164,7 +164,7 @@ EMBEDDED_CONFIG = {
     'ATLASSIAN_CLIENT_ID': 'Q8HT4Jn205AuTiAarj088oWNDrOqwvM5',
     # REMOVED: ATLASSIAN_CLIENT_SECRET - now on AI Server only (security fix)
     # REMOVED: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY - fetched from AI Server
-    'AI_SERVER_URL': 'http://216.48.190.255:3001',  # AI Server for secure token exchange & config
+    'AI_SERVER_URL': 'https://server.forgesync.amzur.com/',  # AI Server for secure token exchange & config
     'CAPTURE_INTERVAL': '300',
     'WEB_PORT': '51777',
     'ADMIN_PASSWORD': 'admin123'
@@ -856,6 +856,7 @@ class OfflineManager:
                 start_time TEXT,
                 end_time TEXT,
                 duration_seconds INTEGER,
+                project_key TEXT,
                 user_assigned_issues TEXT,
                 metadata TEXT,
                 image_data BLOB,
@@ -866,6 +867,12 @@ class OfflineManager:
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        # Add project_key column if it doesn't exist (for existing databases)
+        try:
+            cursor.execute('ALTER TABLE offline_screenshots ADD COLUMN project_key TEXT')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
         
         # Create index for faster queries
         cursor.execute('''
@@ -945,11 +952,11 @@ class OfflineManager:
             
             cursor.execute('''
                 INSERT INTO offline_screenshots (
-                    user_id, organization_id, timestamp, storage_path, 
+                    user_id, organization_id, timestamp, storage_path,
                     window_title, application_name, file_size_bytes,
-                    start_time, end_time, duration_seconds,
+                    start_time, end_time, duration_seconds, project_key,
                     user_assigned_issues, metadata, image_data, thumbnail_data
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 screenshot_data.get('user_id'),
                 screenshot_data.get('organization_id'),
@@ -961,6 +968,7 @@ class OfflineManager:
                 screenshot_data.get('start_time'),
                 screenshot_data.get('end_time'),
                 screenshot_data.get('duration_seconds'),
+                screenshot_data.get('project_key'),
                 user_issues,
                 metadata,
                 image_bytes,
@@ -1320,7 +1328,7 @@ class OfflineManager:
             # Parse JSON fields
             user_issues = json.loads(record.get('user_assigned_issues') or '[]')
             metadata = json.loads(record.get('metadata') or '{}')
-            
+
             # Prepare database record
             screenshot_data = {
                 'user_id': user_id,
@@ -1333,6 +1341,7 @@ class OfflineManager:
                 'application_name': record.get('application_name'),
                 'file_size_bytes': record.get('file_size_bytes'),
                 'status': 'pending',
+                'project_key': record.get('project_key'),
                 'user_assigned_issues': user_issues,
                 'start_time': record.get('start_time'),
                 'end_time': record.get('end_time'),
@@ -1530,6 +1539,11 @@ class BRDTimeTracker:
         self.issues_cache_time = None  # Last time issues were fetched
         self.issues_cache_ttl = 300  # 5 minutes cache TTL
         self.jira_cloud_id = None  # Cached Jira cloud ID
+
+        # Jira project caching (for users without assigned issues)
+        self.user_projects = []  # Cache of user's accessible Jira projects
+        self.projects_cache_time = None  # Last time projects were fetched
+        self.projects_cache_ttl = 3600  # 1 hour cache TTL (projects change less frequently)
 
         # Multi-tenancy: Organization info
         self.organization_id = None  # UUID from public.organizations table
@@ -2492,9 +2506,127 @@ class BRDTimeTracker:
         """Check if issues cache needs to be refreshed"""
         if not self.issues_cache_time:
             return True
-        
+
         return (time.time() - self.issues_cache_time) > self.issues_cache_ttl
-    
+
+    def fetch_jira_projects(self):
+        """Fetch user's accessible Jira projects with automatic token refresh on 401
+
+        This is used as a fallback when the user has no assigned issues.
+        If they only have access to one project, we can use that as the default.
+
+        Uses the paginated /project/search endpoint (recommended by Atlassian).
+        Requires OAuth scope: read:jira-work
+        """
+        print("[INFO] Fetching user's accessible Jira projects...")
+        cloud_id = self.get_jira_cloud_id()
+        if not cloud_id:
+            print("[WARN] Cannot fetch projects: No Cloud ID")
+            return []
+
+        access_token = self.auth_manager.tokens.get('access_token')
+        if not access_token:
+            print("[WARN] Cannot fetch projects: No access token")
+            return []
+
+        try:
+            # Use /rest/api/3/project/search (paginated, recommended by Atlassian)
+            # This returns projects where user has Browse Projects permission
+            response = requests.get(
+                f'https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/project/search',
+                params={
+                    'maxResults': 50,
+                    'orderBy': 'name'
+                },
+                headers={
+                    'Authorization': f'Bearer {access_token}',
+                    'Accept': 'application/json'
+                }
+            )
+
+            # Handle 401 - token expired
+            if response.status_code == 401:
+                print("[WARN] Access token expired (401), attempting refresh...")
+                if self.auth_manager.refresh_access_token():
+                    # Retry with new token
+                    access_token = self.auth_manager.tokens.get('access_token')
+                    print("[INFO] Retrying Jira API with refreshed token...")
+                    response = requests.get(
+                        f'https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/project/search',
+                        params={
+                            'maxResults': 50,
+                            'orderBy': 'name'
+                        },
+                        headers={
+                            'Authorization': f'Bearer {access_token}',
+                            'Accept': 'application/json'
+                        }
+                    )
+                else:
+                    print("[ERROR] Token refresh failed, please re-authenticate")
+                    return []
+
+            if response.status_code == 200:
+                data = response.json()
+                projects = data.get('values', [])
+                print(f"[OK] User has access to {len(projects)} projects")
+
+                # Format project data
+                formatted_projects = []
+                for project in projects:
+                    formatted_projects.append({
+                        'key': project.get('key'),
+                        'name': project.get('name'),
+                        'id': project.get('id')
+                    })
+
+                return formatted_projects
+            else:
+                print(f"[ERROR] Jira projects API failed: {response.status_code} - {response.text}")
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch Jira projects: {e}")
+
+        return []
+
+    def should_refresh_projects_cache(self):
+        """Check if projects cache needs to be refreshed"""
+        if not self.projects_cache_time:
+            return True
+
+        return (time.time() - self.projects_cache_time) > self.projects_cache_ttl
+
+    def get_user_project_key(self):
+        """Get project key from user's issues or projects
+
+        Priority:
+        1. If user has assigned issues, use the project from first issue
+        2. If no issues but has accessible projects, use first project
+        3. Return None if no project can be determined
+        """
+        # Try from issues first
+        if self.user_issues and len(self.user_issues) > 0:
+            project_key = self.user_issues[0].get('project')
+            if project_key:
+                return project_key
+
+        # Fallback to projects
+        if self.should_refresh_projects_cache():
+            self.user_projects = self.fetch_jira_projects()
+            self.projects_cache_time = time.time()
+
+        if self.user_projects and len(self.user_projects) > 0:
+            # If user only has one project, definitely use it
+            # If multiple projects, use the first one (could be enhanced with user preference)
+            project_key = self.user_projects[0].get('key')
+            if project_key:
+                if len(self.user_projects) == 1:
+                    print(f"[INFO] User has single project: {project_key}")
+                else:
+                    print(f"[INFO] Using first of {len(self.user_projects)} projects: {project_key}")
+                return project_key
+
+        return None
+
     # ============================================================================
     # TRACKING SETTINGS MANAGEMENT
     # ============================================================================
@@ -2982,7 +3114,12 @@ class BRDTimeTracker:
             # Prepare screenshot data for both online and offline storage
             work_type = window_info.get('work_type', 'office')  # Default to 'office'
             is_blacklisted = window_info.get('is_blacklisted', False)
-            
+
+            # Get project_key from user's issues or accessible projects
+            # This is used as a fallback when AI fails to detect the project
+            # Priority: assigned issues > accessible projects
+            project_key = self.get_user_project_key()
+
             screenshot_data = {
                 'user_id': self.current_user_id,
                 'organization_id': self.organization_id,  # Multi-tenancy support
@@ -2994,6 +3131,7 @@ class BRDTimeTracker:
                 'start_time': start_time.isoformat(),
                 'end_time': end_time.isoformat(),
                 'duration_seconds': duration_seconds,
+                'project_key': project_key,  # Project from user's assigned issues
                 'user_assigned_issues': self.user_issues,
                 'metadata': {
                     'work_type': work_type,

@@ -29,11 +29,12 @@ function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
 
   const handleExpandClick = (e) => {
     e.preventDefault();
-    const row = e.target.closest('tr');
+    const button = e.target.closest('.expand-button');
+    const row = button.closest('tr');
     const detailsRow = row.nextElementSibling;
     if (detailsRow && detailsRow.classList.contains('details-row')) {
       detailsRow.classList.toggle('show');
-      e.target.textContent = detailsRow.classList.contains('show') ? '▼' : '▶';
+      button.classList.toggle('expanded', detailsRow.classList.contains('show'));
     }
   };
 
@@ -106,7 +107,7 @@ function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
                           <td className="issue-key">
                             {issue.sessions?.length > 0 && (
                               <button className="expand-button" onClick={handleExpandClick}>
-                                ▶
+                                ›
                               </button>
                             )}
                             <IssueTypeIcon

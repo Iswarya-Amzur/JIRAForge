@@ -16,9 +16,19 @@
   min-height: 400px;
 }
 
-.loading-spinner {
+.timesheet-settings.loading .loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #DFE1E6;
+  border-top-color: #0052CC;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.loading-text {
   color: #6B778C;
   font-size: 16px;
+  margin: 16px 0 0 0;
 }
 
 /* Header */

@@ -264,17 +264,27 @@
   background: none;
   border: none;
   cursor: pointer;
-  padding: 4px 8px;
-  margin-right: 8px;
-  color: var(--ds-text-brand);
-  font-size: 12px;
-  font-weight: bold;
-  transition: transform 0.2s;
+  padding: 4px;
+  margin-right: 4px;
+  color: #5e6c84;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease;
+  border-radius: 3px;
 }
 
 .expand-button:hover {
   background: var(--ds-background-neutral);
-  border-radius: 3px;
+}
+
+.expand-button.expanded {
+  transform: rotate(90deg);
 }
 
 /* Details Row (hidden by default) */

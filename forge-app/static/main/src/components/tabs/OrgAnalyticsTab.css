@@ -84,12 +84,82 @@
   min-width: 0;
 }
 
+.kpi-value-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .kpi-value {
   font-size: 32px;
   font-weight: 700;
   color: var(--ds-text);
   line-height: 1.2;
   letter-spacing: -0.5px;
+}
+
+/* KPI Info Icon and Tooltip */
+.kpi-info-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.kpi-info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  font-size: 11px;
+  font-weight: 600;
+  font-style: normal;
+  background: var(--ds-background-neutral, #DFE1E6);
+  color: var(--ds-text-subtle, #6B778C);
+  border-radius: 50%;
+  cursor: help;
+  transition: all 0.2s ease;
+}
+
+.kpi-info-icon:hover {
+  background: var(--ds-background-neutral-hovered, #B3BAC5);
+  color: var(--ds-text, #172B4D);
+}
+
+.kpi-info-tooltip {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ds-background-neutral-bold, #172B4D);
+  color: white;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  width: 220px;
+  text-align: left;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(9, 30, 66, 0.25);
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.kpi-info-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 6px;
+  border-style: solid;
+  border-color: var(--ds-background-neutral-bold, #172B4D) transparent transparent transparent;
+}
+
+.kpi-info-wrapper:hover .kpi-info-tooltip {
+  visibility: visible;
+  opacity: 1;
 }
 
 .kpi-label {
@@ -154,6 +224,12 @@
   border-bottom: 1px solid var(--ds-border);
 }
 
+.chart-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .chart-header h3 {
   font-size: 16px;
   font-weight: 600;
@@ -166,6 +242,70 @@
   color: var(--ds-text-subtle);
   margin-top: var(--ds-space-050);
   display: block;
+}
+
+/* Chart Info Icon and Tooltip */
+.chart-info-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.chart-info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  font-weight: 600;
+  font-style: normal;
+  background: var(--ds-background-neutral, #DFE1E6);
+  color: var(--ds-text-subtle, #6B778C);
+  border-radius: 50%;
+  cursor: help;
+  transition: all 0.2s ease;
+}
+
+.chart-info-icon:hover {
+  background: var(--ds-background-neutral-hovered, #B3BAC5);
+  color: var(--ds-text, #172B4D);
+}
+
+.chart-info-tooltip {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ds-background-neutral-bold, #172B4D);
+  color: white;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  width: 220px;
+  text-align: left;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(9, 30, 66, 0.25);
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.chart-info-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 6px;
+  border-style: solid;
+  border-color: var(--ds-background-neutral-bold, #172B4D) transparent transparent transparent;
+}
+
+.chart-info-wrapper:hover .chart-info-tooltip {
+  visibility: visible;
+  opacity: 1;
 }
 
 /* Project Bars (Horizontal Bar Chart) */
@@ -257,9 +397,10 @@
 
 /* Trend Chart (Vertical Bars) */
 .trend-chart {
-  min-height: 200px;
+  min-height: 220px;
   display: flex;
   align-items: flex-end;
+  padding-top: 10px;
 }
 
 .trend-bars {
@@ -267,9 +408,9 @@
   align-items: flex-end;
   justify-content: space-between;
   width: 100%;
-  height: 180px;
-  gap: 2px;
-  padding-bottom: 20px;
+  height: 200px;
+  gap: 3px;
+  padding-bottom: 25px;
   position: relative;
 }
 
@@ -279,15 +420,14 @@
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
-  height: 100%;
   position: relative;
-  min-width: 8px;
-  max-width: 20px;
+  min-width: 10px;
+  max-width: 24px;
 }
 
 .trend-bar-fill {
   width: 100%;
-  background: linear-gradient(180deg, var(--ds-background-brand-bold), var(--ds-background-accent-blue));
+  background: linear-gradient(180deg, #0052CC 0%, #0065FF 100%);
   border-radius: 3px 3px 0 0;
   transition: height 0.3s ease;
   min-height: 2px;

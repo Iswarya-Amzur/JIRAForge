@@ -195,7 +195,8 @@ function TimesheetSettings() {
   if (loading) {
     return (
       <div className="timesheet-settings loading">
-        <div className="loading-spinner">Loading settings...</div>
+        <div className="loading-spinner"></div>
+        <p className="loading-text">Loading settings...</p>
       </div>
     );
   }

@@ -148,8 +148,8 @@ function GroupAccordion({
                 onClick={() => toggleGroup(group.id)}
               >
                 <div className="accordion-header-left">
-                  <span className="accordion-toggle">
-                    {isExpanded ? '▼' : '▶'}
+                  <span className={`accordion-toggle ${isExpanded ? 'expanded' : ''}`}>
+                    ›
                   </span>
                   <div className="group-title-section">
                     <h3 className="group-label">{group.label || 'Untitled Group'}</h3>

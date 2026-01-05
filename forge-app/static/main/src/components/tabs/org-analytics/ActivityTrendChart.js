@@ -9,7 +9,15 @@ function ActivityTrendChart({ dailySummary = [] }) {
     return (
       <div className="org-chart-card">
         <div className="chart-header">
-          <h3>Organization Activity Trend</h3>
+          <div className="chart-title-row">
+            <h3>Organization Activity Trend</h3>
+            <div className="chart-info-wrapper">
+              <span className="chart-info-icon">i</span>
+              <span className="chart-info-tooltip">
+                Daily work hours across the entire organization for the last 30 days. Taller bars represent more hours tracked on that day.
+              </span>
+            </div>
+          </div>
           <span className="chart-subtitle">Daily hours - Last 30 days</span>
         </div>
         <div className="trend-chart">
@@ -34,17 +42,30 @@ function ActivityTrendChart({ dailySummary = [] }) {
   const sortedDates = Object.keys(dateAggregation).sort().slice(-30);
   const maxDailyHours = Math.max(...sortedDates.map(d => dateAggregation[d]), 1);
 
+  const maxBarHeight = 160; // Fixed pixel height for the tallest bar
+
   return (
     <div className="org-chart-card">
       <div className="chart-header">
-        <h3>Organization Activity Trend</h3>
+        <div className="chart-title-row">
+          <h3>Organization Activity Trend</h3>
+          <div className="chart-info-wrapper">
+            <span className="chart-info-icon">i</span>
+            <span className="chart-info-tooltip">
+              Daily work hours across the entire organization for the last 30 days. Taller bars represent more hours tracked on that day.
+            </span>
+          </div>
+        </div>
         <span className="chart-subtitle">Daily hours - Last 30 days</span>
       </div>
       <div className="trend-chart">
         <div className="trend-bars">
           {sortedDates.map((dateStr, idx) => {
             const hours = dateAggregation[dateStr];
-            const height = (hours / maxDailyHours) * 100;
+            // Calculate bar height in pixels (minimum 4px if there's any value)
+            const barHeight = hours > 0
+              ? Math.max(4, Math.round((hours / maxDailyHours) * maxBarHeight))
+              : 2;
             const date = new Date(dateStr + 'T00:00:00');
             const isWeekend = date.getDay() === 0 || date.getDay() === 6;
 
@@ -56,7 +77,7 @@ function ActivityTrendChart({ dailySummary = [] }) {
               >
                 <div
                   className="trend-bar-fill"
-                  style={{ height: `${Math.max(height, 2)}%` }}
+                  style={{ height: `${barHeight}px` }}
                 ></div>
                 {idx % 5 === 0 && (
                   <span className="trend-bar-label">{date.getDate()}</span>

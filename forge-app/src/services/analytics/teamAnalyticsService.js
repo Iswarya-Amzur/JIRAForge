@@ -159,7 +159,8 @@ export async function fetchProjectTeamAnalytics(accountId, cloudId, projectKey) 
   const activeMembers = new Set(thisMonthData.map(d => d.user_id)).size;
 
   // Issues worked (unique issues this month)
-  const issuesWorked = new Set(thisMonthData.map(d => d.active_task_key).filter(Boolean)).size;
+  // Note: column is now 'task_key' in the view (was 'active_task_key')
+  const issuesWorked = new Set(thisMonthData.map(d => d.task_key || d.active_task_key).filter(Boolean)).size;
 
   // Average hours per member
   const avgHoursPerMember = activeMembers > 0
