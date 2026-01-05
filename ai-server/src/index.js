@@ -41,6 +41,19 @@ const limiter = rateLimit({
 
 app.use('/api/', limiter);
 
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({
+    name: 'BRD Time Tracker AI Server',
+    version: '1.0.0',
+    status: 'running',
+    endpoints: {
+      health: '/health',
+      api: '/api/*'
+    }
+  });
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({

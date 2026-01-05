@@ -255,6 +255,8 @@ function getMillisecondsUntilScheduledTime() {
 
 /**
  * Schedule the next cleanup run
+ * Uses chunked timeouts to avoid JavaScript's 32-bit signed integer overflow
+ * (setTimeout max is ~24.8 days / 2,147,483,647 ms)
  */
 function scheduleNextRun() {
   const msUntilNextRun = getMillisecondsUntilScheduledTime();
@@ -263,10 +265,22 @@ function scheduleNextRun() {
   const nextRunTime = new Date(Date.now() + msUntilNextRun);
   logger.info(`[Cleanup] Next scheduled run at ${nextRunTime.toLocaleString()} (in ${daysUntilNextRun} days)`);
 
-  scheduledTimeoutId = setTimeout(async () => {
-    await runCleanup();
-    scheduleNextRun(); // Schedule the next month's run
-  }, msUntilNextRun);
+  // Max safe timeout is ~24.8 days (2^31 - 1 ms). Use 24 hours as chunk size.
+  const MAX_TIMEOUT = 24 * 60 * 60 * 1000; // 24 hours in ms
+
+  if (msUntilNextRun > MAX_TIMEOUT) {
+    // Schedule a check in 24 hours, then re-evaluate
+    logger.info(`[Cleanup] Scheduling intermediate check in 24 hours (timeout too large for single setTimeout)`);
+    scheduledTimeoutId = setTimeout(() => {
+      scheduleNextRun(); // Re-check and schedule again
+    }, MAX_TIMEOUT);
+  } else {
+    // Safe to schedule directly
+    scheduledTimeoutId = setTimeout(async () => {
+      await runCleanup();
+      scheduleNextRun(); // Schedule the next month's run
+    }, msUntilNextRun);
+  }
 }
 
 /**
