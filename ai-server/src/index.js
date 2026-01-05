@@ -7,7 +7,9 @@ require('dotenv').config();
 const screenshotController = require('./controllers/screenshot-controller');
 const brdController = require('./controllers/brd-controller');
 const authController = require('./controllers/auth-controller');
+const forgeProxyController = require('./controllers/forge-proxy-controller');
 const authMiddleware = require('./middleware/auth');
+const forgeAuthMiddleware = require('./middleware/forge-auth');
 const logger = require('./utils/logger');
 const pollingService = require('./services/polling-service');
 const clusteringPollingService = require('./services/clustering-polling-service');
@@ -94,6 +96,39 @@ app.post('/api/auth/verify', authLimiter, authController.verifyToken);
 
 // Get Supabase configuration (returns credentials after verifying Atlassian token)
 app.post('/api/auth/supabase-config', authLimiter, authController.getSupabaseConfig);
+
+// =============================================================================
+// FORGE REMOTE ROUTES (require Forge Invocation Token authentication)
+// These endpoints are called by the Forge app via Forge Remote
+// =============================================================================
+
+// Rate limiter for Forge routes
+const forgeLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 200, // 200 requests per minute per IP
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Use cloudId from FIT token if available for rate limiting per tenant
+    return req.forgeContext?.cloudId || req.ip || 'unknown';
+  }
+});
+
+// Generic Supabase query endpoint
+app.post('/api/forge/supabase/query', forgeLimiter, forgeAuthMiddleware, forgeProxyController.supabaseQuery);
+
+// Organization management
+app.post('/api/forge/organization', forgeLimiter, forgeAuthMiddleware, forgeProxyController.getOrCreateOrganization);
+app.post('/api/forge/organization/membership', forgeLimiter, forgeAuthMiddleware, forgeProxyController.getOrganizationMembership);
+
+// User management
+app.post('/api/forge/user', forgeLimiter, forgeAuthMiddleware, forgeProxyController.getOrCreateUser);
+
+// Storage operations
+app.post('/api/forge/storage/upload', forgeLimiter, forgeAuthMiddleware, forgeProxyController.storageUpload);
+app.post('/api/forge/storage/signed-url', forgeLimiter, forgeAuthMiddleware, forgeProxyController.storageSignedUrl);
+app.post('/api/forge/storage/delete', forgeLimiter, forgeAuthMiddleware, forgeProxyController.storageDelete);
 
 // =============================================================================
 // PROTECTED ROUTES (require authMiddleware)

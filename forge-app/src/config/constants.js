@@ -38,12 +38,12 @@ export const STORAGE_BUCKET_SCREENSHOTS = 'screenshots';
 export const STORAGE_BUCKET_DOCUMENTS = 'documents';
 
 // Default Settings (Global Admin Settings - stored in Forge storage)
+// NOTE: Supabase credentials are now managed securely on the AI server
+// Only AI server settings are configurable here (optional for custom deployments)
 export const DEFAULT_SETTINGS = {
-  supabaseUrl: '',
-  supabaseAnonKey: '',
-  supabaseServiceRoleKey: '',
   aiServerUrl: '',
-  aiServerApiKey: ''
+  aiServerApiKey: '',
+  configured: false
 };
 
 // Default Tracking/Timesheet Settings (for screenshot monitoring, app lists, etc.)

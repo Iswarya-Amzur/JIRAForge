@@ -1,122 +1,87 @@
 /**
  * Supabase Configuration and Request Utilities
  * Core functions for Supabase connectivity
+ *
+ * NOTE: This module now provides backward-compatible stubs.
+ * All Supabase operations are routed through the AI server via Forge Remote.
+ * Credentials are stored securely on the AI server, not in Forge storage.
  */
 
-import { fetch, storage } from '@forge/api';
-import { getFromCache, setInCache, TTL, CacheKeys } from '../cache.js';
+import { supabaseQuery } from '../remote.js';
 
 /**
- * Get Supabase client configuration from Forge storage
- * Uses caching to reduce storage reads
- * @param {string} accountId - Atlassian account ID
- * @returns {Promise<Object|null>} Supabase configuration or null if not configured
+ * Get Supabase client configuration
+ * @deprecated Credentials are now managed by the AI server
+ * @param {string} accountId - Atlassian account ID (ignored)
+ * @returns {Promise<Object>} Placeholder config indicating remote mode
  */
 export async function getSupabaseConfig(accountId) {
-  const cacheKey = CacheKeys.supabaseConfig(accountId);
-
-  // Check cache first
-  const cached = getFromCache(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  try {
-    const settings = await storage.get('global:app-settings');
-    if (!settings) {
-      return null;
-    }
-    const config = {
-      url: settings.supabaseUrl,
-      serviceRoleKey: settings.supabaseServiceRoleKey,
-      anonKey: settings.supabaseAnonKey
-    };
-
-    // Cache the config
-    setInCache(cacheKey, config, TTL.CONFIG);
-
-    return config;
-  } catch (error) {
-    console.error('Error getting Supabase config:', error);
-    return null;
-  }
+  // Return a placeholder to indicate the app is configured
+  // Actual credentials are stored securely on the AI server
+  return {
+    url: 'remote:ai-server',
+    serviceRoleKey: 'managed-by-ai-server',
+    anonKey: 'managed-by-ai-server',
+    isRemoteMode: true
+  };
 }
 
 /**
- * Sleep for a given number of milliseconds
- * @param {number} ms - Milliseconds to sleep
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-/**
- * Make a request to Supabase REST API with retry logic for rate limiting
- * @param {Object} supabaseConfig - Supabase configuration
+ * Make a request to Supabase via the AI server
+ * @deprecated Use supabaseQuery from remote.js instead
+ * @param {Object} supabaseConfig - Supabase configuration (ignored in remote mode)
  * @param {string} endpoint - API endpoint (e.g., 'screenshots', 'users?id=eq.123')
  * @param {Object} options - Request options (method, body, headers)
- * @param {number} retryCount - Current retry attempt (internal)
  * @returns {Promise<Object>} Response data
  */
-export async function supabaseRequest(supabaseConfig, endpoint, options = {}, retryCount = 0) {
-  const MAX_RETRIES = 3;
-  const BASE_DELAY = 1000; // 1 second base delay
+export async function supabaseRequest(supabaseConfig, endpoint, options = {}) {
+  // Parse the endpoint to extract table and query parameters
+  const [tablePart, queryString] = endpoint.split('?');
+  const table = tablePart;
 
-  const url = `${supabaseConfig.url}/rest/v1/${endpoint}`;
-  const headers = {
-    'apikey': supabaseConfig.serviceRoleKey,
-    'Authorization': `Bearer ${supabaseConfig.serviceRoleKey}`,
-    'Content-Type': 'application/json',
-    ...options.headers
-  };
-
-  const response = await fetch(url, {
-    method: options.method || 'GET',
-    headers,
-    body: options.body ? JSON.stringify(options.body) : undefined
-  });
-
-  // Handle rate limiting with exponential backoff
-  if (response.status === 429) {
-    if (retryCount < MAX_RETRIES) {
-      const delay = BASE_DELAY * Math.pow(2, retryCount);
-      console.warn(`[Supabase] Rate limited, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-      await sleep(delay);
-      return supabaseRequest(supabaseConfig, endpoint, options, retryCount + 1);
+  // Parse query string into filter object
+  const query = {};
+  if (queryString) {
+    const params = new URLSearchParams(queryString);
+    for (const [key, value] of params.entries()) {
+      // Parse Supabase filter format (e.g., "id=eq.123")
+      const match = value.match(/^(eq|neq|gt|gte|lt|lte|in|is)\.(.+)$/);
+      if (match) {
+        const [, operator, val] = match;
+        if (!query[operator]) query[operator] = {};
+        // Handle 'in' operator which expects an array
+        if (operator === 'in') {
+          query[operator][key] = val.replace(/[()]/g, '').split(',');
+        } else if (operator === 'is' && val === 'null') {
+          query[operator][key] = null;
+        } else {
+          query[operator][key] = val;
+        }
+      } else {
+        // Simple equality
+        if (!query.eq) query.eq = {};
+        query.eq[key] = value;
+      }
     }
-    throw new Error('Supabase request failed: Too Many Requests');
   }
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Supabase request failed: ${error}`);
-  }
+  // Parse select from headers if present
+  const select = options.headers?.Prefer?.includes('return=representation') ? '*' : undefined;
 
-  // Handle empty responses (204 No Content) from PATCH/DELETE operations
-  if (response.status === 204) {
-    return options.method === 'PATCH' ? [] : null;
-  }
+  // Map HTTP methods to query methods
+  const method = options.method || 'GET';
 
-  // Check content-type before parsing
-  const contentType = response.headers.get('content-type');
-  const text = await response.text();
-
-  // Handle empty responses
-  if (!text || text.trim() === '') {
-    return options.method === 'PATCH' ? [] : null;
-  }
-
-  // Parse JSON response
   try {
-    return JSON.parse(text);
-  } catch (parseError) {
-    console.error('Failed to parse JSON response:', {
-      status: response.status,
-      contentType,
-      text: text.substring(0, 200),
-      url
+    const result = await supabaseQuery(table, {
+      method,
+      query,
+      body: options.body,
+      select
     });
-    throw new Error(`Invalid JSON response from Supabase: ${text.substring(0, 100)}`);
+
+    return result;
+  } catch (error) {
+    console.error('[Supabase] Remote request failed:', error);
+    throw error;
   }
 }

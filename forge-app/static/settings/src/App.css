@@ -449,3 +449,23 @@
   letter-spacing: 0.5px;
   border-left: 4px solid var(--ds-background-success-bold);
 }
+
+/* Secure Badge */
+.secure-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: var(--ds-space-200);
+  padding: 12px 20px;
+  background: #E3FCEF;
+  color: var(--ds-background-success-bold);
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  border: 2px solid var(--ds-background-success-bold);
+}
+
+.secure-badge .checkmark {
+  font-size: 18px;
+  font-weight: bold;
+}

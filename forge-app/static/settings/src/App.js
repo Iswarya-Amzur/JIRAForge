@@ -3,10 +3,9 @@ import { invoke } from '@forge/bridge';
 import './App.css';
 
 function App() {
+  // Note: Supabase credentials are now managed securely by the AI server
+  // Only AI server URL is configurable (optional for self-hosted deployments)
   const [settings, setSettings] = useState({
-    supabaseUrl: '',
-    supabaseAnonKey: '',
-    supabaseServiceRoleKey: '',
     aiServerUrl: '',
     aiServerApiKey: ''
   });
@@ -133,73 +132,39 @@ function App() {
       </header>
 
       <main className="settings-content">
-        <section className="settings-section">
-          <h2>Supabase Configuration</h2>
+        <section className="settings-section info-section">
+          <h2>Secure Configuration</h2>
           <p className="section-description">
-            Connect to your Supabase backend for data storage and authentication.
+            Your Time Tracker is pre-configured with secure backend services. Database credentials
+            are managed securely on the server side - no sensitive keys are stored in Jira.
           </p>
-
-          <div className="form-group">
-            <label htmlFor="supabaseUrl">Supabase URL</label>
-            <input
-              type="text"
-              id="supabaseUrl"
-              name="supabaseUrl"
-              value={settings.supabaseUrl}
-              onChange={handleChange}
-              placeholder="https://your-project.supabase.co"
-            />
-            <small>Your Supabase project URL</small>
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="supabaseAnonKey">Supabase Anon Key</label>
-            <input
-              type="password"
-              id="supabaseAnonKey"
-              name="supabaseAnonKey"
-              value={settings.supabaseAnonKey}
-              onChange={handleChange}
-              placeholder="Enter your anon/public key"
-            />
-            <small>Your Supabase anonymous/public API key</small>
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="supabaseServiceRoleKey">Supabase Service Role Key</label>
-            <input
-              type="password"
-              id="supabaseServiceRoleKey"
-              name="supabaseServiceRoleKey"
-              value={settings.supabaseServiceRoleKey}
-              onChange={handleChange}
-              placeholder="Enter your service role key"
-            />
-            <small>Your Supabase service role key (for backend operations). Keep this secure!</small>
+          <div className="secure-badge">
+            <span className="checkmark">&#10003;</span> Securely Connected
           </div>
         </section>
 
         <section className="settings-section">
-          <h2>AI Server Configuration</h2>
+          <h2>AI Server Configuration (Optional)</h2>
           <p className="section-description">
-            Configure the AI analysis server for screenshot processing and BRD automation.
+            For self-hosted deployments, you can configure a custom AI server URL.
+            Most users can skip this section - the default server is pre-configured.
           </p>
 
           <div className="form-group">
-            <label htmlFor="aiServerUrl">AI Server URL</label>
+            <label htmlFor="aiServerUrl">AI Server URL (Optional)</label>
             <input
               type="text"
               id="aiServerUrl"
               name="aiServerUrl"
               value={settings.aiServerUrl}
               onChange={handleChange}
-              placeholder="https://your-ai-server.com or http://localhost:5000"
+              placeholder="Leave empty to use default server"
             />
-            <small>URL of your AI analysis server</small>
+            <small>Custom AI server URL for self-hosted deployments</small>
           </div>
 
           <div className="form-group">
-            <label htmlFor="aiServerApiKey">AI Server API Key</label>
+            <label htmlFor="aiServerApiKey">AI Server API Key (Optional)</label>
             <input
               type="password"
               id="aiServerApiKey"
@@ -208,7 +173,7 @@ function App() {
               onChange={handleChange}
               placeholder="Enter your AI server API key (optional)"
             />
-            <small>API key for authenticating with the AI server (if required)</small>
+            <small>API key for authenticating with a custom AI server</small>
           </div>
         </section>
 
@@ -240,7 +205,8 @@ function App() {
             <li>The app will automatically start capturing screenshots at the configured interval</li>
           </ol>
           <p className="note">
-            <strong>Note:</strong> Make sure to configure the Supabase settings above before installing the desktop app.
+            <strong>Note:</strong> The app is pre-configured to connect to your organization's backend.
+            No additional setup is required.
           </p>
         </section>
       </main>

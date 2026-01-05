@@ -25,6 +25,10 @@ export async function getUserSettings(accountId) {
  * Save user settings to Forge storage
  * Note: We now use a global key so settings apply to all users
  * IMPORTANT: Only Jira Administrators can save global settings
+ *
+ * NOTE: Supabase credentials are now managed by the AI server.
+ * Only AI server settings are stored here (optional for custom deployments).
+ *
  * @param {string} accountId - Atlassian account ID (ignored for global settings)
  * @param {Object} settings - Settings object
  * @returns {Promise<void>}
@@ -36,22 +40,19 @@ export async function saveUserSettings(accountId, settings) {
     throw new Error('Access denied: Only Jira Administrators can configure global settings');
   }
 
-  // Validate required settings
-  if (settings.supabaseUrl && !settings.supabaseUrl.startsWith('https://')) {
-    throw new Error('Supabase URL must start with https://');
-  }
-
+  // Validate AI server URL if provided
   if (settings.aiServerUrl && !settings.aiServerUrl.startsWith('http://') && !settings.aiServerUrl.startsWith('https://')) {
     throw new Error('AI Server URL must start with http:// or https://');
   }
 
-  // Store settings in global Forge storage
+  // Store only AI server settings in Forge storage
+  // Supabase credentials are managed securely on the AI server
   await storage.set('global:app-settings', {
-    supabaseUrl: settings.supabaseUrl || '',
-    supabaseAnonKey: settings.supabaseAnonKey || '',
-    supabaseServiceRoleKey: settings.supabaseServiceRoleKey || '',
     aiServerUrl: settings.aiServerUrl || '',
-    aiServerApiKey: settings.aiServerApiKey || ''
+    aiServerApiKey: settings.aiServerApiKey || '',
+    // Flag to indicate app has been configured
+    configured: true,
+    configuredAt: new Date().toISOString()
   });
 }
 

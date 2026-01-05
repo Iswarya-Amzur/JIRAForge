@@ -3,6 +3,10 @@ app:
   runtime:
     name: nodejs20.x
 
+remotes:
+  - key: ai-server
+    baseUrl: https://forgesync.amzur.com
+
 modules:
   function:
     - key: main
@@ -47,5 +51,6 @@ permissions:
     fetch:
       backend:
         - address: "*.supabase.co"
+        - address: "forgesync.amzur.com"
     images:
       - address: "*.supabase.co"
