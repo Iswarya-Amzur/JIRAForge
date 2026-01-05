@@ -39,9 +39,10 @@ exports.supabaseQuery = async (req, res) => {
 
     let queryBuilder = supabase.from(table);
 
-    // Apply select columns if specified
-    if (select) {
-      queryBuilder = queryBuilder.select(select);
+    // Apply select columns if specified (from body or query._select)
+    const selectColumns = select || query?._select;
+    if (selectColumns) {
+      queryBuilder = queryBuilder.select(selectColumns);
     } else if (method === 'GET' || !method) {
       queryBuilder = queryBuilder.select('*');
     }
@@ -81,10 +82,20 @@ exports.supabaseQuery = async (req, res) => {
           for (const [col, val] of Object.entries(value)) {
             queryBuilder = queryBuilder.is(col, val);
           }
+        } else if (key === 'not') {
+          // Handle negated filters (e.g., not.is.null)
+          for (const [col, filterDef] of Object.entries(value)) {
+            queryBuilder = queryBuilder.not(col, filterDef.operator, filterDef.value);
+          }
         } else if (key === 'order') {
           queryBuilder = queryBuilder.order(value.column, { ascending: value.ascending ?? true });
         } else if (key === 'limit') {
           queryBuilder = queryBuilder.limit(value);
+        } else if (key === 'offset') {
+          queryBuilder = queryBuilder.range(value, value + (query.limit || 1000) - 1);
+        } else if (key === '_select') {
+          // Select is handled separately in the initial query builder setup
+          continue;
         } else if (key === 'single') {
           queryBuilder = queryBuilder.single();
         } else if (key === 'maybeSingle') {
@@ -163,6 +174,15 @@ exports.getOrCreateOrganization = async (req, res) => {
     const { cloudId } = req.forgeContext;
     const { orgName, jiraUrl } = req.body;
 
+    // Validate cloudId - required for organization lookup/creation
+    if (!cloudId) {
+      logger.error('[ForgeProxy] Missing cloudId in forgeContext');
+      return res.status(400).json({
+        success: false,
+        error: 'Missing cloudId in authentication context. Please re-authenticate.'
+      });
+    }
+
     const supabase = getClient();
     if (!supabase) {
       return res.status(500).json({
@@ -239,6 +259,15 @@ exports.getOrCreateUser = async (req, res) => {
   try {
     const { accountId, cloudId } = req.forgeContext;
     const { organizationId, email, displayName } = req.body;
+
+    // Validate accountId - required for user creation
+    if (!accountId) {
+      logger.error('[ForgeProxy] Missing accountId in forgeContext', { cloudId });
+      return res.status(400).json({
+        success: false,
+        error: 'Missing accountId in authentication context. Please re-authenticate.'
+      });
+    }
 
     const supabase = getClient();
     if (!supabase) {

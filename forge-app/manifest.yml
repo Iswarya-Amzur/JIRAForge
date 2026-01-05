@@ -6,6 +6,8 @@ app:
 remotes:
   - key: ai-server
     baseUrl: https://forgesync.amzur.com
+    operations:
+      - compute
 
 modules:
   function:
@@ -51,6 +53,5 @@ permissions:
     fetch:
       backend:
         - address: "*.supabase.co"
-        - address: "forgesync.amzur.com"
     images:
       - address: "*.supabase.co"

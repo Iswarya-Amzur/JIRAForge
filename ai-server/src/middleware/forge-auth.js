@@ -86,14 +86,29 @@ const forgeAuthMiddleware = async (req, res, next) => {
     // Validate the FIT token
     const payload = await validateFIT(token);
 
+    // Log full payload for debugging
+    logger.info('[FIT] Full token payload:', JSON.stringify(payload, null, 2));
+
     // Extract context from validated token
+    // accountId can be in different places depending on invocation type
+    // Note: principal can be either a string (e.g., "712020:uuid") or an object with accountId
+    const extractAccountId = () => {
+      if (payload.context?.accountId) return payload.context.accountId;
+      if (payload.sub) return payload.sub;
+      if (typeof payload.principal === 'string') return payload.principal;
+      if (payload.principal?.accountId) return payload.principal.accountId;
+      return null;
+    };
+
     const context = {
-      cloudId: payload.context?.cloudId,
-      accountId: payload.context?.accountId,
+      cloudId: payload.context?.cloudId || payload.iss?.split('/')[2],
+      accountId: extractAccountId(),
       appId: payload.app?.id,
       installationId: payload.app?.installationId,
       environment: payload.app?.environment?.type
     };
+
+    logger.info('[FIT] Extracted context:', context);
 
     if (!context.cloudId) {
       logger.warn('[FIT] Token missing cloudId', { payload });

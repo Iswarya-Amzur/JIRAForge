@@ -4,44 +4,53 @@
  * The AI server handles Supabase operations securely without exposing credentials
  */
 
-import { fetch } from '@forge/api';
+import { invokeRemote } from '@forge/api';
 import { getFromCache, setInCache, TTL, CacheKeys } from './cache.js';
 
-// AI Server base URL (configured in manifest.yml as remote)
-const AI_SERVER_REMOTE = 'remote:ai-server';
+// Remote key from manifest.yml - must match exactly
+const REMOTE_KEY = 'ai-server';
 
 /**
  * Make a request to the AI server via Forge Remote
- * Forge automatically adds the FIT token for authentication
+ * Uses invokeRemote which automatically adds the FIT token
+ * Requires 'compute' in the remote's operations array in manifest.yml
  * @param {string} endpoint - API endpoint path (e.g., '/api/forge/organization')
  * @param {Object} options - Request options
  * @returns {Promise<Object>} Response data
  */
 async function remoteRequest(endpoint, options = {}) {
-  const url = `${AI_SERVER_REMOTE}${endpoint}`;
+  console.log(`[Remote] invokeRemote to ${REMOTE_KEY}${endpoint}`);
 
-  const response = await fetch(url, {
-    method: options.method || 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined
-  });
+  try {
+    const response = await invokeRemote(REMOTE_KEY, {
+      path: endpoint,
+      method: options.method || 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error(`[Remote] Request failed: ${response.status}`, errorText);
-    throw new Error(`Remote request failed: ${errorText}`);
+    console.log(`[Remote] Response status: ${response.status}`);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[Remote] Request failed: ${response.status}`, errorText);
+      throw new Error(`Remote request failed: ${errorText}`);
+    }
+
+    const result = await response.json();
+
+    if (!result.success) {
+      throw new Error(result.error || 'Unknown error from remote');
+    }
+
+    return result.data;
+  } catch (error) {
+    console.error(`[Remote] invokeRemote error:`, error.message);
+    throw error;
   }
-
-  const result = await response.json();
-
-  if (!result.success) {
-    throw new Error(result.error || 'Unknown error from remote');
-  }
-
-  return result.data;
 }
 
 /**

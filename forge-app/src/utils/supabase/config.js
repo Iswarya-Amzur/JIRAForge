@@ -44,10 +44,49 @@ export async function supabaseRequest(supabaseConfig, endpoint, options = {}) {
   if (queryString) {
     const params = new URLSearchParams(queryString);
     for (const [key, value] of params.entries()) {
+      // Handle special query parameters first
+      if (key === 'order') {
+        // Parse order format: column.direction (e.g., work_date.desc)
+        const dotIndex = value.lastIndexOf('.');
+        if (dotIndex > 0) {
+          const column = value.substring(0, dotIndex);
+          const direction = value.substring(dotIndex + 1);
+          query.order = {
+            column,
+            ascending: direction !== 'desc'
+          };
+        } else {
+          // No direction specified, default to ascending
+          query.order = { column: value, ascending: true };
+        }
+        continue;
+      }
+      if (key === 'limit') {
+        query.limit = parseInt(value, 10);
+        continue;
+      }
+      if (key === 'offset') {
+        query.offset = parseInt(value, 10);
+        continue;
+      }
+      if (key === 'select') {
+        // Store select for later use - will be used by supabaseQuery
+        query._select = value;
+        continue;
+      }
+
       // Parse Supabase filter format (e.g., "id=eq.123")
-      const match = value.match(/^(eq|neq|gt|gte|lt|lte|in|is)\.(.+)$/);
+      const match = value.match(/^(eq|neq|gt|gte|lt|lte|in|is|not\.is)\.(.+)$/);
       if (match) {
         const [, operator, val] = match;
+
+        // Handle "not.is" operator specially (e.g., active_task_key=not.is.null)
+        if (operator === 'not.is') {
+          if (!query.not) query.not = {};
+          query.not[key] = { operator: 'is', value: val === 'null' ? null : val };
+          continue;
+        }
+
         if (!query[operator]) query[operator] = {};
         // Handle 'in' operator which expects an array
         if (operator === 'in') {
