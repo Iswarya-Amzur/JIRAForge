@@ -37,6 +37,40 @@ exports.supabaseQuery = async (req, res) => {
       cloudId
     });
 
+    // SECURITY: Tables that require organization_id filtering for multi-tenancy
+    const SENSITIVE_TABLES = [
+      'screenshots', 'analysis_results', 'users', 'documents', 'worklogs',
+      'activity_log', 'unassigned_activity', 'unassigned_work_groups',
+      'user_jira_issues_cache', 'created_issues_log', 'daily_time_summary',
+      'weekly_time_summary', 'project_time_summary', 'tracking_settings',
+      'organization_settings', 'organization_members'
+    ];
+
+    // Check if query includes organization_id filter for sensitive tables
+    const hasOrgFilter = query?.eq?.organization_id ||
+                         query?.eq?.jira_cloud_id ||
+                         body?.organization_id ||
+                         body?.jira_cloud_id;
+
+    if (SENSITIVE_TABLES.includes(table) && !hasOrgFilter) {
+      // For GET requests without org filter, this is a potential data leak
+      if (!method || method === 'GET' || method === 'SELECT') {
+        logger.warn('[ForgeProxy] SECURITY: Query to sensitive table without organization filter', {
+          table,
+          cloudId,
+          accountId,
+          queryFilters: Object.keys(query?.eq || {})
+        });
+      }
+      // For write operations, require organization_id
+      if (method === 'POST' || method === 'INSERT') {
+        logger.warn('[ForgeProxy] SECURITY: INSERT to sensitive table without organization_id', {
+          table,
+          cloudId
+        });
+      }
+    }
+
     let queryBuilder = supabase.from(table);
 
     // Apply select columns if specified (from body or query._select)
@@ -47,15 +81,36 @@ exports.supabaseQuery = async (req, res) => {
       queryBuilder = queryBuilder.select('*');
     }
 
+    // Reserved PostgREST query parameters that should not be used as column names
+    const RESERVED_PARAMS = ['order', 'limit', 'offset', 'select', 'on_conflict'];
+
     // Apply filters from query object
     if (query) {
       for (const [key, value] of Object.entries(query)) {
         if (key === 'eq') {
           for (const [col, val] of Object.entries(value)) {
+            // Skip reserved parameters that were incorrectly parsed as filters
+            if (RESERVED_PARAMS.includes(col)) {
+              logger.warn('[ForgeProxy] Skipping reserved parameter as filter', { col, val });
+              // Try to handle 'order' specially if it looks like "column.direction"
+              if (col === 'order' && typeof val === 'string') {
+                const dotIndex = val.lastIndexOf('.');
+                if (dotIndex > 0) {
+                  const column = val.substring(0, dotIndex);
+                  const direction = val.substring(dotIndex + 1);
+                  queryBuilder = queryBuilder.order(column, { ascending: direction !== 'desc' });
+                }
+              }
+              continue;
+            }
             queryBuilder = queryBuilder.eq(col, val);
           }
         } else if (key === 'neq') {
           for (const [col, val] of Object.entries(value)) {
+            if (RESERVED_PARAMS.includes(col)) {
+              logger.warn('[ForgeProxy] Skipping reserved parameter as neq filter', { col, val });
+              continue;
+            }
             queryBuilder = queryBuilder.neq(col, val);
           }
         } else if (key === 'gt') {

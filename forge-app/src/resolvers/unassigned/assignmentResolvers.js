@@ -48,9 +48,10 @@ export async function assignToExistingIssue(req) {
     const sessionIdsParam = validSessionIds.join(',');
     console.log(`[assignToExistingIssue] Updating ${validSessionIds.length} sessions for issue ${issueKey}`);
 
+    // SECURITY: Verify sessions belong to current user and organization before updating
     const updatedActivities = await supabaseRequest(
       supabaseConfig,
-      `unassigned_activity?id=in.(${sessionIdsParam})&select=analysis_result_id`,
+      `unassigned_activity?id=in.(${sessionIdsParam})&user_id=eq.${userId}&organization_id=eq.${organization.id}&select=analysis_result_id`,
       {
         method: 'PATCH',
         headers: {
@@ -285,9 +286,10 @@ export async function createIssueAndAssign(req) {
     const sessionIdsParam = validSessionIds.join(',');
     console.log(`[createIssueAndAssign] Updating ${validSessionIds.length} sessions for new issue ${newIssueKey}`);
 
+    // SECURITY: Verify sessions belong to current user and organization before updating
     const updatedActivities = await supabaseRequest(
       supabaseConfig,
-      `unassigned_activity?id=in.(${sessionIdsParam})&select=analysis_result_id`,
+      `unassigned_activity?id=in.(${sessionIdsParam})&user_id=eq.${userId}&organization_id=eq.${organization.id}&select=analysis_result_id`,
       {
         method: 'PATCH',
         headers: {

@@ -198,16 +198,25 @@ async function getUnassignedWorkCount(userId, organizationId = null) {
 /**
  * Get analysis result by screenshot ID
  * @param {string} screenshotId - Screenshot ID
+ * @param {string} organizationId - Organization ID for multi-tenancy filtering (optional but recommended)
  * @returns {Promise<Object|null>} Analysis result or null
  */
-async function getAnalysisResultByScreenshotId(screenshotId) {
+async function getAnalysisResultByScreenshotId(screenshotId, organizationId = null) {
   try {
     const supabase = getClient();
-    const { data, error } = await supabase
+    let query = supabase
       .from('analysis_results')
       .select('*')
-      .eq('screenshot_id', screenshotId)
-      .single();
+      .eq('screenshot_id', screenshotId);
+
+    // SECURITY: Apply organization filter if provided (recommended for multi-tenancy)
+    if (organizationId) {
+      query = query.eq('organization_id', organizationId);
+    } else {
+      logger.warn('[AnalysisDB] getAnalysisResultByScreenshotId called without organizationId', { screenshotId });
+    }
+
+    const { data, error } = await query.single();
 
     if (error) {
       if (error.code === 'PGRST116') {
