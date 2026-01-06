@@ -13,6 +13,27 @@ function KPICards({ orgSummary }) {
     <div className="org-kpi-cards">
       <div className="org-kpi-card">
         <div className="kpi-icon">
+          <span>&#128101;</span>
+        </div>
+        <div className="kpi-content">
+          <div className="kpi-value-row">
+            <div className="kpi-value">{orgSummary?.activeUsers || 0}</div>
+            <div className="kpi-info-wrapper">
+              <span className="kpi-info-icon">i</span>
+              <span className="kpi-info-tooltip">
+                Number of team members who have tracked time this month using the desktop app.
+              </span>
+            </div>
+          </div>
+          <div className="kpi-label">Active Users</div>
+          <div className={`kpi-change ${activeUsersChange >= 0 ? 'positive' : 'negative'}`}>
+            {activeUsersChange >= 0 ? '+' : ''}{activeUsersChange} vs last month
+          </div>
+        </div>
+      </div>
+
+      <div className="org-kpi-card">
+        <div className="kpi-icon">
           <span>&#128200;</span>
         </div>
         <div className="kpi-content">
@@ -49,48 +70,6 @@ function KPICards({ orgSummary }) {
           <div className="kpi-label">Active Projects</div>
           <div className={`kpi-change ${projectsChange >= 0 ? 'positive' : 'negative'}`}>
             {projectsChange >= 0 ? '+' : ''}{projectsChange} vs last month
-          </div>
-        </div>
-      </div>
-
-      <div className="org-kpi-card">
-        <div className="kpi-icon">
-          <span>&#128101;</span>
-        </div>
-        <div className="kpi-content">
-          <div className="kpi-value-row">
-            <div className="kpi-value">{orgSummary?.activeUsers || 0}</div>
-            <div className="kpi-info-wrapper">
-              <span className="kpi-info-icon">i</span>
-              <span className="kpi-info-tooltip">
-                Number of team members who have tracked time this month using the desktop app.
-              </span>
-            </div>
-          </div>
-          <div className="kpi-label">Active Users</div>
-          <div className={`kpi-change ${activeUsersChange >= 0 ? 'positive' : 'negative'}`}>
-            {activeUsersChange >= 0 ? '+' : ''}{activeUsersChange} vs last month
-          </div>
-        </div>
-      </div>
-
-      <div className="org-kpi-card">
-        <div className="kpi-icon">
-          <span>&#128200;</span>
-        </div>
-        <div className="kpi-content">
-          <div className="kpi-value-row">
-            <div className="kpi-value">{orgSummary?.adoptionRate || 0}%</div>
-            <div className="kpi-info-wrapper">
-              <span className="kpi-info-icon">i</span>
-              <span className="kpi-info-tooltip">
-                Percentage of organization members actively using the time tracker. Calculated as active users divided by total users.
-              </span>
-            </div>
-          </div>
-          <div className="kpi-label">Adoption Rate</div>
-          <div className="kpi-subtext">
-            {orgSummary?.activeUsers || 0} of {orgSummary?.totalUsers || 0} users
           </div>
         </div>
       </div>

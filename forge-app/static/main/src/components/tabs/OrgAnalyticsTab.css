@@ -21,7 +21,7 @@
 /* KPI Cards Row */
 .org-kpi-cards {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: var(--ds-space-300);
   margin-bottom: var(--ds-space-400);
 }
@@ -125,6 +125,10 @@
   color: var(--ds-text, #172B4D);
 }
 
+.kpi-info-wrapper:hover {
+  z-index: 9999;
+}
+
 .kpi-info-tooltip {
   visibility: hidden;
   opacity: 0;
@@ -141,9 +145,10 @@
   line-height: 1.4;
   width: 220px;
   text-align: left;
-  z-index: 1000;
+  z-index: 99999;
   box-shadow: 0 4px 12px rgba(9, 30, 66, 0.25);
   transition: opacity 0.2s ease, visibility 0.2s ease;
+  pointer-events: none;
 }
 
 .kpi-info-tooltip::after {
@@ -271,6 +276,10 @@
   color: var(--ds-text, #172B4D);
 }
 
+.chart-info-wrapper:hover {
+  z-index: 9999;
+}
+
 .chart-info-tooltip {
   visibility: hidden;
   opacity: 0;
@@ -287,9 +296,10 @@
   line-height: 1.4;
   width: 220px;
   text-align: left;
-  z-index: 1000;
+  z-index: 99999;
   box-shadow: 0 4px 12px rgba(9, 30, 66, 0.25);
   transition: opacity 0.2s ease, visibility 0.2s ease;
+  pointer-events: none;
 }
 
 .chart-info-tooltip::after {
@@ -397,7 +407,7 @@
 
 /* Trend Chart (Vertical Bars) */
 .trend-chart {
-  min-height: 220px;
+  min-height: 240px;
   display: flex;
   align-items: flex-end;
   padding-top: 10px;
@@ -409,27 +419,27 @@
   justify-content: space-between;
   width: 100%;
   height: 200px;
-  gap: 3px;
-  padding-bottom: 25px;
+  gap: 4px;
+  padding-bottom: 30px;
   position: relative;
+  border-bottom: 2px solid var(--ds-border, #DFE1E6);
 }
 
 .trend-bar {
   flex: 1;
-  display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
   position: relative;
-  min-width: 10px;
-  max-width: 24px;
+  min-width: 8px;
+  max-width: 20px;
 }
 
 .trend-bar-fill {
   width: 100%;
   background: linear-gradient(180deg, #0052CC 0%, #0065FF 100%);
   border-radius: 3px 3px 0 0;
-  transition: height 0.3s ease;
+  transition: height 0.3s ease, transform 0.2s ease;
   min-height: 2px;
 }
 
@@ -440,14 +450,15 @@
 
 .trend-bar:hover .trend-bar-fill {
   background: linear-gradient(180deg, #0065FF, #4C9AFF);
+  transform: scaleY(1.05);
 }
 
 .trend-bar-label {
   position: absolute;
-  bottom: -18px;
-  font-size: 10px;
+  bottom: -24px;
+  font-size: 11px;
   color: var(--ds-text-subtle);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 /* Portfolio Section */
@@ -612,6 +623,7 @@
 
 .user-activity-table-container {
   overflow-x: auto;
+  overflow-y: visible;
 }
 
 .user-activity-table {
@@ -621,6 +633,8 @@
 
 .user-activity-table thead {
   background: var(--ds-background-neutral-subtle);
+  position: relative;
+  z-index: 10;
 }
 
 .user-activity-table th {
@@ -631,6 +645,7 @@
   text-transform: uppercase;
   color: var(--ds-text-subtle);
   letter-spacing: 0.5px;
+  position: relative;
 }
 
 .user-activity-table tbody tr {
@@ -661,6 +676,77 @@
 
 .user-avatar {
   font-size: 18px;
+}
+
+/* Info Icon and Tooltip for User Activity Table */
+.user-activity-table .info-icon-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  z-index: 100;
+}
+
+.user-activity-table .info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  font-style: normal;
+  background: var(--ds-background-neutral, #DFE1E6);
+  color: var(--ds-text-subtle, #6B778C);
+  border-radius: 50%;
+  cursor: help;
+  transition: background-color 0.15s ease;
+}
+
+.user-activity-table .info-icon:hover {
+  background: var(--ds-background-neutral-hovered, #B3BAC5);
+  color: var(--ds-text, #172B4D);
+}
+
+.user-activity-table .info-icon-wrapper:hover {
+  z-index: 9999;
+}
+
+.user-activity-table .info-tooltip {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ds-background-neutral-bold, #172B4D);
+  color: white;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: nowrap;
+  z-index: 99999;
+  box-shadow: 0 4px 12px rgba(9, 30, 66, 0.25);
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+  pointer-events: none;
+}
+
+.user-activity-table .info-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 6px;
+  border-style: solid;
+  border-color: var(--ds-background-neutral-bold, #172B4D) transparent transparent transparent;
+}
+
+.user-activity-table .info-icon-wrapper:hover .info-tooltip {
+  visibility: visible;
+  opacity: 1;
 }
 
 .user-name {

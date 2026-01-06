@@ -183,7 +183,7 @@ function AppContent() {
                 {sidebarOpen && <span className="sidebar-label">Organization Analytics</span>}
               </button>
             )}
-            {(userPermissions.isJiraAdmin || userPermissions.projectAdminProjects?.length > 0) && (
+            {userPermissions.isJiraAdmin && (
               <button
                 className={`sidebar-item ${activeTab === 'timesheet-settings' ? 'active' : ''}`}
                 onClick={() => setActiveTab('timesheet-settings')}
@@ -209,7 +209,7 @@ function AppContent() {
           {activeTab === 'org-analytics' && <OrgAnalyticsTab />}
           {activeTab === 'brd-upload' && <BRDUploadTab />}
           {activeTab === 'unassigned-work' && <UnassignedWork />}
-          {activeTab === 'timesheet-settings' && (userPermissions.isJiraAdmin || userPermissions.projectAdminProjects?.length > 0) && (
+          {activeTab === 'timesheet-settings' && userPermissions.isJiraAdmin && (
             <TimesheetSettings />
           )}
         </main>

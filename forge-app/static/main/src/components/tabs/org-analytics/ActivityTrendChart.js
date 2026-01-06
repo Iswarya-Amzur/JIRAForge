@@ -68,18 +68,21 @@ function ActivityTrendChart({ dailySummary = [] }) {
               : 2;
             const date = new Date(dateStr + 'T00:00:00');
             const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+            const dayOfWeek = date.toLocaleDateString('en-US', { weekday: 'short' });
+            const isFirstOrLast = idx === 0 || idx === sortedDates.length - 1;
+            const isMonday = date.getDay() === 1;
 
             return (
               <div
                 key={idx}
                 className={`trend-bar ${isWeekend ? 'weekend' : ''}`}
-                title={`${dateStr}: ${Math.round(hours * 10) / 10}h`}
+                title={`${dayOfWeek}, ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}: ${Math.round(hours * 10) / 10}h`}
               >
                 <div
                   className="trend-bar-fill"
                   style={{ height: `${barHeight}px` }}
                 ></div>
-                {idx % 5 === 0 && (
+                {(isFirstOrLast || isMonday || idx % 7 === 0) && (
                   <span className="trend-bar-label">{date.getDate()}</span>
                 )}
               </div>

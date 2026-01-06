@@ -5,6 +5,7 @@
  */
 
 import { invokeRemote } from '@forge/api';
+import api, { route } from '@forge/api';
 import { getFromCache, setInCache, TTL, CacheKeys } from './cache.js';
 
 // Remote key from manifest.yml - must match exactly
@@ -74,6 +75,7 @@ export async function supabaseQuery(table, options = {}) {
 /**
  * Get or create organization by Jira Cloud ID
  * Uses caching to reduce API calls
+ * Automatically fetches Jira site info if orgName/jiraUrl not provided
  * @param {string} cloudId - Jira Cloud ID
  * @param {string} orgName - Optional organization name
  * @param {string} jiraUrl - Optional Jira instance URL
@@ -89,6 +91,27 @@ export async function getOrCreateOrganization(cloudId, orgName = null, jiraUrl =
   }
 
   try {
+    // If orgName or jiraUrl not provided, fetch from Jira API
+    if (!orgName || !jiraUrl) {
+      try {
+        console.log('[Remote] Fetching Jira server info for organization details');
+        const serverInfoResponse = await api.asApp().requestJira(
+          route`/rest/api/3/serverInfo`,
+          { method: 'GET' }
+        );
+        
+        if (serverInfoResponse.ok) {
+          const serverInfo = await serverInfoResponse.json();
+          orgName = orgName || serverInfo.serverTitle || 'Unknown Organization';
+          jiraUrl = jiraUrl || serverInfo.baseUrl;
+          console.log(`[Remote] Got Jira info - Name: ${orgName}, URL: ${jiraUrl}`);
+        }
+      } catch (apiError) {
+        console.warn('[Remote] Could not fetch Jira server info:', apiError.message);
+        // Continue with defaults if API call fails
+      }
+    }
+
     const org = await remoteRequest('/api/forge/organization', {
       body: { orgName, jiraUrl }
     });

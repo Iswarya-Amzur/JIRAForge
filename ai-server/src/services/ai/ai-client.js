@@ -1,11 +1,11 @@
 /**
  * AI Client Module
- * Centralized AI client management with Fireworks AI primary + LiteLLM fallback
+ * Centralized AI client management with 3-tier fallback
  *
  * Flow:
- * 1. Fireworks AI is primary (if USE_FIREWORKS=true)
- * 2. LiteLLM is fallback (if USE_LITELLM=true)
- * 3. After consecutive failures, switch to fallback provider
+ * 1. LiteLLM with Gemini (primary) - gemini/gemini-2.0-flash
+ * 2. LiteLLM with GPT-4o (fallback 1) - gpt-4o
+ * 3. Fireworks AI (fallback 2) - Qwen2.5-VL-32B
  */
 
 const OpenAI = require('openai');
@@ -114,18 +114,22 @@ function initializeClient() {
     initializeLiteLLMClient();
   }
 
-  // Log the mode
-  const providers = [];
-  if (isFireworksEnabled()) providers.push('Fireworks');
-  if (isLiteLLMEnabled()) providers.push('LiteLLM');
+  // Log the 3-tier fallback mode
+  const litellmEnabled = isLiteLLMEnabled();
+  const fireworksEnabled = isFireworksEnabled();
 
-  if (providers.length === 0) {
+  if (!litellmEnabled && !fireworksEnabled) {
     logger.warn('[AI] WARNING: No AI providers enabled! AI features will not work.');
-  } else if (providers.length === 1) {
-    logger.info('[AI] Mode: %s only (no fallback)', providers[0]);
   } else {
-    logger.info('[AI] Mode: %s (with fallback) | Threshold: %d failures | Cooldown: %d min',
-      providers.join(' -> '), getFailureThreshold(), getCooldownMinutes());
+    const chain = [];
+    if (litellmEnabled) {
+      chain.push(`LiteLLM/Gemini (${getShortModelName(getLiteLLMModel())})`);
+      chain.push(`LiteLLM/GPT-4o (${getShortModelName(getLiteLLMFallbackModel())})`);
+    }
+    if (fireworksEnabled) {
+      chain.push(`Fireworks (${getShortModelName(getFireworksModel())})`);
+    }
+    logger.info('[AI] 3-Tier Fallback Chain: %s', chain.join(' -> '));
   }
 
   return getClient();
@@ -240,11 +244,19 @@ function getFireworksModel() {
 }
 
 /**
- * Get the LiteLLM model name
+ * Get the LiteLLM primary model name (Gemini)
  * @returns {string} Model name for LiteLLM requests
  */
 function getLiteLLMModel() {
-  return process.env.LITELLM_MODEL || 'openai/gpt-4o';
+  return process.env.LITELLM_MODEL || 'gemini/gemini-2.0-flash';
+}
+
+/**
+ * Get the LiteLLM fallback model name (GPT-4o)
+ * @returns {string} Fallback model name for LiteLLM requests
+ */
+function getLiteLLMFallbackModel() {
+  return process.env.LITELLM_FALLBACK_MODEL || 'gpt-4o';
 }
 
 /**
@@ -332,7 +344,8 @@ function getProviderStatus() {
 }
 
 /**
- * Execute a chat completion with automatic fallback: Fireworks -> LiteLLM
+ * Execute a chat completion with 3-tier automatic fallback:
+ * LiteLLM (Gemini) -> LiteLLM (GPT-4o) -> Fireworks (Qwen)
  *
  * @param {Object} params - Chat completion parameters
  * @param {Array} params.messages - Messages array
@@ -346,16 +359,80 @@ async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tok
   const requestType = isVision ? 'vision' : 'text';
 
   // Determine models
-  const fireworksModel = getFireworksModel();
-  const litellmModel = getLiteLLMModel();
+  const litellmPrimaryModel = getLiteLLMModel();      // Gemini
+  const litellmFallbackModel = getLiteLLMFallbackModel(); // GPT-4o
+  const fireworksModel = getFireworksModel();         // Qwen
 
-  // Try Fireworks first (if enabled and not in fallback mode)
-  if (isFireworksEnabled() && !shouldUseFallback()) {
+  // Check if circuit breaker is active (skip Gemini if too many recent failures)
+  const skipGemini = shouldUseFallback();
+  if (skipGemini) {
+    logger.info('[AI] Circuit breaker active - skipping Gemini, going directly to GPT-4o');
+  }
+
+  // === TIER 1: LiteLLM with Gemini (Primary) ===
+  if (isLiteLLMEnabled() && !skipGemini) {
+    const litellm = getLiteLLMClient();
+    if (litellm) {
+      try {
+        const startTime = Date.now();
+        logger.info('[AI] %s request via LiteLLM/Gemini (%s)', requestType, getShortModelName(litellmPrimaryModel));
+
+        const response = await litellm.chat.completions.create({
+          model: litellmPrimaryModel,
+          messages,
+          temperature,
+          max_tokens,
+          user: getLiteLLMUser()
+        });
+
+        const duration = Date.now() - startTime;
+        handlePrimarySuccess();
+        logger.info('[AI] %s request completed | LiteLLM/Gemini | %dms', requestType, duration);
+
+        return { response, provider: 'litellm-gemini', model: litellmPrimaryModel };
+      } catch (error) {
+        handlePrimaryFailure(error, 'LiteLLM/Gemini');
+        errors.push({ provider: 'litellm-gemini', error: error.message });
+        // Continue to GPT-4o fallback
+      }
+    }
+  }
+
+  // === TIER 2: LiteLLM with GPT-4o (Fallback 1) ===
+  if (isLiteLLMEnabled()) {
+    const litellm = getLiteLLMClient();
+    if (litellm) {
+      try {
+        const startTime = Date.now();
+        logger.info('[AI] %s request via LiteLLM/GPT-4o (Gemini failed) (%s)', requestType, getShortModelName(litellmFallbackModel));
+
+        const response = await litellm.chat.completions.create({
+          model: litellmFallbackModel,
+          messages,
+          temperature,
+          max_tokens,
+          user: getLiteLLMUser()
+        });
+
+        const duration = Date.now() - startTime;
+        logger.info('[AI] %s request completed | LiteLLM/GPT-4o | %dms', requestType, duration);
+
+        return { response, provider: 'litellm-gpt4o', model: litellmFallbackModel };
+      } catch (error) {
+        logger.warn('[AI] LiteLLM/GPT-4o failed: %s', error.message);
+        errors.push({ provider: 'litellm-gpt4o', error: error.message });
+        // Continue to Fireworks fallback
+      }
+    }
+  }
+
+  // === TIER 3: Fireworks (Fallback 2) ===
+  if (isFireworksEnabled()) {
     const fireworks = getFireworksClient();
     if (fireworks) {
       try {
         const startTime = Date.now();
-        logger.info('[AI] %s request via Fireworks (%s)', requestType, getShortModelName(fireworksModel));
+        logger.info('[AI] %s request via Fireworks (LiteLLM failed) (%s)', requestType, getShortModelName(fireworksModel));
 
         const response = await fireworks.chat.completions.create({
           model: fireworksModel,
@@ -365,7 +442,6 @@ async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tok
         });
 
         const duration = Date.now() - startTime;
-        handlePrimarySuccess();
         logger.info('[AI] %s request completed | Fireworks | %dms', requestType, duration);
 
         // Log to Google Sheets (async, don't block response)
@@ -380,48 +456,15 @@ async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tok
 
         return { response, provider: 'fireworks', model: fireworksModel };
       } catch (error) {
-        handlePrimaryFailure(error, 'Fireworks');
+        logger.error('[AI] Fireworks failed: %s', error.message);
         errors.push({ provider: 'fireworks', error: error.message });
-        // Continue to LiteLLM fallback
-      }
-    }
-  }
-
-  // Fallback to LiteLLM (if enabled)
-  if (isLiteLLMEnabled()) {
-    const litellm = getLiteLLMClient();
-    if (litellm) {
-      try {
-        const startTime = Date.now();
-        const note = errors.length > 0 ? ' (Fireworks failed)' : '';
-        logger.info('[AI] %s request via LiteLLM%s (%s)', requestType, note, getShortModelName(litellmModel));
-
-        const response = await litellm.chat.completions.create({
-          model: litellmModel,
-          messages,
-          temperature,
-          max_tokens,
-          user: getLiteLLMUser()
-        });
-
-        const duration = Date.now() - startTime;
-        handlePrimarySuccess();
-        logger.info('[AI] %s request completed | LiteLLM | %dms', requestType, duration);
-
-        // Note: LiteLLM calls are NOT logged to Google Sheets
-        // Only direct Fireworks AI calls are logged for cost tracking
-
-        return { response, provider: 'litellm', model: litellmModel };
-      } catch (error) {
-        logger.error('[AI] LiteLLM request failed: %s', error.message);
-        errors.push({ provider: 'litellm', error: error.message });
       }
     }
   }
 
   // All providers failed
   const errorMsg = errors.map(e => `${e.provider}: ${e.error}`).join('; ');
-  logger.error('[AI] All providers failed: %s', errorMsg);
+  logger.error('[AI] All 3 providers failed: %s', errorMsg);
   throw new Error(`All AI providers failed: ${errorMsg}`);
 }
 
@@ -446,6 +489,7 @@ module.exports = {
   getTextModel,
   getFireworksModel,
   getLiteLLMModel,
+  getLiteLLMFallbackModel,
   getLiteLLMUser,
 
   // Main request function with fallback

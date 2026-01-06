@@ -259,10 +259,41 @@ exports.getOrCreateOrganization = async (req, res) => {
     }
 
     if (existingOrgs && existingOrgs.length > 0) {
-      logger.info('[ForgeProxy] Found existing organization', { id: existingOrgs[0].id });
+      const existingOrg = existingOrgs[0];
+      
+      // Update organization if we have better info now (fix "Unknown Organization" issue)
+      if (orgName && orgName !== 'Unknown Organization' && 
+          (existingOrg.org_name === 'Unknown Organization' || 
+           existingOrg.jira_instance_url?.includes(cloudId))) {
+        logger.info('[ForgeProxy] Updating organization with better info', { 
+          id: existingOrg.id, 
+          oldName: existingOrg.org_name, 
+          newName: orgName 
+        });
+        
+        const { data: updatedOrg, error: updateError } = await supabase
+          .from('organizations')
+          .update({
+            org_name: orgName,
+            jira_instance_url: jiraUrl || existingOrg.jira_instance_url,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', existingOrg.id)
+          .select()
+          .single();
+        
+        if (!updateError && updatedOrg) {
+          return res.json({
+            success: true,
+            data: updatedOrg
+          });
+        }
+      }
+      
+      logger.info('[ForgeProxy] Found existing organization', { id: existingOrg.id });
       return res.json({
         success: true,
-        data: existingOrgs[0]
+        data: existingOrg
       });
     }
 

@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 import {
   KPICards,
-  TimeByProjectChart,
   ActivityTrendChart,
   ProjectPortfolioTable,
   UserActivityTable
@@ -69,10 +68,7 @@ function OrgAnalyticsTab() {
 
       <KPICards orgSummary={orgAnalytics?.orgSummary} />
 
-      <div className="org-charts-row">
-        <TimeByProjectChart projects={orgAnalytics?.projectPortfolio} />
-        <ActivityTrendChart dailySummary={orgAnalytics?.dailySummary} />
-      </div>
+      <ActivityTrendChart dailySummary={orgAnalytics?.dailySummary} />
 
       <ProjectPortfolioTable projects={orgAnalytics?.projectPortfolio} />
       <UserActivityTable users={orgAnalytics?.userActivity} />

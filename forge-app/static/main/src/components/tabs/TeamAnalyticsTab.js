@@ -69,22 +69,7 @@ function TeamAnalyticsTab() {
           {/* KPI Summary Cards */}
           <div className="team-kpi-cards">
             <div className="team-kpi-card">
-              <div className="kpi-icon">📊</div>
-              <div className="kpi-content">
-                <div className="kpi-value-row">
-                  <div className="kpi-value">{teamAnalytics?.teamSummary?.totalHoursThisMonth || 0}h</div>
-                  <div className="kpi-info-wrapper">
-                    <span className="kpi-info-icon">i</span>
-                    <span className="kpi-info-tooltip">
-                      Total hours tracked by all team members on this project during the current month.
-                    </span>
-                  </div>
-                </div>
-                <div className="kpi-label">Total Hours This Month</div>
-              </div>
-            </div>
-            <div className="team-kpi-card">
-              <div className="kpi-icon">👥</div>
+              <div className="kpi-icon"><span>&#128101;</span></div>
               <div className="kpi-content">
                 <div className="kpi-value-row">
                   <div className="kpi-value">{teamAnalytics?.teamSummary?.activeMembers || 0}</div>
@@ -99,7 +84,22 @@ function TeamAnalyticsTab() {
               </div>
             </div>
             <div className="team-kpi-card">
-              <div className="kpi-icon">📋</div>
+              <div className="kpi-icon"><span>&#128200;</span></div>
+              <div className="kpi-content">
+                <div className="kpi-value-row">
+                  <div className="kpi-value">{teamAnalytics?.teamSummary?.totalHoursThisMonth || 0}h</div>
+                  <div className="kpi-info-wrapper">
+                    <span className="kpi-info-icon">i</span>
+                    <span className="kpi-info-tooltip">
+                      Total hours tracked by all team members on this project during the current month.
+                    </span>
+                  </div>
+                </div>
+                <div className="kpi-label">Total Hours This Month</div>
+              </div>
+            </div>
+            <div className="team-kpi-card">
+              <div className="kpi-icon"><span>&#128203;</span></div>
               <div className="kpi-content">
                 <div className="kpi-value-row">
                   <div className="kpi-value">{teamAnalytics?.teamSummary?.issuesWorked || 0}</div>
@@ -115,9 +115,59 @@ function TeamAnalyticsTab() {
             </div>
           </div>
 
-          {/* Two Column Layout: Member Activity + Activity Trend */}
+          {/* Two Column Layout: Activity Trend + Member Activity */}
           <div className="team-analytics-grid">
-            {/* Team Member Activity Table */}
+            {/* Activity Trend Chart - First */}
+            <div className="team-section team-activity-trend">
+              <div className="section-header">
+                <div className="section-title-row">
+                  <h3>Activity Trend</h3>
+                  <div className="section-info-wrapper">
+                    <span className="section-info-icon">i</span>
+                    <span className="section-info-tooltip">
+                      Visual representation of daily team work hours over the last 14 days. Taller bars indicate more hours tracked.
+                    </span>
+                  </div>
+                </div>
+                <span className="section-subtitle">Daily team hours - Last 14 days</span>
+              </div>
+              <div className="trend-chart-container">
+                {teamAnalytics?.activityTrend?.length > 0 ? (
+                  <div className="trend-chart">
+                    {(() => {
+                      const maxHours = Math.max(...teamAnalytics.activityTrend.map(d => d.totalHours), 0.1);
+                      const maxBarHeight = 120; // Fixed pixel height for the tallest bar
+                      return teamAnalytics.activityTrend.map((day, idx) => {
+                        // Calculate bar height in pixels (minimum 8px if there's any value for visibility)
+                        const barHeight = day.totalHours > 0
+                          ? Math.max(8, Math.round((day.totalHours / maxHours) * maxBarHeight))
+                          : 0;
+                        const isWeekend = day.dayOfWeek === 'Sat' || day.dayOfWeek === 'Sun';
+                        return (
+                          <div key={idx} className="trend-bar-wrapper">
+                            <span className="trend-bar-value">{day.totalHours > 0 ? `${day.totalHours}h` : ''}</span>
+                            <div
+                              className={`trend-bar ${day.totalHours === 0 ? 'empty-bar' : ''} ${isWeekend ? 'weekend' : ''}`}
+                              style={{ height: `${barHeight}px` }}
+                              title={`${day.date}: ${day.totalHours}h`}
+                            >
+                            </div>
+                            <div className="trend-bar-labels">
+                              <span className="trend-bar-day">{day.dayOfWeek}</span>
+                              <span className="trend-bar-date">{day.dayOfMonth}</span>
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                ) : (
+                  <p className="empty-state">No activity trend data available</p>
+                )}
+              </div>
+            </div>
+
+            {/* Team Member Activity Table - Second */}
             <div className="team-section team-member-activity">
               <div className="section-header">
                 <div className="section-title-row">
@@ -195,55 +245,6 @@ function TeamAnalyticsTab() {
                     )}
                   </tbody>
                 </table>
-              </div>
-            </div>
-
-            {/* Activity Trend Chart */}
-            <div className="team-section team-activity-trend">
-              <div className="section-header">
-                <div className="section-title-row">
-                  <h3>Activity Trend</h3>
-                  <div className="section-info-wrapper">
-                    <span className="section-info-icon">i</span>
-                    <span className="section-info-tooltip">
-                      Visual representation of daily team work hours over the last 14 days. Taller bars indicate more hours tracked.
-                    </span>
-                  </div>
-                </div>
-                <span className="section-subtitle">Daily team hours - Last 14 days</span>
-              </div>
-              <div className="trend-chart-container">
-                {teamAnalytics?.activityTrend?.length > 0 ? (
-                  <div className="trend-chart">
-                    {(() => {
-                      const maxHours = Math.max(...teamAnalytics.activityTrend.map(d => d.totalHours), 0.1);
-                      const maxBarHeight = 140; // Fixed pixel height for the tallest bar
-                      return teamAnalytics.activityTrend.map((day, idx) => {
-                        // Calculate bar height in pixels (minimum 4px if there's any value)
-                        const barHeight = day.totalHours > 0
-                          ? Math.max(4, Math.round((day.totalHours / maxHours) * maxBarHeight))
-                          : 0;
-                        return (
-                          <div key={idx} className="trend-bar-wrapper">
-                            <div
-                              className={`trend-bar ${day.totalHours === 0 ? 'empty-bar' : ''}`}
-                              style={{ height: `${barHeight}px` }}
-                              title={`${day.date}: ${day.totalHours}h`}
-                            >
-                              {day.totalHours > 0 && (
-                                <span className="trend-bar-value">{day.totalHours}h</span>
-                              )}
-                            </div>
-                            <span className="trend-bar-label">{day.dayOfMonth}</span>
-                            <span className="trend-bar-day">{day.dayOfWeek}</span>
-                          </div>
-                        );
-                      });
-                    })()}
-                  </div>
-                ) : (
-                  <p className="empty-state">No activity trend data available</p>
-                )}
               </div>
             </div>
           </div>
