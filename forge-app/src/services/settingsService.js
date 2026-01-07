@@ -1,59 +1,48 @@
 /**
  * Settings Service
  * Business logic for user settings management
+ *
+ * Note: AI server connection settings have been removed.
+ * All connections are now managed automatically via Forge Remote (manifest.yml).
  */
 
-import { storage } from '@forge/api';
 import { isJiraAdmin, checkUserPermissions } from '../utils/jira.js';
 import { getSupabaseConfig, supabaseRequest, getOrCreateOrganization, getOrCreateUser } from '../utils/supabase.js';
-import { DEFAULT_SETTINGS, DEFAULT_TRACKING_SETTINGS } from '../config/constants.js';
+import { DEFAULT_TRACKING_SETTINGS } from '../config/constants.js';
 
 /**
  * Get user settings from Forge storage
- * Note: We now use a global key so settings apply to all users
- * @param {string} accountId - Atlassian account ID (ignored for global settings)
+ * Note: AI server settings have been removed - connections are now automatic via Forge Remote
+ * @param {string} accountId - Atlassian account ID (ignored)
  * @returns {Promise<Object>} User settings
  */
 export async function getUserSettings(accountId) {
-  // Use a global key instead of account-specific key
-  const settings = await storage.get('global:app-settings');
-
-  return settings || DEFAULT_SETTINGS;
+  // All connections are now managed automatically via Forge Remote
+  // No user-configurable settings required
+  return {
+    configured: true,
+    connectionMode: 'forge-remote'
+  };
 }
 
 /**
  * Save user settings to Forge storage
- * Note: We now use a global key so settings apply to all users
- * IMPORTANT: Only Jira Administrators can save global settings
- *
- * NOTE: Supabase credentials are now managed by the AI server.
- * Only AI server settings are stored here (optional for custom deployments).
- *
- * @param {string} accountId - Atlassian account ID (ignored for global settings)
- * @param {Object} settings - Settings object
+ * Note: AI server settings have been removed - connections are now automatic via Forge Remote
+ * This function is kept for backward compatibility but no longer stores AI server settings
+ * @param {string} accountId - Atlassian account ID (ignored)
+ * @param {Object} settings - Settings object (ignored)
  * @returns {Promise<void>}
  */
 export async function saveUserSettings(accountId, settings) {
   // Check if user is Jira Administrator
   const isAdmin = await isJiraAdmin();
   if (!isAdmin) {
-    throw new Error('Access denied: Only Jira Administrators can configure global settings');
+    throw new Error('Access denied: Only Jira Administrators can access settings');
   }
 
-  // Validate AI server URL if provided
-  if (settings.aiServerUrl && !settings.aiServerUrl.startsWith('http://') && !settings.aiServerUrl.startsWith('https://')) {
-    throw new Error('AI Server URL must start with http:// or https://');
-  }
-
-  // Store only AI server settings in Forge storage
-  // Supabase credentials are managed securely on the AI server
-  await storage.set('global:app-settings', {
-    aiServerUrl: settings.aiServerUrl || '',
-    aiServerApiKey: settings.aiServerApiKey || '',
-    // Flag to indicate app has been configured
-    configured: true,
-    configuredAt: new Date().toISOString()
-  });
+  // No settings to save - AI server connection is managed via Forge Remote in manifest.yml
+  // This function is kept for backward compatibility
+  return;
 }
 
 /**

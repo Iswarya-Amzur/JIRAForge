@@ -3,15 +3,7 @@ import { invoke } from '@forge/bridge';
 import './App.css';
 
 function App() {
-  // Note: Supabase credentials are now managed securely by the AI server
-  // Only AI server URL is configurable (optional for self-hosted deployments)
-  const [settings, setSettings] = useState({
-    aiServerUrl: '',
-    aiServerApiKey: ''
-  });
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState({ type: '', text: '' });
   const [isAdmin, setIsAdmin] = useState(false);
   const [permissionLoading, setPermissionLoading] = useState(true);
 
@@ -25,72 +17,20 @@ function App() {
       const result = await invoke('getUserPermissions');
       if (result.success) {
         const jiraAdmin = result.permissions.isJiraAdmin;
-        
         setIsAdmin(jiraAdmin);
-        
-        if (jiraAdmin) {
-          loadSettings();
-        } else {
-          setPermissionLoading(false);
-        }
       } else {
         setIsAdmin(false);
-        setPermissionLoading(false);
       }
     } catch (err) {
       console.error('Failed to check permissions:', err);
       setIsAdmin(false);
-      setPermissionLoading(false);
-    }
-  };
-
-  const loadSettings = async () => {
-    setLoading(true);
-    try {
-      const result = await invoke('getSettings');
-      if (result.success) {
-        setSettings(prevSettings => ({
-          ...prevSettings,
-          ...result.settings
-        }));
-      } else {
-        setMessage({ type: 'error', text: result.error });
-      }
-    } catch (err) {
-      setMessage({ type: 'error', text: 'Failed to load settings: ' + err.message });
     } finally {
+      setPermissionLoading(false);
       setLoading(false);
-      setPermissionLoading(false);
     }
   };
 
-  const handleChange = (e) => {
-    const { name, value, type, checked } = e.target;
-    setSettings(prev => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value
-    }));
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    setMessage({ type: '', text: '' });
-
-    try {
-      const result = await invoke('saveSettings', { settings });
-      if (result.success) {
-        setMessage({ type: 'success', text: 'Settings saved successfully!' });
-      } else {
-        setMessage({ type: 'error', text: result.error });
-      }
-    } catch (err) {
-      setMessage({ type: 'error', text: 'Failed to save settings: ' + err.message });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (permissionLoading) {
+  if (permissionLoading || loading) {
     return (
       <div className="App">
         <div className="loading-container">
@@ -113,21 +53,11 @@ function App() {
     );
   }
 
-  if (loading) {
-    return (
-      <div className="App">
-        <div className="loading-container">
-          <p>Loading settings...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="App">
       <header className="App-header">
         <h1>Time Tracker - Settings</h1>
-        <p className="subtitle">Configure global application settings (Administrator Only)</p>
+        <p className="subtitle">Application Configuration (Administrator Only)</p>
         <div className="admin-badge">Jira Administrator</div>
       </header>
 
@@ -135,68 +65,29 @@ function App() {
         <section className="settings-section info-section">
           <h2>Secure Configuration</h2>
           <p className="section-description">
-            Your Time Tracker is pre-configured with secure backend services. Database credentials
-            are managed securely on the server side - no sensitive keys are stored in Jira.
+            Your Time Tracker is pre-configured with secure backend services. All connections
+            are managed automatically - no manual configuration is required.
           </p>
           <div className="secure-badge">
             <span className="checkmark">&#10003;</span> Securely Connected
           </div>
         </section>
 
-        <section className="settings-section">
-          <h2>AI Server Configuration (Optional)</h2>
+        <section className="settings-section info-section">
+          <h2>Tracking Settings</h2>
           <p className="section-description">
-            For self-hosted deployments, you can configure a custom AI server URL.
-            Most users can skip this section - the default server is pre-configured.
+            Configure screenshot intervals, application blacklists/whitelists, and other tracking
+            preferences from the <strong>Time Tracker</strong> panel in any Jira project.
           </p>
-
-          <div className="form-group">
-            <label htmlFor="aiServerUrl">AI Server URL (Optional)</label>
-            <input
-              type="text"
-              id="aiServerUrl"
-              name="aiServerUrl"
-              value={settings.aiServerUrl}
-              onChange={handleChange}
-              placeholder="Leave empty to use default server"
-            />
-            <small>Custom AI server URL for self-hosted deployments</small>
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="aiServerApiKey">AI Server API Key (Optional)</label>
-            <input
-              type="password"
-              id="aiServerApiKey"
-              name="aiServerApiKey"
-              value={settings.aiServerApiKey}
-              onChange={handleChange}
-              placeholder="Enter your AI server API key (optional)"
-            />
-            <small>API key for authenticating with a custom AI server</small>
-          </div>
+          <p className="note">
+            Navigate to any project and open the Time Tracker panel to access tracking settings.
+          </p>
         </section>
-
-        {message.text && (
-          <div className={`message ${message.type}`}>
-            {message.text}
-          </div>
-        )}
-
-        <div className="actions">
-          <button
-            className="save-button"
-            onClick={handleSave}
-            disabled={saving}
-          >
-            {saving ? 'Saving...' : 'Save Settings'}
-          </button>
-        </div>
 
         <section className="settings-section info-section">
           <h2>Desktop App Installation</h2>
           <p className="section-description">
-            To start tracking time, you need to install the desktop application:
+            To start tracking time, install the desktop application:
           </p>
           <ol>
             <li>Download the desktop app for your platform (Windows/macOS/Linux)</li>

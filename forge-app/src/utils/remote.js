@@ -99,11 +99,28 @@ export async function getOrCreateOrganization(cloudId, orgName = null, jiraUrl =
           route`/rest/api/3/serverInfo`,
           { method: 'GET' }
         );
-        
+
         if (serverInfoResponse.ok) {
           const serverInfo = await serverInfoResponse.json();
-          orgName = orgName || serverInfo.serverTitle || 'Unknown Organization';
           jiraUrl = jiraUrl || serverInfo.baseUrl;
+
+          // serverTitle often returns generic "Jira" - extract site name from URL instead
+          let siteName = serverInfo.serverTitle;
+          if (!siteName || siteName === 'Jira' || siteName === 'Jira Software') {
+            // Extract subdomain from URL (e.g., "saik" from "https://saik.atlassian.net")
+            try {
+              const url = new URL(jiraUrl);
+              const subdomain = url.hostname.split('.')[0];
+              // Only use subdomain if it's not a UUID (cloud IDs look like UUIDs)
+              if (subdomain && !subdomain.match(/^[0-9a-f]{8}-[0-9a-f]{4}-/i)) {
+                siteName = subdomain;
+              }
+            } catch (e) {
+              // URL parsing failed, keep serverTitle
+            }
+          }
+
+          orgName = orgName || siteName || 'Unknown Organization';
           console.log(`[Remote] Got Jira info - Name: ${orgName}, URL: ${jiraUrl}`);
         }
       } catch (apiError) {
