@@ -18,7 +18,8 @@ module.exports = {
   isAIEnabled: aiClient.isAIEnabled,
   isFireworksEnabled: aiClient.isFireworksEnabled,
   isLiteLLMEnabled: aiClient.isLiteLLMEnabled,
-  shouldUseFallback: aiClient.shouldUseFallback,
+  getProviderOrder: aiClient.getProviderOrder,
+  isProviderDemoted: aiClient.isProviderDemoted,
   getProviderStatus: aiClient.getProviderStatus,
 
   // Model getters

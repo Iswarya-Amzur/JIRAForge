@@ -1925,6 +1925,18 @@ class BRDTimeTracker:
             if not session_token or session_token != self.admin_session_token:
                 return jsonify({'error': 'Unauthorized'}), 401
 
+            # Count screenshots from today's logs
+            from datetime import date
+            today = date.today().isoformat()
+            screenshots_today = sum(1 for log in self.admin_logs 
+                                   if 'Screenshot captured' in log.get('message', '') 
+                                   and log.get('timestamp', '').startswith(today))
+
+            # Get session start time from first log or tracking start
+            session_start = None
+            if self.admin_logs:
+                session_start = self.admin_logs[0].get('timestamp')
+
             return jsonify({
                 'tracking_active': self.tracking_active,
                 'is_idle': self.is_idle,
@@ -1934,8 +1946,11 @@ class BRDTimeTracker:
                 'online': self.offline_manager.check_connectivity(force=False),
                 'offline_pending': self.offline_manager.get_pending_count(),
                 'capture_interval': self.capture_interval,
+                'screenshot_interval': self.capture_interval,
                 'tracking_settings': self.tracking_settings,
-                'total_logs': len(self.admin_logs)
+                'total_logs': len(self.admin_logs),
+                'screenshots_today': screenshots_today,
+                'session_start': session_start
             })
 
         @self.app.route('/api/admin/control', methods=['POST'])
@@ -5659,9 +5674,19 @@ class BRDTimeTracker:
         }
         .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: repeat(3, 1fr);
             gap: 24px;
             margin-bottom: 24px;
+        }
+        @media (max-width: 1200px) {
+            .grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
         }
         .card {
             background: #16213e;
@@ -5942,6 +5967,33 @@ class BRDTimeTracker:
                 </div>
             </div>
 
+            <!-- Session Info Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>&#128337; Session Info</h2>
+                </div>
+                <div class="card-body">
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <div class="status-label">App Version</div>
+                            <div id="version-status" class="status-value">1.0.0</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">Screenshot Interval</div>
+                            <div id="interval-status" class="status-value">Loading...</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">Session Start</div>
+                            <div id="session-start" class="status-value">Loading...</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">Screenshots Today</div>
+                            <div id="screenshots-today" class="status-value">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Logs Card -->
             <div class="card full-width">
                 <div class="card-header">
@@ -6114,6 +6166,29 @@ class BRDTimeTracker:
                     const pendingEl = document.getElementById('pending-status');
                     pendingEl.textContent = data.offline_pending || '0';
                     pendingEl.className = data.offline_pending > 0 ? 'status-value warning' : 'status-value active';
+
+                    // Session Info card
+                    const intervalEl = document.getElementById('interval-status');
+                    if (intervalEl) {
+                        intervalEl.textContent = (data.screenshot_interval || 30) + 's';
+                        intervalEl.className = 'status-value active';
+                    }
+
+                    const sessionStartEl = document.getElementById('session-start');
+                    if (sessionStartEl && data.session_start) {
+                        const startTime = new Date(data.session_start).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+                        sessionStartEl.textContent = startTime;
+                        sessionStartEl.className = 'status-value active';
+                    } else if (sessionStartEl) {
+                        sessionStartEl.textContent = 'N/A';
+                        sessionStartEl.className = 'status-value inactive';
+                    }
+
+                    const screenshotsTodayEl = document.getElementById('screenshots-today');
+                    if (screenshotsTodayEl) {
+                        screenshotsTodayEl.textContent = data.screenshots_today || '0';
+                        screenshotsTodayEl.className = 'status-value active';
+                    }
 
                     // Update buttons
                     document.getElementById('btn-start').disabled = data.running;

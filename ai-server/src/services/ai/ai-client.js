@@ -14,16 +14,28 @@ const { logLLMRequest } = require('../sheets-logger');
 
 // Client instances
 let fireworksClient = null;
-let litellmClient = null;
+let litellmGeminiClient = null;   // For Gemini models
+let litellmOpenAIClient = null;   // For GPT-4o models
 
-// Failure tracking state
-let consecutiveFailures = 0;
-let fallbackActive = false;
-let fallbackStartTime = null;
+// Dynamic provider management
+const providerState = {
+  // Track failures per provider
+  failures: {
+    'litellm-gemini': 0,
+    'litellm-gpt4o': 0,
+    'fireworks': 0
+  },
+  // Track demoted providers and when they were demoted
+  demoted: {}, // { 'litellm-gemini': { demotedAt: timestamp, originalIndex: 0 } }
+  // Current provider order (will be reordered dynamically)
+  order: ['litellm-gemini', 'litellm-gpt4o', 'fireworks'],
+  // Original order for restoration
+  originalOrder: ['litellm-gemini', 'litellm-gpt4o', 'fireworks']
+};
 
 // Configuration (with defaults)
-const getFailureThreshold = () => parseInt(process.env.FAILURE_THRESHOLD) || 3;
-const getCooldownMinutes = () => parseInt(process.env.COOLDOWN_MINUTES) || 5;
+const getFailureThreshold = () => parseInt(process.env.FAILURE_THRESHOLD) || 2;
+const getCooldownMinutes = () => parseInt(process.env.COOLDOWN_MINUTES) || 30;
 
 /**
  * Check if Fireworks AI is enabled via environment variable
@@ -69,27 +81,55 @@ function initializeFireworksClient() {
 }
 
 /**
- * Initialize the LiteLLM client
- * @returns {OpenAI|null} LiteLLM client or null if not configured
+ * Initialize the LiteLLM Gemini client
+ * @returns {OpenAI|null} LiteLLM Gemini client or null if not configured
  */
-function initializeLiteLLMClient() {
-  const litellmApiKey = process.env.LITELLM_API_KEY;
+function initializeLiteLLMGeminiClient() {
+  const geminiApiKey = process.env.LITELLM_GEMINI_API_KEY;
   const litellmBaseUrl = process.env.LITELLM_BASE_URL || 'https://litellm.amzur.com';
 
-  if (!litellmApiKey) {
-    logger.warn('[AI] LiteLLM API key not configured');
+  if (!geminiApiKey) {
+    logger.warn('[AI] LiteLLM Gemini API key not configured');
     return null;
   }
 
   try {
-    litellmClient = new OpenAI({
-      apiKey: litellmApiKey,
+    litellmGeminiClient = new OpenAI({
+      apiKey: geminiApiKey,
       baseURL: litellmBaseUrl
     });
-    logger.info('[AI] LiteLLM initialized | Endpoint: %s | Model: %s', litellmBaseUrl, getShortModelName(process.env.LITELLM_MODEL || 'openai/gpt-4o'));
-    return litellmClient;
+    logger.info('[AI] LiteLLM/Gemini initialized | Endpoint: %s | Key: %s...',
+      litellmBaseUrl, geminiApiKey.substring(0, 10));
+    return litellmGeminiClient;
   } catch (error) {
-    logger.error('[AI] LiteLLM init failed: %s', error.message);
+    logger.error('[AI] LiteLLM/Gemini init failed: %s', error.message);
+    return null;
+  }
+}
+
+/**
+ * Initialize the LiteLLM OpenAI/GPT-4o client
+ * @returns {OpenAI|null} LiteLLM OpenAI client or null if not configured
+ */
+function initializeLiteLLMOpenAIClient() {
+  const openaiApiKey = process.env.LITELLM_OPENAI_API_KEY;
+  const litellmBaseUrl = process.env.LITELLM_BASE_URL || 'https://litellm.amzur.com';
+
+  if (!openaiApiKey) {
+    logger.warn('[AI] LiteLLM OpenAI API key not configured');
+    return null;
+  }
+
+  try {
+    litellmOpenAIClient = new OpenAI({
+      apiKey: openaiApiKey,
+      baseURL: litellmBaseUrl
+    });
+    logger.info('[AI] LiteLLM/OpenAI initialized | Endpoint: %s | Key: %s...',
+      litellmBaseUrl, openaiApiKey.substring(0, 10));
+    return litellmOpenAIClient;
+  } catch (error) {
+    logger.error('[AI] LiteLLM/OpenAI init failed: %s', error.message);
     return null;
   }
 }
@@ -104,14 +144,15 @@ function initializeClient() {
     process.env.USE_FIREWORKS || 'false',
     process.env.USE_LITELLM || 'false');
 
-  // Initialize Fireworks if enabled (primary)
+  // Initialize Fireworks if enabled
   if (isFireworksEnabled()) {
     initializeFireworksClient();
   }
 
-  // Initialize LiteLLM if enabled (fallback)
+  // Initialize LiteLLM clients if enabled (separate keys for Gemini and OpenAI)
   if (isLiteLLMEnabled()) {
-    initializeLiteLLMClient();
+    initializeLiteLLMGeminiClient();
+    initializeLiteLLMOpenAIClient();
   }
 
   // Log the 3-tier fallback mode
@@ -148,30 +189,51 @@ function getFireworksClient() {
 }
 
 /**
- * Get the LiteLLM client instance
- * @returns {OpenAI|null} LiteLLM client or null
+ * Get the LiteLLM Gemini client instance
+ * @returns {OpenAI|null} LiteLLM Gemini client or null
  */
-function getLiteLLMClient() {
-  if (!litellmClient && isLiteLLMEnabled() && process.env.LITELLM_API_KEY) {
-    logger.info('[AI] getLiteLLMClient() lazy init');
-    initializeLiteLLMClient();
+function getLiteLLMGeminiClient() {
+  if (!litellmGeminiClient && isLiteLLMEnabled() && process.env.LITELLM_GEMINI_API_KEY) {
+    logger.info('[AI] getLiteLLMGeminiClient() lazy init');
+    initializeLiteLLMGeminiClient();
   }
-  return litellmClient;
+  return litellmGeminiClient;
 }
 
 /**
- * Get primary client based on configuration
+ * Get the LiteLLM OpenAI/GPT-4o client instance
+ * @returns {OpenAI|null} LiteLLM OpenAI client or null
+ */
+function getLiteLLMOpenAIClient() {
+  if (!litellmOpenAIClient && isLiteLLMEnabled() && process.env.LITELLM_OPENAI_API_KEY) {
+    logger.info('[AI] getLiteLLMOpenAIClient() lazy init');
+    initializeLiteLLMOpenAIClient();
+  }
+  return litellmOpenAIClient;
+}
+
+/**
+ * Get the primary LiteLLM client (Gemini by default, for backward compatibility)
+ * @returns {OpenAI|null} LiteLLM client or null
+ */
+function getLiteLLMClient() {
+  return getLiteLLMGeminiClient() || getLiteLLMOpenAIClient();
+}
+
+/**
+ * Get primary client based on current provider order
  * @returns {OpenAI|null} Primary client based on configuration
  */
 function getClient() {
-  // Priority: Fireworks -> LiteLLM
-  if (isFireworksEnabled() && !shouldUseFallback()) {
-    return getFireworksClient() || getLiteLLMClient();
+  const order = getProviderOrder();
+  for (const providerId of order) {
+    const config = getProviderConfig(providerId);
+    if (config && config.client) {
+      return config.client;
+    }
   }
-  if (isLiteLLMEnabled()) {
-    return getLiteLLMClient();
-  }
-  return getFireworksClient();
+  // Fallback to any available client
+  return getLiteLLMGeminiClient() || getLiteLLMOpenAIClient() || getFireworksClient();
 }
 
 /**
@@ -184,55 +246,130 @@ function isAIEnabled() {
 }
 
 /**
- * Check if we should use fallback due to primary provider failures
- * @returns {boolean} True if fallback mode is active and cooldown hasn't passed
+ * Get human-readable provider name
+ * @param {string} providerId - Provider ID
+ * @returns {string} Human-readable name
  */
-function shouldUseFallback() {
-  if (!fallbackActive) return false;
+function getProviderDisplayName(providerId) {
+  const names = {
+    'litellm-gemini': 'Gemini',
+    'litellm-gpt4o': 'GPT-4o',
+    'fireworks': 'Fireworks/Qwen'
+  };
+  return names[providerId] || providerId;
+}
 
-  // Check if cooldown period has passed
+/**
+ * Check and restore any demoted providers whose cooldown has expired
+ */
+function checkAndRestoreDemotedProviders() {
   const cooldownMs = getCooldownMinutes() * 60 * 1000;
-  const elapsed = Date.now() - fallbackStartTime;
+  const now = Date.now();
 
-  if (elapsed >= cooldownMs) {
-    // Cooldown complete, reset and try primary again
-    logger.info('[AI] Cooldown complete - switching back to primary provider');
-    fallbackActive = false;
-    consecutiveFailures = 0;
-    return false;
+  for (const [providerId, info] of Object.entries(providerState.demoted)) {
+    const elapsed = now - info.demotedAt;
+    if (elapsed >= cooldownMs) {
+      // Cooldown complete, restore provider to its original position
+      const currentIndex = providerState.order.indexOf(providerId);
+      if (currentIndex !== -1) {
+        providerState.order.splice(currentIndex, 1);
+      }
+      // Insert at original position (or beginning if original position is invalid)
+      const targetIndex = Math.min(info.originalIndex, providerState.order.length);
+      providerState.order.splice(targetIndex, 0, providerId);
+
+      // Reset failure count and remove from demoted
+      providerState.failures[providerId] = 0;
+      delete providerState.demoted[providerId];
+
+      const newPrimary = getProviderDisplayName(providerState.order[0]);
+      logger.info('[AI] CIRCUIT BREAKER RESET - %s cooldown complete (%d min), restored to position %d',
+        getProviderDisplayName(providerId), getCooldownMinutes(), targetIndex + 1);
+      logger.info('[AI] Current provider order: %s', providerState.order.map(getProviderDisplayName).join(' -> '));
+    }
   }
-
-  const remainingMin = Math.ceil((cooldownMs - elapsed) / 60000);
-  logger.debug('[AI] Fallback active - %d min remaining', remainingMin);
-  return true;
 }
 
 /**
- * Handle primary provider request failure
- * Tracks consecutive failures and activates fallback if threshold reached
+ * Check if a specific provider is currently demoted
+ * @param {string} providerId - Provider ID to check
+ * @returns {boolean} True if provider is demoted
+ */
+function isProviderDemoted(providerId) {
+  checkAndRestoreDemotedProviders(); // Check for any expired cooldowns first
+  return providerId in providerState.demoted;
+}
+
+/**
+ * Get the current provider order (with demoted providers moved to end)
+ * @returns {string[]} Ordered list of provider IDs
+ */
+function getProviderOrder() {
+  checkAndRestoreDemotedProviders();
+  return [...providerState.order];
+}
+
+/**
+ * Handle provider request failure
+ * Tracks consecutive failures and demotes provider if threshold reached
  * @param {Error} error - The error that occurred
- * @param {string} provider - The provider name (Fireworks, LiteLLM)
+ * @param {string} providerId - The provider ID (litellm-gemini, litellm-gpt4o, fireworks)
  */
-function handlePrimaryFailure(error, provider) {
-  consecutiveFailures++;
-  logger.warn('[AI] %s failed (%d/%d): %s', provider, consecutiveFailures, getFailureThreshold(), error.message);
+function handleProviderFailure(error, providerId) {
+  providerState.failures[providerId] = (providerState.failures[providerId] || 0) + 1;
+  const failures = providerState.failures[providerId];
+  const threshold = getFailureThreshold();
 
-  if (consecutiveFailures >= getFailureThreshold()) {
-    fallbackActive = true;
-    fallbackStartTime = Date.now();
-    logger.warn('[AI] Switching to fallback for %d minutes', getCooldownMinutes());
+  logger.warn('[AI] %s failed (%d/%d): %s',
+    getProviderDisplayName(providerId), failures, threshold, error.message);
+
+  if (failures >= threshold && !isProviderDemoted(providerId)) {
+    // Demote this provider
+    const currentIndex = providerState.order.indexOf(providerId);
+    providerState.demoted[providerId] = {
+      demotedAt: Date.now(),
+      originalIndex: currentIndex
+    };
+
+    // Move provider to end of order
+    if (currentIndex !== -1) {
+      providerState.order.splice(currentIndex, 1);
+      providerState.order.push(providerId);
+    }
+
+    const newPrimary = getProviderDisplayName(providerState.order[0]);
+    logger.warn('[AI] CIRCUIT BREAKER ACTIVATED - %s demoted after %d failures',
+      getProviderDisplayName(providerId), failures);
+    logger.warn('[AI] %s is now PRIMARY for %d minutes',
+      newPrimary, getCooldownMinutes());
+    logger.info('[AI] New provider order: %s', providerState.order.map(getProviderDisplayName).join(' -> '));
   }
 }
 
 /**
- * Handle successful primary provider request
- * Resets failure counter
+ * Handle successful provider request
+ * Resets failure counter for that provider
+ * @param {string} providerId - The provider ID
  */
-function handlePrimarySuccess() {
-  if (consecutiveFailures > 0) {
-    logger.info('[AI] Primary provider recovered after %d failure(s)', consecutiveFailures);
+function handleProviderSuccess(providerId) {
+  const previousFailures = providerState.failures[providerId] || 0;
+  if (previousFailures > 0) {
+    logger.info('[AI] %s recovered after %d failure(s)',
+      getProviderDisplayName(providerId), previousFailures);
   }
-  consecutiveFailures = 0;
+  providerState.failures[providerId] = 0;
+}
+
+/**
+ * Get remaining cooldown time for a demoted provider
+ * @param {string} providerId - Provider ID
+ * @returns {number} Minutes remaining, or 0 if not demoted
+ */
+function getRemainingCooldown(providerId) {
+  if (!providerState.demoted[providerId]) return 0;
+  const cooldownMs = getCooldownMinutes() * 60 * 1000;
+  const elapsed = Date.now() - providerState.demoted[providerId].demotedAt;
+  return Math.max(0, Math.ceil((cooldownMs - elapsed) / 60000));
 }
 
 /**
@@ -284,31 +421,24 @@ function getShortModelName(model) {
 }
 
 /**
- * Get the configured vision model (based on current mode)
+ * Get the configured vision model (based on current primary provider)
  * @returns {string} Model name for vision analysis
  */
 function getVisionModel() {
-  if (isFireworksEnabled() && !shouldUseFallback()) {
-    return getFireworksModel();
-  }
-  if (isLiteLLMEnabled()) {
-    return getLiteLLMModel();
-  }
-  return getFireworksModel();
+  const order = getProviderOrder();
+  const primary = order[0];
+  if (primary === 'fireworks') return getFireworksModel();
+  if (primary === 'litellm-gemini') return getLiteLLMModel();
+  if (primary === 'litellm-gpt4o') return getLiteLLMFallbackModel();
+  return getLiteLLMModel();
 }
 
 /**
- * Get the configured text model (based on current mode)
+ * Get the configured text model (based on current primary provider)
  * @returns {string} Model name for text analysis
  */
 function getTextModel() {
-  if (isFireworksEnabled() && !shouldUseFallback()) {
-    return getFireworksModel();
-  }
-  if (isLiteLLMEnabled()) {
-    return getLiteLLMModel();
-  }
-  return getFireworksModel();
+  return getVisionModel(); // Same logic
 }
 
 /**
@@ -324,28 +454,56 @@ function getLiteLLMUser() {
  * @returns {Object} Current AI provider status
  */
 function getProviderStatus() {
-  let currentProvider = 'none';
-  if (isFireworksEnabled() && !shouldUseFallback()) {
-    currentProvider = 'fireworks';
-  } else if (isLiteLLMEnabled()) {
-    currentProvider = 'litellm';
-  }
-
+  const order = getProviderOrder();
   return {
     fireworksEnabled: isFireworksEnabled(),
     litellmEnabled: isLiteLLMEnabled(),
-    fallbackActive,
-    consecutiveFailures,
-    cooldownRemaining: fallbackActive
-      ? Math.max(0, getCooldownMinutes() * 60 * 1000 - (Date.now() - fallbackStartTime))
-      : 0,
-    currentProvider
+    providerOrder: order,
+    demotedProviders: Object.keys(providerState.demoted),
+    failures: { ...providerState.failures },
+    currentPrimary: order[0]
   };
 }
 
 /**
- * Execute a chat completion with 3-tier automatic fallback:
- * LiteLLM (Gemini) -> LiteLLM (GPT-4o) -> Fireworks (Qwen)
+ * Get provider configuration (client, model, display name)
+ * @param {string} providerId - Provider ID
+ * @returns {Object|null} Provider config or null if not available
+ */
+function getProviderConfig(providerId) {
+  switch (providerId) {
+    case 'litellm-gemini':
+      if (!isLiteLLMEnabled()) return null;
+      return {
+        client: getLiteLLMGeminiClient(),  // Uses LITELLM_GEMINI_API_KEY
+        model: getLiteLLMModel(),
+        displayName: 'Gemini',
+        useLiteLLMUser: true
+      };
+    case 'litellm-gpt4o':
+      if (!isLiteLLMEnabled()) return null;
+      return {
+        client: getLiteLLMOpenAIClient(),  // Uses LITELLM_OPENAI_API_KEY
+        model: getLiteLLMFallbackModel(),
+        displayName: 'GPT-4o',
+        useLiteLLMUser: true
+      };
+    case 'fireworks':
+      if (!isFireworksEnabled()) return null;
+      return {
+        client: getFireworksClient(),
+        model: getFireworksModel(),
+        displayName: 'Fireworks/Qwen',
+        useLiteLLMUser: false
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Execute a chat completion with dynamic fallback based on provider health.
+ * Providers are tried in order, with unhealthy providers automatically demoted.
  *
  * @param {Object} params - Chat completion parameters
  * @param {Array} params.messages - Messages array
@@ -358,113 +516,88 @@ async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tok
   const errors = [];
   const requestType = isVision ? 'vision' : 'text';
 
-  // Determine models
-  const litellmPrimaryModel = getLiteLLMModel();      // Gemini
-  const litellmFallbackModel = getLiteLLMFallbackModel(); // GPT-4o
-  const fireworksModel = getFireworksModel();         // Qwen
+  // Get current provider order (automatically checks for expired cooldowns)
+  const providerOrder = getProviderOrder();
 
-  // Check if circuit breaker is active (skip Gemini if too many recent failures)
-  const skipGemini = shouldUseFallback();
-  if (skipGemini) {
-    logger.info('[AI] Circuit breaker active - skipping Gemini, going directly to GPT-4o');
+  // Log current provider order if any are demoted
+  const demotedCount = Object.keys(providerState.demoted).length;
+  if (demotedCount > 0) {
+    const demotedNames = Object.keys(providerState.demoted).map(getProviderDisplayName).join(', ');
+    logger.info('[AI] Provider order: %s (demoted: %s)',
+      providerOrder.map(getProviderDisplayName).join(' -> '),
+      demotedNames);
   }
 
-  // === TIER 1: LiteLLM with Gemini (Primary) ===
-  if (isLiteLLMEnabled() && !skipGemini) {
-    const litellm = getLiteLLMClient();
-    if (litellm) {
-      try {
-        const startTime = Date.now();
-        logger.info('[AI] %s request via LiteLLM/Gemini (%s)', requestType, getShortModelName(litellmPrimaryModel));
+  // Try each provider in order
+  for (let i = 0; i < providerOrder.length; i++) {
+    const providerId = providerOrder[i];
+    const config = getProviderConfig(providerId);
 
-        const response = await litellm.chat.completions.create({
-          model: litellmPrimaryModel,
-          messages,
-          temperature,
-          max_tokens,
-          user: getLiteLLMUser()
-        });
+    // Skip if provider not available
+    if (!config || !config.client) continue;
 
-        const duration = Date.now() - startTime;
-        handlePrimarySuccess();
-        logger.info('[AI] %s request completed | LiteLLM/Gemini | %dms', requestType, duration);
+    const isFirstAttempt = i === 0;
+    const previousFailed = errors.length > 0;
 
-        return { response, provider: 'litellm-gemini', model: litellmPrimaryModel };
-      } catch (error) {
-        handlePrimaryFailure(error, 'LiteLLM/Gemini');
-        errors.push({ provider: 'litellm-gemini', error: error.message });
-        // Continue to GPT-4o fallback
+    try {
+      const startTime = Date.now();
+
+      // Log which provider we're trying
+      if (previousFailed) {
+        const failedProviders = errors.map(e => getProviderDisplayName(e.provider)).join(', ');
+        logger.info('[AI] %s request via %s (%s failed) (%s)',
+          requestType, config.displayName, failedProviders, getShortModelName(config.model));
+      } else {
+        logger.info('[AI] %s request via %s (%s)',
+          requestType, config.displayName, getShortModelName(config.model));
       }
-    }
-  }
 
-  // === TIER 2: LiteLLM with GPT-4o (Fallback 1) ===
-  if (isLiteLLMEnabled()) {
-    const litellm = getLiteLLMClient();
-    if (litellm) {
-      try {
-        const startTime = Date.now();
-        logger.info('[AI] %s request via LiteLLM/GPT-4o (Gemini failed) (%s)', requestType, getShortModelName(litellmFallbackModel));
-
-        const response = await litellm.chat.completions.create({
-          model: litellmFallbackModel,
-          messages,
-          temperature,
-          max_tokens,
-          user: getLiteLLMUser()
-        });
-
-        const duration = Date.now() - startTime;
-        logger.info('[AI] %s request completed | LiteLLM/GPT-4o | %dms', requestType, duration);
-
-        return { response, provider: 'litellm-gpt4o', model: litellmFallbackModel };
-      } catch (error) {
-        logger.warn('[AI] LiteLLM/GPT-4o failed: %s', error.message);
-        errors.push({ provider: 'litellm-gpt4o', error: error.message });
-        // Continue to Fireworks fallback
+      // Make the API call
+      const requestParams = {
+        model: config.model,
+        messages,
+        temperature,
+        max_tokens
+      };
+      if (config.useLiteLLMUser) {
+        requestParams.user = getLiteLLMUser();
       }
-    }
-  }
 
-  // === TIER 3: Fireworks (Fallback 2) ===
-  if (isFireworksEnabled()) {
-    const fireworks = getFireworksClient();
-    if (fireworks) {
-      try {
-        const startTime = Date.now();
-        logger.info('[AI] %s request via Fireworks (LiteLLM failed) (%s)', requestType, getShortModelName(fireworksModel));
+      const response = await config.client.chat.completions.create(requestParams);
 
-        const response = await fireworks.chat.completions.create({
-          model: fireworksModel,
-          messages,
-          temperature,
-          max_tokens
-        });
+      const duration = Date.now() - startTime;
 
-        const duration = Date.now() - startTime;
-        logger.info('[AI] %s request completed | Fireworks | %dms', requestType, duration);
+      // Success! Reset failure count for this provider
+      handleProviderSuccess(providerId);
 
-        // Log to Google Sheets (async, don't block response)
+      logger.info('[AI] %s request completed | %s | %dms', requestType, config.displayName, duration);
+
+      // Log to Google Sheets for Fireworks (async)
+      if (providerId === 'fireworks') {
         const usage = response.usage || {};
         logLLMRequest({
           apiCallName: requestType,
           provider: 'Fireworks',
-          model: fireworksModel,
+          model: config.model,
           inputTokens: usage.prompt_tokens || 0,
           outputTokens: usage.completion_tokens || 0
-        }).catch(() => {}); // Ignore logging errors
-
-        return { response, provider: 'fireworks', model: fireworksModel };
-      } catch (error) {
-        logger.error('[AI] Fireworks failed: %s', error.message);
-        errors.push({ provider: 'fireworks', error: error.message });
+        }).catch(() => {});
       }
+
+      return { response, provider: providerId, model: config.model };
+
+    } catch (error) {
+      // Track failure and potentially demote provider
+      handleProviderFailure(error, providerId);
+      errors.push({ provider: providerId, error: error.message });
+
+      // Continue to next provider in order
     }
   }
 
   // All providers failed
-  const errorMsg = errors.map(e => `${e.provider}: ${e.error}`).join('; ');
-  logger.error('[AI] All 3 providers failed: %s', errorMsg);
+  const errorMsg = errors.map(e => `${getProviderDisplayName(e.provider)}: ${e.error}`).join('; ');
+  logger.error('[AI] All providers failed: %s', errorMsg);
   throw new Error(`All AI providers failed: ${errorMsg}`);
 }
 
@@ -481,8 +614,9 @@ module.exports = {
   isAIEnabled,
   isFireworksEnabled,
   isLiteLLMEnabled,
-  shouldUseFallback,
   getProviderStatus,
+  getProviderOrder,
+  isProviderDemoted,
 
   // Model getters
   getVisionModel,
