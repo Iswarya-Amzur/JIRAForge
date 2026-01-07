@@ -531,6 +531,12 @@ async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tok
   // Try each provider in order
   for (let i = 0; i < providerOrder.length; i++) {
     const providerId = providerOrder[i];
+    
+    // Skip demoted providers (they're in the order but shouldn't be tried)
+    if (isProviderDemoted(providerId)) {
+      continue;
+    }
+    
     const config = getProviderConfig(providerId);
 
     // Skip if provider not available
