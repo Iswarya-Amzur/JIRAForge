@@ -2870,42 +2870,78 @@ class BRDTimeTracker:
         normalized = app_name.lower().replace('.exe', '').replace(' ', '').strip()
         return normalized
     
+    def is_in_whitelist(self, app_name):
+        """Check if app exists in whitelist (regardless of toggle state)
+
+        Used to determine if an app should be skipped when whitelist toggle is OFF.
+        """
+        whitelisted_apps = self.tracking_settings.get('whitelisted_apps', [])
+        if not whitelisted_apps:
+            return False
+
+        normalized_app = self.normalize_app_name(app_name)
+
+        for whitelist_entry in whitelisted_apps:
+            normalized_entry = self.normalize_app_name(whitelist_entry)
+            if normalized_entry in normalized_app or normalized_app in normalized_entry:
+                return True
+
+        return False
+
+    def is_in_blacklist(self, app_name):
+        """Check if app exists in blacklist (regardless of toggle state)
+
+        Used to determine if an app should be skipped when blacklist toggle is OFF.
+        """
+        blacklisted_apps = self.tracking_settings.get('blacklisted_apps', [])
+        if not blacklisted_apps:
+            return False
+
+        normalized_app = self.normalize_app_name(app_name)
+
+        for blacklist_entry in blacklisted_apps:
+            normalized_entry = self.normalize_app_name(blacklist_entry)
+            if normalized_entry in normalized_app or normalized_app in normalized_entry:
+                return True
+
+        return False
+
     def is_app_whitelisted(self, app_name):
         """Check if application is in whitelist (work apps)"""
         if not self.tracking_settings.get('whitelist_enabled', True):
             return True  # If whitelist disabled, allow all
-        
+
         whitelisted_apps = self.tracking_settings.get('whitelisted_apps', [])
         if not whitelisted_apps:
             return True  # Empty whitelist means allow all
-        
+
         normalized_app = self.normalize_app_name(app_name)
-        
+
         # Check if any whitelist entry matches
         for whitelist_entry in whitelisted_apps:
             normalized_entry = self.normalize_app_name(whitelist_entry)
             if normalized_entry in normalized_app or normalized_app in normalized_entry:
                 return True
-        
+
         return False
-    
+
     def is_app_blacklisted(self, app_name):
         """Check if application is in blacklist (non-work apps)"""
         if not self.tracking_settings.get('blacklist_enabled', True):
             return False  # If blacklist disabled, nothing is blacklisted
-        
+
         blacklisted_apps = self.tracking_settings.get('blacklisted_apps', [])
         if not blacklisted_apps:
             return False  # Empty blacklist means nothing blocked
-        
+
         normalized_app = self.normalize_app_name(app_name)
-        
+
         # Check if any blacklist entry matches
         for blacklist_entry in blacklisted_apps:
             normalized_entry = self.normalize_app_name(blacklist_entry)
             if normalized_entry in normalized_app or normalized_app in normalized_entry:
                 return True
-        
+
         return False
     
     def is_private_app(self, app_name, window_title=''):
@@ -2945,18 +2981,28 @@ class BRDTimeTracker:
     
     def should_skip_screenshot(self, app_name, window_title=''):
         """Check if screenshot should be skipped based on settings
-        
+
         Returns:
             tuple: (should_skip: bool, reason: str or None)
         """
         # Check if screenshot monitoring is disabled
         if not self.tracking_settings.get('screenshot_monitoring_enabled', True):
             return (True, 'screenshot_monitoring_disabled')
-        
+
         # Check if app is private (should not be recorded at all)
         if self.is_private_app(app_name, window_title):
             return (True, 'private_app')
-        
+
+        # Check if app is in whitelist but whitelist toggle is OFF
+        # When OFF, apps in the whitelist should NOT be tracked
+        if self.is_in_whitelist(app_name) and not self.tracking_settings.get('whitelist_enabled', True):
+            return (True, 'whitelist_disabled')
+
+        # Check if app is in blacklist but blacklist toggle is OFF
+        # When OFF, apps in the blacklist should NOT be tracked
+        if self.is_in_blacklist(app_name) and not self.tracking_settings.get('blacklist_enabled', True):
+            return (True, 'blacklist_disabled')
+
         return (False, None)
 
     def capture_screenshot(self):

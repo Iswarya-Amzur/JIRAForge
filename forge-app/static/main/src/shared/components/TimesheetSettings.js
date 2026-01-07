@@ -39,22 +39,27 @@ const COMMON_NON_WORK_APPS = [
   { name: 'Pinterest', value: 'pinterest' }
 ];
 
-// Interval marks for slider
+// Interval marks for slider (5 minute increments)
 const INTERVAL_MARKS = [
-  { value: 60, label: '1m' },
   { value: 300, label: '5m' },
   { value: 600, label: '10m' },
   { value: 900, label: '15m' },
+  { value: 1200, label: '20m' },
+  { value: 1500, label: '25m' },
   { value: 1800, label: '30m' },
+  { value: 2100, label: '35m' },
+  { value: 2400, label: '40m' },
   { value: 2700, label: '45m' },
-  { value: 3600, label: '1h' }
+  { value: 3000, label: '50m' },
+  { value: 3300, label: '55m' },
+  { value: 3600, label: '60m' }
 ];
 
 function TimesheetSettings() {
   const [settings, setSettings] = useState({
     // Screenshot Monitoring
     screenshotMonitoringEnabled: true,
-    screenshotIntervalSeconds: 900,
+    screenshotIntervalSeconds: 300,
 
     // Tracking Mode - Both can be enabled
     intervalTrackingEnabled: true,
@@ -238,14 +243,14 @@ function TimesheetSettings() {
               <div className="interval-slider-container">
                 <input
                   type="range"
-                  min="60"
+                  min="300"
                   max="3600"
-                  step="60"
+                  step="300"
                   value={settings.screenshotIntervalSeconds}
                   onChange={(e) => handleChange('screenshotIntervalSeconds', parseInt(e.target.value))}
                   className="interval-slider"
                   style={{
-                    background: `linear-gradient(to right, #36B37E 0%, #36B37E ${((settings.screenshotIntervalSeconds - 60) / (3600 - 60)) * 100}%, #DFE1E6 ${((settings.screenshotIntervalSeconds - 60) / (3600 - 60)) * 100}%, #DFE1E6 100%)`
+                    background: `linear-gradient(to right, #36B37E 0%, #36B37E ${((settings.screenshotIntervalSeconds - 300) / (3600 - 300)) * 100}%, #DFE1E6 ${((settings.screenshotIntervalSeconds - 300) / (3600 - 300)) * 100}%, #DFE1E6 100%)`
                   }}
                 />
                 <div className="interval-marks">
@@ -253,7 +258,7 @@ function TimesheetSettings() {
                     <span
                       key={mark.value}
                       className={`interval-mark ${settings.screenshotIntervalSeconds >= mark.value ? 'active' : ''}`}
-                      style={{ left: `${((mark.value - 60) / (3600 - 60)) * 100}%` }}
+                      style={{ left: `${((mark.value - 300) / (3600 - 300)) * 100}%` }}
                     >
                       {mark.label}
                     </span>

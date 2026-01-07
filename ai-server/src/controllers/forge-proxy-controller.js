@@ -84,8 +84,9 @@ exports.supabaseQuery = async (req, res) => {
     // Reserved PostgREST query parameters that should not be used as column names
     const RESERVED_PARAMS = ['order', 'limit', 'offset', 'select', 'on_conflict'];
 
-    // Apply filters from query object
-    if (query) {
+    // Apply filters from query object (only for GET/SELECT - PATCH/DELETE handle their own filters)
+    const upperMethod = (method || 'GET').toUpperCase();
+    if (query && (upperMethod === 'GET' || upperMethod === 'SELECT')) {
       for (const [key, value] of Object.entries(query)) {
         if (key === 'eq') {
           for (const [col, val] of Object.entries(value)) {
@@ -161,7 +162,7 @@ exports.supabaseQuery = async (req, res) => {
 
     // Execute based on method
     let result;
-    switch ((method || 'GET').toUpperCase()) {
+    switch (upperMethod) {
       case 'GET':
       case 'SELECT':
         result = await queryBuilder;
@@ -174,18 +175,44 @@ exports.supabaseQuery = async (req, res) => {
       case 'UPDATE':
         // Build update query with filters
         let updateBuilder = supabase.from(table).update(body);
+        // Apply eq filters
         if (query?.eq) {
           for (const [col, val] of Object.entries(query.eq)) {
             updateBuilder = updateBuilder.eq(col, val);
+          }
+        }
+        // Apply in filters (for bulk updates like id=in.(uuid1,uuid2,...))
+        if (query?.in) {
+          for (const [col, val] of Object.entries(query.in)) {
+            updateBuilder = updateBuilder.in(col, val);
+          }
+        }
+        // Apply is filters (for null checks)
+        if (query?.is) {
+          for (const [col, val] of Object.entries(query.is)) {
+            updateBuilder = updateBuilder.is(col, val);
           }
         }
         result = await updateBuilder.select();
         break;
       case 'DELETE':
         let deleteBuilder = supabase.from(table).delete();
+        // Apply eq filters
         if (query?.eq) {
           for (const [col, val] of Object.entries(query.eq)) {
             deleteBuilder = deleteBuilder.eq(col, val);
+          }
+        }
+        // Apply in filters (for bulk deletes like id=in.(uuid1,uuid2,...))
+        if (query?.in) {
+          for (const [col, val] of Object.entries(query.in)) {
+            deleteBuilder = deleteBuilder.in(col, val);
+          }
+        }
+        // Apply is filters (for null checks)
+        if (query?.is) {
+          for (const [col, val] of Object.entries(query.is)) {
+            deleteBuilder = deleteBuilder.is(col, val);
           }
         }
         result = await deleteBuilder;
