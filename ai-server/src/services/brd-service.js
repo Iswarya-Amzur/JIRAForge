@@ -52,11 +52,16 @@ exports.parseRequirements = async (text, context = {}) => {
       }
     ];
 
+    // Note: userId available from params, but not passed through currently
+    // Cost tracking will log without user context for BRD
     const { response, provider, model } = await chatCompletionWithFallback({
       messages,
       temperature: 0.3,
       max_tokens: 4000,
-      isVision: false
+      isVision: false,
+      userId: null, // Can be added if userId is passed to this function
+      organizationId: null,
+      screenshotId: null
     });
 
     const content = response.choices[0].message.content.trim();

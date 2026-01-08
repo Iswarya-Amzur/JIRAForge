@@ -185,11 +185,15 @@ KEY RULES:
     ];
 
     // Use unified request with automatic fallback
+    // Note: userId not available in clustering context, cost tracking will log without user
     const { response, provider, model } = await chatCompletionWithFallback({
       messages,
       temperature: 0.2,
       max_tokens: 4000,
-      isVision: false
+      isVision: false,
+      userId: null, // Clustering doesn't have user context
+      organizationId: null,
+      screenshotId: null
     });
 
     const responseText = response.choices[0].message.content.trim();

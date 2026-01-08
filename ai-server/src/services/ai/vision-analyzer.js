@@ -18,9 +18,12 @@ const logger = require('../../utils/logger');
  * @param {string} params.windowTitle - Window title
  * @param {string} params.applicationName - Application name
  * @param {Array} params.userAssignedIssues - User's assigned Jira issues
+ * @param {string} params.userId - User ID for cost tracking (optional)
+ * @param {string} params.organizationId - Organization ID for cost tracking (optional)
+ * @param {string} params.screenshotId - Screenshot ID for cost tracking (optional)
  * @returns {Promise<Object>} Analysis result
  */
-async function analyzeWithVision({ imageBuffer, windowTitle, applicationName, userAssignedIssues = [] }) {
+async function analyzeWithVision({ imageBuffer, windowTitle, applicationName, userAssignedIssues = [], userId = null, organizationId = null, screenshotId = null }) {
   if (!isAIEnabled()) {
     throw new Error('AI client not initialized - check API keys');
   }
@@ -65,7 +68,10 @@ async function analyzeWithVision({ imageBuffer, windowTitle, applicationName, us
       messages,
       temperature: 0.3,
       max_tokens: 800,
-      isVision: true
+      isVision: true,
+      userId: userId,
+      organizationId: organizationId,
+      screenshotId: screenshotId
     });
 
     const content = response.choices[0].message.content.trim();

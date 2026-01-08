@@ -30,9 +30,11 @@ function isOCRFallbackEnabled() {
  * @param {string} params.timestamp - Timestamp of the screenshot
  * @param {string} params.userId - User ID
  * @param {Array} params.userAssignedIssues - User's assigned Jira issues
+ * @param {string} params.organizationId - Organization ID (optional)
+ * @param {string} params.screenshotId - Screenshot ID (optional)
  * @returns {Promise<Object>} Analysis result
  */
-exports.analyzeActivity = async ({ imageBuffer, windowTitle, applicationName, timestamp, userId, userAssignedIssues = [] }) => {
+exports.analyzeActivity = async ({ imageBuffer, windowTitle, applicationName, timestamp, userId, userAssignedIssues = [], organizationId = null, screenshotId = null }) => {
   try {
     // Calculate time spent (based on screenshot interval)
     const timeSpentSeconds = parseInt(process.env.SCREENSHOT_INTERVAL || '300');
@@ -47,7 +49,10 @@ exports.analyzeActivity = async ({ imageBuffer, windowTitle, applicationName, ti
           imageBuffer,
           windowTitle,
           applicationName,
-          userAssignedIssues
+          userAssignedIssues,
+          userId: userId,
+          organizationId: organizationId,
+          screenshotId: screenshotId
         });
         const providerName = visionAnalysis.aiProvider || 'AI';
         const modelName = visionAnalysis.aiModel || 'unknown';
@@ -76,7 +81,10 @@ exports.analyzeActivity = async ({ imageBuffer, windowTitle, applicationName, ti
           imageBuffer,
           windowTitle,
           applicationName,
-          userAssignedIssues
+          userAssignedIssues,
+          userId: userId,
+          organizationId: organizationId,
+          screenshotId: screenshotId
         });
         const ocrProviderName = visionAnalysis.aiProvider || 'AI';
         const ocrModelName = visionAnalysis.aiModel || 'unknown';

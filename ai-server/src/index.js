@@ -318,6 +318,10 @@ async function startServer() {
       // Initialize Google Sheets logger for LLM usage tracking
       initializeSheetsLogger();
 
+      // Initialize cost tracker for Sheet 2 (cost tracking)
+      const { initializeCostTracker } = require('./services/cost-tracker');
+      initializeCostTracker();
+
       // Step 1: Start clustering service first (includes startup clustering if needed)
       // This runs any missed clustering before we start processing new screenshots
       logger.info('Initializing clustering service...');

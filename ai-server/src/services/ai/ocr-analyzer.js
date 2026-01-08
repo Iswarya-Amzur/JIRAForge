@@ -54,9 +54,12 @@ async function extractText(imageBuffer) {
  * @param {string} params.windowTitle - Window title
  * @param {string} params.applicationName - Application name
  * @param {Array} params.userAssignedIssues - User's assigned Jira issues
+ * @param {string} params.userId - User ID for cost tracking (optional)
+ * @param {string} params.organizationId - Organization ID for cost tracking (optional)
+ * @param {string} params.screenshotId - Screenshot ID for cost tracking (optional)
  * @returns {Promise<Object>} Analysis result
  */
-async function analyzeWithOCR({ extractedText, windowTitle, applicationName, userAssignedIssues = [] }) {
+async function analyzeWithOCR({ extractedText, windowTitle, applicationName, userAssignedIssues = [], userId = null, organizationId = null, screenshotId = null }) {
   if (!isAIEnabled()) {
     throw new Error('AI client not initialized - check API keys');
   }
@@ -85,7 +88,10 @@ async function analyzeWithOCR({ extractedText, windowTitle, applicationName, use
       messages,
       temperature: 0.3,
       max_tokens: 300,
-      isVision: false
+      isVision: false,
+      userId: userId,
+      organizationId: organizationId,
+      screenshotId: screenshotId
     });
 
     const content = response.choices[0].message.content.trim();
@@ -127,9 +133,12 @@ async function analyzeWithOCR({ extractedText, windowTitle, applicationName, use
  * @param {string} params.windowTitle - Window title
  * @param {string} params.applicationName - Application name
  * @param {Array} params.userAssignedIssues - User's assigned Jira issues
+ * @param {string} params.userId - User ID for cost tracking (optional)
+ * @param {string} params.organizationId - Organization ID for cost tracking (optional)
+ * @param {string} params.screenshotId - Screenshot ID for cost tracking (optional)
  * @returns {Promise<Object>} Analysis result with extractedText included
  */
-async function analyzeWithOCRPipeline({ imageBuffer, windowTitle, applicationName, userAssignedIssues = [] }) {
+async function analyzeWithOCRPipeline({ imageBuffer, windowTitle, applicationName, userAssignedIssues = [], userId = null, organizationId = null, screenshotId = null }) {
   // Step 1: Extract text from image
   const extractedText = await extractText(imageBuffer);
 
@@ -138,7 +147,10 @@ async function analyzeWithOCRPipeline({ imageBuffer, windowTitle, applicationNam
     extractedText,
     windowTitle,
     applicationName,
-    userAssignedIssues
+    userAssignedIssues,
+    userId: userId,
+    organizationId: organizationId,
+    screenshotId: screenshotId
   });
 
   // Add extracted text to result

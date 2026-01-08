@@ -11,6 +11,7 @@
 const OpenAI = require('openai');
 const logger = require('../../utils/logger');
 const { logLLMRequest } = require('../sheets-logger');
+const { logCostTracking } = require('../cost-tracker');
 
 // Client instances
 let fireworksClient = null;
@@ -510,9 +511,12 @@ function getProviderConfig(providerId) {
  * @param {number} params.temperature - Temperature setting (default: 0.3)
  * @param {number} params.max_tokens - Max tokens (default: 800)
  * @param {boolean} params.isVision - Whether this is a vision request (default: false)
+ * @param {string} params.userId - User ID for cost tracking (optional)
+ * @param {string} params.organizationId - Organization ID for cost tracking (optional)
+ * @param {string} params.screenshotId - Screenshot ID for cost tracking (optional)
  * @returns {Promise<Object>} { response, provider, model }
  */
-async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tokens = 800, isVision = false }) {
+async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tokens = 800, isVision = false, userId = null, organizationId = null, screenshotId = null }) {
   const errors = [];
   const requestType = isVision ? 'vision' : 'text';
 
@@ -578,7 +582,7 @@ async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tok
 
       logger.info('[AI] %s request completed | %s | %dms', requestType, config.displayName, duration);
 
-      // Log to Google Sheets for Fireworks (async)
+      // Log to Google Sheets for Fireworks (async) - existing logging
       if (providerId === 'fireworks') {
         const usage = response.usage || {};
         logLLMRequest({
@@ -589,6 +593,20 @@ async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tok
           outputTokens: usage.completion_tokens || 0
         }).catch(() => {});
       }
+
+      // Log cost tracking to Sheet 2 for ALL providers (async)
+      const usage = response.usage || {};
+      logCostTracking({
+        userId: userId,
+        apiCallName: requestType,
+        provider: providerId,
+        model: config.model,
+        inputTokens: usage.prompt_tokens || 0,
+        outputTokens: usage.completion_tokens || 0,
+        duration: duration,
+        organizationId: organizationId,
+        screenshotId: screenshotId
+      }).catch(() => {}); // Don't fail if cost tracking fails
 
       return { response, provider: providerId, model: config.model };
 

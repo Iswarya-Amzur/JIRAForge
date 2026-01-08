@@ -84,7 +84,9 @@ exports.analyzeScreenshot = async (req, res) => {
       applicationName: application_name,
       timestamp,
       userId: user_id,
-      userAssignedIssues: parsedAssignedIssues || [] // Pass assigned issues to analysis
+      userAssignedIssues: parsedAssignedIssues || [], // Pass assigned issues to analysis
+      organizationId: resolvedOrganizationId, // Pass organization ID for cost tracking
+      screenshotId: screenshot_id // Pass screenshot ID for cost tracking
     });
 
     // Use actual duration from desktop app if available, otherwise use AI's calculated value
