@@ -4,7 +4,7 @@
  */
 
 import { getSupabaseConfig, getOrCreateOrganization, supabaseRequest } from '../../utils/supabase.js';
-import { checkUserPermissions } from '../../utils/jira.js';
+import { checkUserPermissions, isJiraAdmin } from '../../utils/jira.js';
 import { MAX_DAILY_SUMMARY_DAYS, MAX_ISSUES_IN_ANALYTICS } from '../../config/constants.js';
 
 /**
@@ -15,11 +15,12 @@ import { MAX_DAILY_SUMMARY_DAYS, MAX_ISSUES_IN_ANALYTICS } from '../../config/co
  * @returns {Promise<Object>} Project analytics data
  */
 export async function fetchProjectAnalytics(accountId, cloudId, projectKey) {
-  // 1. Check Project Admin Permission
+  // 1. Check Project Admin Permission or Jira Admin
+  const isAdmin = await isJiraAdmin();
   const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS'], projectKey);
   const hasPermission = permissions.permissions?.ADMINISTER_PROJECTS?.havePermission;
 
-  if (!hasPermission) {
+  if (!isAdmin && !hasPermission) {
     throw new Error(`Access denied: You are not an administrator for project ${projectKey}`);
   }
 
@@ -64,11 +65,12 @@ export async function fetchProjectAnalytics(accountId, cloudId, projectKey) {
  * @returns {Promise<Object>} Team analytics data for the project
  */
 export async function fetchProjectTeamAnalytics(accountId, cloudId, projectKey) {
-  // 1. Check Project Admin Permission
+  // 1. Check Project Admin Permission or Jira Admin
+  const isAdmin = await isJiraAdmin();
   const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS'], projectKey);
   const hasPermission = permissions.permissions?.ADMINISTER_PROJECTS?.havePermission;
 
-  if (!hasPermission) {
+  if (!isAdmin && !hasPermission) {
     throw new Error(`Access denied: You are not an administrator for project ${projectKey}`);
   }
 
@@ -94,15 +96,22 @@ export async function fetchProjectTeamAnalytics(accountId, cloudId, projectKey) 
     `users?organization_id=eq.${organization.id}&select=id,display_name,email,is_active`
   );
 
-  const timeByIssue = await supabaseRequest(
+  // Get all unique users who have ever worked on this project (not just last 30 days)
+  const allProjectUsers = await supabaseRequest(
     supabaseConfig,
-    `analysis_results?organization_id=eq.${organization.id}&active_project_key=eq.${projectKey}&work_type=eq.office&active_task_key=not.is.null&select=active_task_key,user_id,screenshots(duration_seconds)&order=created_at.desc&limit=200`
+    `daily_time_summary?organization_id=eq.${organization.id}&project_key=eq.${projectKey}&select=user_id&order=work_date.desc&limit=1000`
+  );
+
+  // Get time by issue from daily_time_summary (properly aggregated)
+  const timeByIssueData = await supabaseRequest(
+    supabaseConfig,
+    `daily_time_summary?organization_id=eq.${organization.id}&project_key=eq.${projectKey}&task_key=not.is.null&select=task_key,user_id,total_seconds&order=work_date.desc&limit=2000`
   );
 
   // Aggregate time by issue (across all team members)
   const issueAggregation = {};
-  timeByIssue.forEach(result => {
-    const key = result.active_task_key;
+  (timeByIssueData || []).forEach(result => {
+    const key = result.task_key;
     if (!issueAggregation[key]) {
       issueAggregation[key] = {
         issueKey: key,
@@ -110,7 +119,7 @@ export async function fetchProjectTeamAnalytics(accountId, cloudId, projectKey) 
         userCount: new Set()
       };
     }
-    issueAggregation[key].totalSeconds += result.screenshots?.duration_seconds || 0;
+    issueAggregation[key].totalSeconds += result.total_seconds || 0;
     if (result.user_id) {
       issueAggregation[key].userCount.add(result.user_id);
     }
@@ -175,7 +184,11 @@ export async function fetchProjectTeamAnalytics(accountId, cloudId, projectKey) 
   };
 
   // === Calculate Team Member Activity (Today/Week/Month) ===
-  const projectUserIds = new Set(teamDailySummary.map(d => d.user_id));
+  // Use all project users, not just those in the last 30 days
+  const projectUserIds = new Set([
+    ...(teamDailySummary || []).map(d => d.user_id),
+    ...(allProjectUsers || []).map(d => d.user_id)
+  ]);
 
   const teamMemberActivity = Array.from(projectUserIds).map(userId => {
     const userInfo = (allUsers || []).find(u => u.id === userId);

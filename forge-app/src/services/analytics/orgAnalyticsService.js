@@ -114,7 +114,16 @@ export async function fetchAllAnalytics(accountId, cloudId) {
   ).size;
   const projectsChange = activeProjectsThisMonth - activeProjectsLastMonth;
 
-  // Build project portfolio with contributor counts and trends
+  // Calculate date thresholds for activity status
+  const sevenDaysAgo = new Date(now);
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const sevenDaysAgoStr = formatDate(sevenDaysAgo);
+  
+  const thirtyDaysAgo = new Date(now);
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const thirtyDaysAgoStr = formatDate(thirtyDaysAgo);
+
+  // Build project portfolio with contributor counts and activity-based status
   const projectPortfolio = (timeByProject || [])
     .filter(project => {
       const isValid = validJiraProjectKeys.has(project.project_key);
@@ -124,31 +133,45 @@ export async function fetchAllAnalytics(accountId, cloudId) {
       return isValid;
     })
     .map(project => {
-      const projectThisMonth = thisMonthData.filter(d => d.project_key === project.project_key);
-      const projectLastMonth = lastMonthData.filter(d => d.project_key === project.project_key);
+      const projectAllTime = (dailySummary || []).filter(d => d.project_key === project.project_key);
 
-      const hoursThisMonth = projectThisMonth.reduce((sum, d) => sum + (d.total_seconds || 0), 0) / 3600;
-      const hoursLastMonth = projectLastMonth.reduce((sum, d) => sum + (d.total_seconds || 0), 0) / 3600;
+      // Find last active date
+      const lastActivityRecord = projectAllTime.length > 0 ? projectAllTime[0] : null;
+      const lastActiveDate = lastActivityRecord 
+        ? new Date(typeof lastActivityRecord.work_date === 'string' 
+            ? lastActivityRecord.work_date.split('T')[0] 
+            : String(lastActivityRecord.work_date)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        : null;
 
-      const trendPercent = hoursLastMonth > 0
-        ? Math.round((hoursThisMonth - hoursLastMonth) / hoursLastMonth * 100)
-        : (hoursThisMonth > 0 ? 100 : 0);
+      // Determine activity status based on recent activity
+      let activityStatus = 'inactive';
+      if (lastActivityRecord) {
+        const lastDate = typeof lastActivityRecord.work_date === 'string' 
+          ? lastActivityRecord.work_date.split('T')[0] 
+          : String(lastActivityRecord.work_date);
+        
+        if (lastDate >= sevenDaysAgoStr) {
+          activityStatus = 'active';
+        } else if (lastDate >= thirtyDaysAgoStr) {
+          activityStatus = 'moderate';
+        }
+      }
 
-      const contributorCount = new Set(projectThisMonth.map(d => d.user_id)).size;
-      const issueCount = new Set(projectThisMonth.map(d => d.active_task_key).filter(Boolean)).size;
-
-      let status = 'healthy';
-      if (trendPercent < -20) status = 'critical';
-      else if (trendPercent < 0) status = 'warning';
+      // All-time totals from project_time_summary view
+      const totalHours = Math.round((project.total_seconds || 0) / 3600 * 10) / 10;
+      const contributorCount = project.unique_users || 0;
+      
+      // All-time issue count from all daily summaries
+      const issueCount = new Set(projectAllTime.map(d => d.task_key || d.active_task_key).filter(Boolean)).size;
 
       return {
         projectKey: project.project_key,
-        totalHours: Math.round(hoursThisMonth * 10) / 10,
+        totalHours,
         totalSeconds: project.total_seconds || 0,
         contributorCount,
         issueCount,
-        trendPercent,
-        status
+        lastActiveDate,
+        activityStatus
       };
     }).filter(p => p.totalHours > 0 || p.totalSeconds > 0);
 

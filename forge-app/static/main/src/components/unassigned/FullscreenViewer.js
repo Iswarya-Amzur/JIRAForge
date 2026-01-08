@@ -20,7 +20,7 @@ function FullscreenViewer({
           ✕ Close
         </button>
         <img
-          src={currentScreenshot?.signed_thumbnail_url}
+          src={currentScreenshot?.signed_url}
           alt={`Screenshot ${currentIndex + 1}`}
           className="fullscreen-image"
           onClick={(e) => e.stopPropagation()}

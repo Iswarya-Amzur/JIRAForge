@@ -7,9 +7,9 @@ import React from 'react';
 function ProjectPortfolioTable({ projects = [] }) {
   const getStatusLabel = (status) => {
     switch (status) {
-      case 'healthy': return 'Healthy';
-      case 'warning': return 'Warning';
-      case 'critical': return 'Critical';
+      case 'active': return 'Active';
+      case 'moderate': return 'Moderate';
+      case 'inactive': return 'Inactive';
       default: return status;
     }
   };
@@ -18,7 +18,7 @@ function ProjectPortfolioTable({ projects = [] }) {
     <div className="org-portfolio-section">
       <div className="portfolio-header">
         <h3>Project Portfolio Details</h3>
-        <span className="portfolio-subtitle">Complete breakdown of project activity this month</span>
+        <span className="portfolio-subtitle">Complete breakdown of all project activity</span>
       </div>
       <div className="portfolio-table-container">
         <table className="portfolio-table">
@@ -28,8 +28,8 @@ function ProjectPortfolioTable({ projects = [] }) {
               <th>Total Hours</th>
               <th>Contributors</th>
               <th>Issues Worked</th>
-              <th>Trend</th>
-              <th>Status</th>
+              <th>Last Active</th>
+              <th>Activity Status</th>
             </tr>
           </thead>
           <tbody>
@@ -52,14 +52,12 @@ function ProjectPortfolioTable({ projects = [] }) {
                   <td className="issues-cell">
                     {project.issueCount}
                   </td>
-                  <td className={`trend-cell ${project.trendPercent >= 0 ? 'positive' : 'negative'}`}>
-                    <span className="trend-value">
-                      {project.trendPercent >= 0 ? '↑' : '↓'} {Math.abs(project.trendPercent)}%
-                    </span>
+                  <td className="last-active-cell">
+                    {project.lastActiveDate || 'Unknown'}
                   </td>
                   <td className="status-cell">
-                    <span className={`status-indicator status-${project.status}`}>
-                      {getStatusLabel(project.status)}
+                    <span className={`status-indicator status-${project.activityStatus}`}>
+                      {getStatusLabel(project.activityStatus)}
                     </span>
                   </td>
                 </tr>

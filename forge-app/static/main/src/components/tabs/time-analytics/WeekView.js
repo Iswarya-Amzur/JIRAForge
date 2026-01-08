@@ -7,6 +7,34 @@ import { normalizeDate, formatLocalDate, getWeekDates } from './dateUtils';
  * Displays weekly timesheet with table layout
  */
 function WeekView({ loading, timeData }) {
+  // Helper function to get user initials
+  const getInitials = (name) => {
+    if (!name) return '?';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return name.substring(0, 2).toUpperCase();
+  };
+
+  // Helper function to generate consistent avatar colors
+  const getAvatarColor = (name) => {
+    const colors = [
+      '#0052CC', // Blue
+      '#00875A', // Green
+      '#FF5630', // Red
+      '#6554C0', // Purple
+      '#FF991F', // Orange
+      '#00B8D9', // Cyan
+      '#36B37E', // Teal
+      '#FFAB00', // Yellow
+    ];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
+  };
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayStr = formatLocalDate(today);
@@ -104,8 +132,12 @@ function WeekView({ loading, timeData }) {
                     {users.map((user, idx) => (
                       <tr key={idx}>
                         <td className="member-name-cell">
-                          <div className="member-avatar-small">
-                            {user.name.charAt(0)}
+                          <div 
+                            className="member-avatar-small"
+                            style={{ backgroundColor: getAvatarColor(user.name) }}
+                            title={user.name}
+                          >
+                            {getInitials(user.name)}
                           </div>
                           {user.name}
                         </td>

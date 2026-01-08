@@ -11,6 +11,27 @@ function TeamAnalyticsTab() {
   const [error, setError] = useState(null);
   const [teamAnalytics, setTeamAnalytics] = useState(null);
 
+  const getInitials = (name) => {
+    if (!name) return '?';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return name.substring(0, 2).toUpperCase();
+  };
+
+  const getAvatarColor = (name) => {
+    const colors = [
+      '#0052CC', '#00875A', '#FF5630', '#6554C0',
+      '#FF991F', '#00B8D9', '#36B37E', '#FFAB00',
+    ];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
+  };
+
   useEffect(() => {
     if (selectedProjectKey) {
       loadTeamAnalytics();
@@ -230,7 +251,13 @@ function TeamAnalyticsTab() {
                       teamAnalytics.teamMemberActivity.map((member, idx) => (
                         <tr key={idx}>
                           <td className="member-name-cell">
-                            <span className="member-avatar">👤</span>
+                            <div 
+                              className="member-avatar"
+                              style={{ backgroundColor: getAvatarColor(member.displayName) }}
+                              title={member.displayName}
+                            >
+                              {getInitials(member.displayName)}
+                            </div>
                             <span className="member-name">{member.displayName}</span>
                           </td>
                           <td className="hours-cell"><strong>{member.todayHours}h</strong></td>

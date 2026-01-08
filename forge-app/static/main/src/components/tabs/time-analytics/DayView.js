@@ -7,6 +7,34 @@ import { normalizeDate, formatLocalDate } from './dateUtils';
  * Displays today's timesheet with team member cards
  */
 function DayView({ loading, timeData }) {
+  // Helper function to get user initials
+  const getInitials = (name) => {
+    if (!name) return '?';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return name.substring(0, 2).toUpperCase();
+  };
+
+  // Helper function to generate consistent avatar colors
+  const getAvatarColor = (name) => {
+    const colors = [
+      '#0052CC', // Blue
+      '#00875A', // Green
+      '#FF5630', // Red
+      '#6554C0', // Purple
+      '#FF991F', // Orange
+      '#00B8D9', // Cyan
+      '#36B37E', // Teal
+      '#FFAB00', // Yellow
+    ];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
+  };
   const today = new Date();
   const todayStr = formatLocalDate(today);
 
@@ -78,8 +106,12 @@ function DayView({ loading, timeData }) {
             return users.map((user, idx) => (
               <div key={idx} className="team-member-card">
                 <div className="member-header">
-                  <div className="member-avatar">
-                    {(user.displayName || 'U').charAt(0).toUpperCase()}
+                  <div 
+                    className="member-avatar"
+                    style={{ backgroundColor: getAvatarColor(user.displayName) }}
+                    title={user.displayName}
+                  >
+                    {getInitials(user.displayName)}
                   </div>
                   <div className="member-info">
                     <span className="member-name">{user.displayName}</span>

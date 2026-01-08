@@ -5,6 +5,34 @@ import React from 'react';
  * Displays team member activity overview
  */
 function UserActivityTable({ users = [] }) {
+  const getInitials = (name) => {
+    if (!name) return '?';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return name.substring(0, 2).toUpperCase();
+  };
+
+  const getAvatarColor = (name) => {
+    // Generate a consistent color based on the name
+    const colors = [
+      '#0052CC', // Blue
+      '#00875A', // Green
+      '#FF5630', // Red
+      '#6554C0', // Purple
+      '#FF991F', // Orange
+      '#00B8D9', // Cyan
+      '#36B37E', // Teal
+      '#FFAB00', // Yellow
+    ];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
+  };
+
   const getTodayDateStr = () => {
     return new Date().toLocaleDateString('en-US', {
       weekday: 'long',
@@ -73,7 +101,13 @@ function UserActivityTable({ users = [] }) {
               users.map((user, idx) => (
                 <tr key={idx}>
                   <td className="user-name-cell">
-                    <span className="user-avatar">👤</span>
+                    <div 
+                      className="user-avatar"
+                      style={{ backgroundColor: getAvatarColor(user.displayName) }}
+                      title={user.displayName}
+                    >
+                      {getInitials(user.displayName)}
+                    </div>
                     <span className="user-name">{user.displayName}</span>
                   </td>
                   <td className="hours-cell">
