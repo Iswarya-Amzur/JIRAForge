@@ -1,21 +1,18 @@
 /* Time Analytics Tab Styles */
 
 .time-analytics {
-  background: var(--ds-background-neutral);
+  background: #fff;
   min-height: calc(100vh - 100px);
+  padding: var(--ds-space-200);
 }
 
 .time-analytics > h2 {
-  font-size: 24px;
-  font-weight: 600;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
   color: var(--ds-text);
-  margin: 0 0 var(--ds-space-100) 0;
   letter-spacing: -0.3px;
-  padding: var(--ds-space-300) var(--ds-space-400);
-  background: var(--ds-background-default);
-  border-bottom: 1px solid var(--ds-border);
-  margin: -24px -24px var(--ds-space-300) -24px;
-  padding-bottom: var(--ds-space-300);
+  margin-bottom: 16px;
 }
 
 /* Download Banner */
@@ -23,48 +20,70 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--ds-space-300);
-  padding: var(--ds-space-200) var(--ds-space-300);
-  background: linear-gradient(135deg, #DEEBFF 0%, #B3D4FF 100%);
-  border: 1px solid #B3D4FF;
+  gap: 16px;
+  background: #EDF4FF;
+  border: none;
   border-radius: 8px;
-  margin-bottom: var(--ds-space-300);
+  padding: 20px;
+  margin-bottom: 24px;
+  box-shadow: rgba(99, 99, 99, 0.2) 0px 2px 8px 0px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.download-banner:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 2px 6px rgba(161, 161, 161, 0.2);
 }
 
 .download-banner-content {
   display: flex;
   align-items: center;
-  gap: var(--ds-space-200);
+  gap: 16px;
 }
 
 .download-banner-icon {
-  font-size: 28px;
-  line-height: 1;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #5244a8;
+  border-radius: 100%;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.download-banner-icon svg {
+  width: 24px;
+  height: 24px;
 }
 
 .download-banner-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .download-banner-title {
   font-size: 15px;
   font-weight: 600;
   color: var(--ds-text);
+  letter-spacing: -0.1px;
 }
 
 .download-banner-subtitle {
   font-size: 13px;
   color: var(--ds-text-subtle);
+  font-weight: 400;
+  line-height: 1.4;
 }
 
 .download-button {
   display: inline-flex;
   align-items: center;
-  gap: var(--ds-space-100);
-  padding: var(--ds-space-150) var(--ds-space-300);
-  background: var(--ds-background-brand-bold);
+  gap: 8px;
+  padding: 10px 20px;
+  background: #5244a8;
   color: white;
   font-size: 14px;
   font-weight: 600;
@@ -74,24 +93,25 @@
   cursor: pointer;
   transition: all 0.2s ease;
   white-space: nowrap;
-  box-shadow: 0 2px 4px rgba(0, 82, 204, 0.3);
+  box-shadow: none;
 }
 
 .download-button:hover {
-  background: #0747A6;
+  background: #4338a0;
   transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(0, 82, 204, 0.4);
+  box-shadow: 0 4px 8px rgba(82, 68, 168, 0.3);
   color: white;
   text-decoration: none;
 }
 
 .download-button:active {
   transform: translateY(0);
-  box-shadow: 0 1px 2px rgba(0, 82, 204, 0.3);
+  box-shadow: none;
 }
 
-.download-icon {
-  font-size: 16px;
+.download-button svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* Responsive adjustments for download banner */
@@ -115,88 +135,117 @@
 /* Analytics Summary Cards */
 .analytics-summary-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: var(--ds-space-200);
-  margin-bottom: var(--ds-space-300);
-  padding: 0 var(--ds-space-100);
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+@media (max-width: 1200px) {
+  .analytics-summary-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .analytics-summary-cards {
+    grid-template-columns: 1fr;
+  }
 }
 
 .cumulative-card {
-  text-align: center;
-  background: var(--ds-background-default);
-  border: 1px solid var(--ds-border);
+  background: white;
   border-radius: 8px;
-  padding: var(--ds-space-200) var(--ds-space-300);
-  box-shadow: 0 1px 3px rgba(9, 30, 66, 0.08);
-  border-top: 3px solid var(--ds-background-brand-bold);
+  padding: 20px;
+  box-shadow: rgba(99, 99, 99, 0.2) 0px 2px 8px 0px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  text-align: center;
 }
 
 .cumulative-card:hover {
-  box-shadow: 0 4px 8px rgba(9, 30, 66, 0.12);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 2px 6px rgba(161, 161, 161, 0.2);
+}
+
+/* Individual card color themes */
+.cumulative-card:nth-child(1) {
+  background: #EDF4FF;
+}
+
+.cumulative-card:nth-child(2) {
+  background: #FFF5E6;
+}
+
+.cumulative-card:nth-child(3) {
+  background: #E8F7F0;
 }
 
 .cumulative-card h3 {
-  margin-bottom: var(--ds-space-100);
+  margin-bottom: 8px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.6px;
   color: var(--ds-text-subtle);
+  margin-top: 0;
 }
 
 .cumulative-card .stat-value {
   font-size: 32px;
   font-weight: 700;
-  color: var(--ds-text-brand);
+  color: var(--ds-text);
+  line-height: 1.1;
+  letter-spacing: -0.5px;
 }
 
 .cumulative-card .cumulative-stat {
-  padding: var(--ds-space-100) 0;
+  padding: 8px 0;
 }
 
 /* Timesheet Tabs */
 .timesheet-tabs {
   display: flex;
-  gap: var(--ds-space-050);
-  margin: 0 0 var(--ds-space-200) 0;
-  padding: var(--ds-space-050);
-  background: var(--ds-background-neutral-subtle);
-  border-radius: 8px;
-  width: fit-content;
+  gap: var(--ds-space-100);
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--ds-border);
+  padding-bottom: 0;
+  background: #ffffff;
+  padding: 0 16px;
+  padding-top: 16px;
+  border-radius: 8px 8px 0 0;
+  box-shadow: rgba(99, 99, 99, 0.2) 0px 2px 8px 0px;
 }
 
 .timesheet-tab {
-  padding: var(--ds-space-100) var(--ds-space-300);
-  background: transparent;
   border: none;
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
   cursor: pointer;
   font-size: 14px;
-  font-weight: 500;
-  color: var(--ds-text-subtle);
+  font-weight: 600;
+  padding: 10px 16px;
   transition: all 0.2s ease;
-  border-radius: 6px;
+  color: var(--ds-text);
+  background: transparent;
 }
 
 .timesheet-tab:hover {
+  background: var(--ds-background-neutral);
   color: var(--ds-text);
-  background: var(--ds-background-default);
 }
 
 .timesheet-tab.active {
-  color: var(--ds-text-inverse);
-  background: var(--ds-background-brand-bold);
-  font-weight: 600;
-  box-shadow: 0 1px 3px rgba(0, 82, 204, 0.3);
+  background: #5244a8;
+  box-shadow: none;
+  color: #fff;
 }
 
 /* Timesheet Content */
 .timesheet-content {
-  padding: var(--ds-space-300);
-  background: var(--ds-background-default);
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(9, 30, 66, 0.08);
-  border: 1px solid var(--ds-border);
+  padding: 16px;
+  background: #ffffff;
+  border-radius: 0 0 8px 8px;
+  box-shadow: rgba(99, 99, 99, 0.2) 0px 2px 8px 0px;
+  border: none;
 }
 
 .timesheet-day-view,
@@ -244,12 +293,14 @@
   cursor: pointer;
   transition: all 0.2s ease;
   color: var(--ds-text-subtle);
+  box-shadow: 0 1px 2px rgba(9, 30, 66, 0.08);
 }
 
 .month-nav-btn:hover {
   background: var(--ds-background-neutral);
-  border-color: var(--ds-border-focused);
+  border-color: #5244a8;
   color: var(--ds-text);
+  box-shadow: 0 2px 4px rgba(82, 68, 168, 0.2);
 }
 
 .nav-arrow {
@@ -283,17 +334,17 @@
   padding: var(--ds-space-100) var(--ds-space-200);
   font-size: 13px;
   font-weight: 500;
-  color: var(--ds-text-brand);
+  color: #5244a8;
   background: var(--ds-background-default);
-  border: 1px solid var(--ds-background-brand-bold);
+  border: 1px solid #5244a8;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .today-btn:hover {
-  background: var(--ds-background-brand-bold);
-  color: var(--ds-text-inverse);
+  background: #5244a8;
+  color: #fff;
 }
 
 .timesheet-header {
@@ -307,6 +358,7 @@
   font-weight: 600;
   color: var(--ds-text);
   margin: 0;
+  letter-spacing: -0.1px;
 }
 
 /* Day View Styles */
@@ -317,16 +369,19 @@
 }
 
 .team-member-card {
-  background: var(--ds-background-neutral-subtle);
+  background: var(--ds-background-default);
   border: 1px solid var(--ds-border);
   border-radius: 8px;
   padding: var(--ds-space-200);
   transition: all 0.2s ease;
+  box-shadow: 0 1px 2px rgba(9, 30, 66, 0.08);
 }
 
 .team-member-card:hover {
-  background: var(--ds-background-neutral);
+  background: #f6f9fe;
   border-color: var(--ds-border-focused);
+  box-shadow: 0 4px 8px rgba(9, 30, 66, 0.15);
+  transform: translateY(-2px);
 }
 
 .member-header {
@@ -336,15 +391,15 @@
 }
 
 .member-avatar {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   color: white;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 11px;
   flex-shrink: 0;
 }
 
@@ -357,7 +412,7 @@
   align-items: center;
   justify-content: center;
   font-weight: 600;
-  font-size: 12px;
+  font-size: 11px;
   flex-shrink: 0;
 }
 
@@ -378,7 +433,7 @@
 .member-total {
   font-size: 16px;
   font-weight: 600;
-  color: var(--ds-text-brand);
+  color: #5244a8;
 }
 
 .member-tasks {
@@ -405,7 +460,7 @@
 .task-time {
   font-size: 13px;
   font-weight: 600;
-  color: var(--ds-text-brand);
+  color: #5244a8;
 }
 
 /* Week View Styles */
@@ -414,6 +469,7 @@
   background: var(--ds-background-default);
   border: 1px solid var(--ds-border);
   border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(9, 30, 66, 0.08);
 }
 
 .week-table {
@@ -426,13 +482,13 @@
 }
 
 .week-table th {
-  padding: var(--ds-space-150) var(--ds-space-200);
+  padding: 12px 16px;
   text-align: left;
   font-size: 11px;
   font-weight: 600;
   color: var(--ds-text-subtle);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.6px;
   border-bottom: 1px solid var(--ds-border);
   white-space: nowrap;
 }
@@ -442,7 +498,7 @@
 }
 
 .week-table tbody tr:hover {
-  background: var(--ds-background-neutral-subtle);
+  background: #f6f9fe;
 }
 
 .week-table tbody tr:last-child {
@@ -466,9 +522,9 @@
 .total-cell {
   text-align: center;
   font-weight: 600;
-  color: var(--ds-text-brand);
+  color: #5244a8;
   font-size: 14px;
-  background: rgba(0, 82, 204, 0.05);
+  background: rgba(82, 68, 168, 0.05);
 }
 
 .totals-row {
@@ -486,7 +542,7 @@
 .grand-total-cell {
   text-align: center;
   font-weight: 700;
-  color: var(--ds-text-brand);
+  color: #5244a8;
   font-size: 14px;
 }
 
@@ -504,6 +560,7 @@
   border: 1px solid var(--ds-border);
   border-radius: 8px;
   overflow: hidden;
+  box-shadow: rgba(99, 99, 99, 0.2) 0px 2px 8px 0px;
 }
 
 .calendar-card-header {
@@ -516,6 +573,7 @@
   font-size: 16px;
   font-weight: 600;
   color: var(--ds-text);
+  letter-spacing: -0.1px;
 }
 
 /* Calendar Table */
@@ -528,11 +586,13 @@
 .calendar-table th {
   padding: var(--ds-space-150) var(--ds-space-100);
   text-align: center;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--ds-text-subtle);
   border-bottom: 1px solid var(--ds-border);
   background: var(--ds-background-neutral-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
 }
 
 .calendar-table th.weekend {
@@ -572,7 +632,7 @@
   left: 0;
   right: 0;
   height: 3px;
-  background: var(--ds-background-brand-bold);
+  background: #5244a8;
 }
 
 .calendar-cell.weekend:not(.empty) {
@@ -595,7 +655,7 @@
 }
 
 .calendar-cell.today .cell-day {
-  color: var(--ds-text-brand);
+  color: #5244a8;
   font-weight: 700;
 }
 
@@ -615,6 +675,7 @@
   border: 1px solid var(--ds-border);
   border-radius: 8px;
   overflow: hidden;
+  box-shadow: rgba(99, 99, 99, 0.2) 0px 2px 8px 0px;
 }
 
 .team-summary h4 {
@@ -625,6 +686,7 @@
   padding: var(--ds-space-200) var(--ds-space-300);
   border-bottom: 1px solid var(--ds-border);
   background: var(--ds-background-neutral-subtle);
+  letter-spacing: -0.1px;
 }
 
 .team-summary h4::before {
@@ -657,7 +719,7 @@
 }
 
 .team-summary-item:hover {
-  background: var(--ds-background-neutral-subtle);
+  background: #f6f9fe;
   transform: none;
   box-shadow: none;
 }
@@ -691,7 +753,7 @@
 .summary-time {
   font-size: 13px;
   font-weight: 600;
-  color: var(--ds-text-brand);
+  color: #5244a8;
 }
 
 .summary-percentage {

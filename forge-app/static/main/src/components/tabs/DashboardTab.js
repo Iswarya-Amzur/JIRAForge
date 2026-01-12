@@ -206,7 +206,12 @@ function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
                                                         }}
                                                         title={`View ${session.screenshots.length} screenshot${session.screenshots.length > 1 ? 's' : ''}`}
                                                       >
-                                                        🖼️ {session.screenshots.length}
+                                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                                          <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                                          <polyline points="21 15 16 10 5 21"></polyline>
+                                                        </svg>
+                                                        {session.screenshots.length}
                                                       </button>
                                                     )}
                                                     {session.analysisResultIds?.length > 0 && (
@@ -218,7 +223,10 @@ function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
                                                         }}
                                                         title="Reassign this session to a different issue"
                                                       >
-                                                        ✏️
+                                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                                        </svg>
                                                       </button>
                                                     )}
                                                   </div>

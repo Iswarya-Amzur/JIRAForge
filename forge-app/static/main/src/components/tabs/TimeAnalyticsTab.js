@@ -54,7 +54,13 @@ function TimeAnalyticsTab() {
       {/* Desktop App Download Banner */}
       <div className="download-banner">
         <div className="download-banner-content">
-          <div className="download-banner-icon">💻</div>
+          <div className="download-banner-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+          </div>
           <div className="download-banner-text">
             <span className="download-banner-title">Desktop App Required</span>
             <span className="download-banner-subtitle">Install the Time Tracker app to start tracking your work automatically</span>
@@ -64,7 +70,11 @@ function TimeAnalyticsTab() {
           className="download-button"
           onClick={handleDownloadClick}
         >
-          <span className="download-icon">⬇️</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
           Download for Windows
         </button>
       </div>

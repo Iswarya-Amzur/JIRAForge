@@ -164,11 +164,11 @@ function GroupAccordion({
                 <div className="accordion-header-right">
                   <div className="stat-compact">
                     <span className="stat-icon">📸</span>
-                    <span className="stat-value">{group.session_count}</span>
+                    <span className="stat-value">{details?.session_count || group.session_count}</span>
                   </div>
                   <div className="stat-compact">
                     <span className="stat-icon">⏱️</span>
-                    <span className="stat-value">{group.total_time_formatted}</span>
+                    <span className="stat-value">{details?.total_time_formatted || group.total_time_formatted}</span>
                   </div>
                   <button
                     className="assign-button-compact"
@@ -205,13 +205,6 @@ function GroupAccordion({
                   {/* Show details when loaded */}
                   {!isLoadingGroupDetails && details && (
                     <>
-                      {/* Updated session count from details */}
-                      <div className="group-details-summary">
-                        <span>📸 {details.session_count} sessions</span>
-                        <span className="summary-divider">•</span>
-                        <span>⏱️ {details.total_time_formatted}</span>
-                      </div>
-
                       <div className="screenshots-section">
                         <h4 className="screenshots-title">
                           Screenshots ({details.session_count})

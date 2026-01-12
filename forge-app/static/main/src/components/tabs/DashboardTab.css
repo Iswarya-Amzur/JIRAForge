@@ -2,36 +2,36 @@
 
 /* Dashboard Container */
 .dashboard {
-  background: var(--ds-background-default);
-  padding: var(--ds-space-400);
-  border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(9, 30, 66, 0.08);
+  background: #f4f5f7;
+  padding: 16px;
+  border-radius: 0;  
+ 
 }
 
 .dashboard h2 {
   font-size: 20px;
   font-weight: 700;
-  color: var(--ds-text);
-  margin: 0 0 var(--ds-space-300) 0;
+  color: #172b4d;
+  margin: 0;
   letter-spacing: -0.2px;
+  margin-top: 6px;
 }
 
 /* My Focus Widget */
 .my-focus-widget {
-  margin-top: var(--ds-space-400);
-  padding: var(--ds-space-300);
-  background: var(--ds-background-default);
-  border: 1px solid var(--ds-border);
-  border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(9, 30, 66, 0.1);
-  border-top: 4px solid var(--ds-background-accent-teal);
+  margin-top: 16px;
+  padding: 16px;
+  background: #ffffff;
+  border-radius: 0;
+  box-shadow: 0 2px 6px rgba(161, 161, 161, 0.2);
+  border-top: transparent;
 }
 
 .my-focus-widget h2 {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
-  color: var(--ds-text);
-  margin-bottom: var(--ds-space-100);
+  color: #172b4d;
+  margin-bottom: 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   display: flex;
@@ -39,37 +39,38 @@
   gap: 8px;
 }
 
-.my-focus-widget h2::before {
+/* .my-focus-widget h2::before {
   content: '🎯';
   font-size: 18px;
-}
+} */
 
 .widget-subtitle {
-  color: var(--ds-text-subtle);
+  color: #6b778c;
   font-size: 14px;
-  margin-bottom: var(--ds-space-300);
+  margin-bottom: 18px;
   font-style: italic;
+  margin-top: 0;
 }
 
 /* Focus Tabs */
 .focus-tabs {
   display: flex;
   gap: var(--ds-space-100);
-  margin-bottom: var(--ds-space-300);
-  border-bottom: 2px solid var(--ds-border);
-  padding-bottom: var(--ds-space-100);
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--ds-border);
+  padding-bottom:0;
 }
 
 .focus-tabs button {
-  padding: 6px 16px;
   border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ds-text-subtle);
-  border-radius: 3px;
-  transition: all 0.2s ease;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 10px 16px;
+    transition: none;
+    color: #333;
 }
 
 .focus-tabs button:hover {
@@ -78,9 +79,9 @@
 }
 
 .focus-tabs button.active {
-  background: var(--ds-background-accent-teal);
-  color: var(--ds-text-inverse);
-  box-shadow: 0 2px 4px rgba(0, 184, 217, 0.3);
+  background: #6656fc;
+    box-shadow: none;
+    color: var(--ds-text-inverse);
 }
 
 /* Issues Table */
@@ -99,27 +100,33 @@
 
 .issues-table thead {
   background: var(--ds-background-neutral);
-  border-bottom: 2px solid var(--ds-border);
+  
 }
 
 .issues-table th {
   padding: var(--ds-space-150) var(--ds-space-200);
   text-align: left;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
-  color: var(--ds-text-subtle);
+  color: #172b4d;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
+.issues-table th:nth-child(3),
+.issues-table th:nth-child(4) {
+  text-align: center;
+}
+
+.issues-table th:nth-child(5) {
+  text-align: right;
+}
+
 .issues-table tbody tr {
-  border-bottom: 1px solid var(--ds-background-neutral);
+  border-bottom: transparent;
   transition: background-color 0.2s ease;
 }
 
-.issues-table tbody tr:hover {
-  background: var(--ds-background-neutral);
-}
 
 .issues-table tbody tr:last-child {
   border-bottom: none;
@@ -203,7 +210,7 @@
 .status-badge {
   display: inline-block;
   padding: 4px 10px;
-  border-radius: 3px;
+  border-radius: 50px;
   font-size: 12px;
   font-weight: 600;
   text-transform: capitalize;
@@ -212,23 +219,26 @@
 .status-new {
   background: #DFE1E6;
   color: #42526E;
+  border-radius: 50px;
 }
 
 .status-indeterminate {
   background: #DEEBFF;
   color: #0052CC;
+  border-radius: 50px;
 }
 
 .status-done {
   background: #E3FCEF;
   color: #006644;
+  border-radius: 50px;
 }
 
 /* Priority Badge */
 .priority-badge {
   display: inline-block;
   padding: 4px 10px;
-  border-radius: 3px;
+  border-radius: 50px;
   font-size: 12px;
   font-weight: 600;
   text-transform: capitalize;
@@ -238,17 +248,20 @@
 .priority-high {
   background: #FFEBE6;
   color: #DE350B;
+  border-radius: 50px;
 }
 
 .priority-medium {
   background: #FFF0B3;
   color: #FF991F;
+  border-radius: 50px;
 }
 
 .priority-low,
 .priority-lowest {
   background: #E3FCEF;
   color: #00875A;
+  border-radius: 50px;
 }
 
 /* Expandable Rows for Work Sessions */
@@ -267,8 +280,8 @@
   padding: 4px;
   margin-right: 4px;
   color: #5e6c84;
-  font-size: 24px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 500;
   line-height: 1;
   width: 28px;
   height: 28px;
@@ -280,7 +293,7 @@
 }
 
 .expand-button:hover {
-  background: var(--ds-background-neutral);
+  background: #f4f5f7;
 }
 
 .expand-button.expanded {
@@ -333,8 +346,11 @@
 }
 
 .date-group {
-  border-left: 3px solid var(--ds-background-brand-bold);
-  padding-left: var(--ds-space-200);
+      border-left: 3px solid var(--ds-background-brand-bold);
+    padding: 16px;
+    background: #fff;
+    border-top-left-radius: 8px;
+    border-bottom-left-radius: 8px;
 }
 
 .date-header {
@@ -383,7 +399,7 @@
 
 .session-time {
   color: var(--ds-text);
-  font-family: 'SF Mono', 'Monaco', 'Menlo', 'Courier New', monospace;
+  
   font-size: 13px;
   flex: 1;
 }
@@ -425,7 +441,7 @@
 /* View Screenshots Button */
 .view-screenshots-button {
   background: transparent;
-  border: 1px solid var(--ds-border);
+  border: 0;
   padding: 2px 8px;
   cursor: pointer;
   font-size: 12px;
@@ -441,7 +457,7 @@
 .view-screenshots-button:hover {
   opacity: 1;
   background: var(--ds-background-neutral);
-  border-color: var(--ds-border-focused);
+  border-color: transparent;
   color: var(--ds-text);
 }
 
@@ -449,20 +465,21 @@
 .status-dropdown-container {
   position: relative;
   display: inline-block;
+  background: #ffe4e4;
+    border-radius: 50px;
 }
 
 .status-dropdown-button {
   position: relative;
   cursor: pointer;
   border: none;
-  background: transparent;
   padding: 4px 24px 4px 10px;
   transition: all 0.2s;
 }
 
 .status-dropdown-button:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+  /* box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15); */
 }
 
 .status-dropdown-button:disabled {
