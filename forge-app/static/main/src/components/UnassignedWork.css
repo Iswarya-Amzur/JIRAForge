@@ -1,26 +1,28 @@
 /* UnassignedWork Container and Header Styles */
 
 .unassigned-work-container {
-  padding: 20px;
-  max-width: 1200px;
-  margin: 0 auto;
+  background: #fff;
+  min-height: calc(100vh - 100px);
+  padding: var(--ds-space-200);
 }
 
 .unassigned-work-header {
-  margin-bottom: 30px;
+  margin-bottom: 24px;
 }
 
 .header-top-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 16px;
 }
 
 .unassigned-work-header h2 {
   margin: 0;
-  font-size: 28px;
-  color: #172b4d;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--ds-text);
+  letter-spacing: -0.3px;
 }
 
 .header-buttons-row {
@@ -34,55 +36,64 @@
   align-items: center;
   gap: 10px;
   font-size: 14px;
-  color: #5e6c84;
+  color: var(--ds-text-subtle);
+  font-weight: 400;
 }
 
 .summary-item strong {
-  color: #172b4d;
+  color: var(--ds-text);
   font-weight: 600;
 }
 
 .summary-divider {
-  color: #dfe1e6;
+  color: var(--ds-text-subtle);
+  opacity: 0.5;
 }
 
 .no-groups-message {
   padding: 20px;
   text-align: center;
-  background: #f4f5f7;
-  border-radius: 4px;
-  margin-bottom: 20px;
+  background: var(--ds-background-neutral-subtle);
+  border-radius: 8px;
+  margin-bottom: 24px;
+  box-shadow: 0 1px 2px rgba(9, 30, 66, 0.08);
 }
 
 .no-groups-message button {
   margin-top: 10px;
-  padding: 8px 16px;
-  background: #0052cc;
+  padding: 10px 20px;
+  background: #5244a8;
   color: white;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
   font-size: 14px;
+  font-weight: 600;
+  transition: all 0.2s ease;
 }
 
 .no-groups-message button:hover {
-  background: #0747a6;
+  background: #4338a0;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(82, 68, 168, 0.3);
 }
 
 .empty-state {
   text-align: center;
   padding: 60px 20px;
-  color: #5e6c84;
+  color: var(--ds-text-subtle);
 }
 
 .empty-state p {
   font-size: 16px;
   margin: 10px 0;
+  color: var(--ds-text);
 }
 
 .empty-subtitle {
   font-size: 14px;
-  color: #7a869a;
+  color: var(--ds-text-subtle);
+  font-weight: 400;
 }
 
 .loading,
@@ -90,13 +101,14 @@
   padding: 40px;
   text-align: center;
   font-size: 16px;
+  color: var(--ds-text);
 }
 
 .error {
   color: #de350b;
   background: #ffebe6;
   border: 1px solid #ff5630;
-  border-radius: 4px;
+  border-radius: 8px;
 }
 
 /* Notification Settings Toggle */
@@ -105,11 +117,13 @@
   align-items: center;
   justify-content: flex-start;
   margin-top: 16px;
-  padding: 12px 16px;
-  background: #f8f9fa;
+  padding: 16px 20px;
+  background: #EDF4FF;
   border-radius: 8px;
   flex-wrap: wrap;
   gap: 12px;
+  box-shadow: rgba(99, 99, 99, 0.2) 0px 2px 8px 0px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .notification-toggle-container {
@@ -124,12 +138,17 @@
   gap: 12px;
   cursor: pointer;
   font-size: 14px;
-  color: #172b4d;
-  font-weight: 500;
+  color: var(--ds-text);
+  font-weight: 600;
 }
 
 .notification-icon {
-  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: #5244a8;
 }
 
 .notification-text {
@@ -138,8 +157,9 @@
 
 .notification-hint {
   font-size: 12px;
-  color: #6b778c;
+  color: var(--ds-text-subtle);
   margin-left: 30px;
+  font-weight: 400;
 }
 
 /* Toggle Switch Styles */
@@ -192,7 +212,7 @@
 }
 
 .notification-toggle-label .toggle-input:checked + .toggle-slider {
-  background-color: #0052cc;
+  background-color: #5244a8;
 }
 
 .notification-toggle-label .toggle-input:checked + .toggle-slider::before {
@@ -209,19 +229,20 @@
 }
 
 .notification-toggle-label .toggle-input:checked + .toggle-slider:hover {
-  background-color: #0065ff;
+  background-color: #4338a0;
 }
 
 .notification-toggle-label .toggle-input:focus + .toggle-slider {
-  box-shadow: 0 0 0 2px rgba(0, 82, 204, 0.3);
+  box-shadow: 0 0 0 2px rgba(82, 68, 168, 0.3);
 }
 
 .notification-settings-message {
   font-size: 13px;
   padding: 6px 12px;
-  border-radius: 4px;
+  border-radius: 6px;
   animation: fadeIn 0.3s ease;
   margin-left: auto;
+  font-weight: 500;
 }
 
 .notification-settings-message.success {

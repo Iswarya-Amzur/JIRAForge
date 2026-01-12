@@ -68,7 +68,7 @@ html, body, #root {
   top: 0;
   left: 0;
   right: 0;
-  height: 3px;
+  height: 2px;
   background: linear-gradient(90deg, var(--ds-background-brand-bold) 0%, var(--ds-background-accent-blue) 100%);
   z-index: 100;
 }

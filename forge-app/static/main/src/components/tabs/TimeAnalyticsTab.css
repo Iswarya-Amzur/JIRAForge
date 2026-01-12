@@ -584,7 +584,7 @@
 }
 
 .calendar-table th {
-  padding: var(--ds-space-150) var(--ds-space-100);
+  padding: 10px 8px;
   text-align: center;
   font-size: 11px;
   font-weight: 600;
@@ -602,18 +602,24 @@
 .calendar-table td {
   border: 1px solid var(--ds-border);
   vertical-align: top;
-  height: 80px;
+  height: 90px;
   padding: 0;
+  position: relative;
 }
 
 /* Calendar Cells */
 .calendar-cell {
-  padding: var(--ds-space-100);
+  padding: 8px;
+  height: 100%;
+  
+  flex-direction: column;
+  gap: 4px;
   transition: background-color 0.2s ease;
 }
 
 .calendar-cell.empty {
   background: var(--ds-background-neutral-subtle);
+  opacity: 0.5;
 }
 
 .calendar-cell.has-time {
@@ -631,8 +637,9 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 3px;
+  height: 4px;
   background: #5244a8;
+  border-radius: 0;
 }
 
 .calendar-cell.weekend:not(.empty) {
@@ -645,13 +652,14 @@
 
 .calendar-cell:hover:not(.empty) {
   background: var(--ds-background-neutral);
+  cursor: pointer;
 }
 
 .cell-day {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--ds-text);
-  margin-bottom: var(--ds-space-050);
+  line-height: 1;
 }
 
 .calendar-cell.today .cell-day {
@@ -660,9 +668,10 @@
 }
 
 .cell-time {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: #00875A;
+  line-height: 1.2;
 }
 
 /* Team Summary Sidebar */
