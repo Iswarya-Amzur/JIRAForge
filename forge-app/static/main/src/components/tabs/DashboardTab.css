@@ -32,7 +32,7 @@
   font-weight: 700;
   color: #172b4d;
   margin-bottom: 4px;
-  text-transform: uppercase;
+  
   letter-spacing: 0.5px;
   display: flex;
   align-items: center;
@@ -285,11 +285,14 @@
   line-height: 1;
   width: 28px;
   height: 28px;
-  display: inline-flex;
+  display: inline-flex !important;
   align-items: center;
   justify-content: center;
   transition: transform 0.2s ease;
   border-radius: 3px;
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
 }
 
 .expand-button:hover {
