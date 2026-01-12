@@ -451,7 +451,7 @@
 .trend-chart-container {
   min-height: 240px;
   display: flex;
-  flex-direction: unset;
+  flex-direction: unset!important;
   padding: 22px;
 }
 
