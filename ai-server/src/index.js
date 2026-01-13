@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
 require('dotenv').config();
 
 const screenshotController = require('./controllers/screenshot-controller');
@@ -51,7 +52,11 @@ app.get('/', (req, res) => {
     status: 'running',
     endpoints: {
       health: '/health',
-      api: '/api/*'
+      api: '/api/*',
+      legal: {
+        privacy: '/legal/privacy',
+        terms: '/legal/terms'
+      }
     }
   });
 });
@@ -64,6 +69,26 @@ app.get('/health', (req, res) => {
     uptime: process.uptime()
   });
 });
+
+// =============================================================================
+// LEGAL PAGES (Public - served as static HTML)
+// =============================================================================
+
+// Privacy Policy
+app.get('/legal/privacy', (req, res) => {
+  res.sendFile(path.join(__dirname, 'legal', 'privacy-policy.html'));
+});
+
+// Terms of Service
+app.get('/legal/terms', (req, res) => {
+  res.sendFile(path.join(__dirname, 'legal', 'terms-of-service.html'));
+});
+
+// Redirect shortcuts
+app.get('/privacy', (req, res) => res.redirect('/legal/privacy'));
+app.get('/privacy-policy', (req, res) => res.redirect('/legal/privacy'));
+app.get('/terms', (req, res) => res.redirect('/legal/terms'));
+app.get('/terms-of-service', (req, res) => res.redirect('/legal/terms'));
 
 // =============================================================================
 // AUTH ROUTES (Public - no authMiddleware)
