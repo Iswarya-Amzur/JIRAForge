@@ -105,10 +105,12 @@ function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
                       <React.Fragment key={idx}>
                         <tr className={issue.sessions?.length > 0 ? 'expandable-row' : ''}>
                           <td className="issue-key">
-                            {issue.sessions?.length > 0 && (
+                            {issue.sessions?.length > 0 ? (
                               <button className="expand-button" onClick={handleExpandClick}>
                                 ›
                               </button>
+                            ) : (
+                              <span className="expand-placeholder"></span>
                             )}
                             <IssueTypeIcon
                               issueType={issue.issueType}

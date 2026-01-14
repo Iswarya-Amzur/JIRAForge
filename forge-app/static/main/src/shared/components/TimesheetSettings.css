@@ -209,7 +209,8 @@
 /* Interval Slider */
 .interval-slider-container {
   position: relative;
-  padding: 20px 0 40px;
+  padding: 6px 0 10px;
+  margin-bottom: 24px;
 }
 
 .interval-slider {

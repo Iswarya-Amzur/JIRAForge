@@ -178,7 +178,7 @@ function TeamAnalyticsTab() {
                   <div className="trend-chart">
                     {(() => {
                       const maxHours = Math.max(...teamAnalytics.activityTrend.map(d => d.totalHours), 0.1);
-                      const maxBarHeight = 120; // Fixed pixel height for the tallest bar
+                      const maxBarHeight = 140; // Fixed pixel height for the tallest bar
                       return teamAnalytics.activityTrend.map((day, idx) => {
                         // Calculate bar height in pixels (minimum 8px if there's any value for visibility)
                         const barHeight = day.totalHours > 0
@@ -187,7 +187,7 @@ function TeamAnalyticsTab() {
                         const isWeekend = day.dayOfWeek === 'Sat' || day.dayOfWeek === 'Sun';
                         return (
                           <div key={idx} className="trend-bar-wrapper">
-                            <span className="trend-bar-value">{day.totalHours > 0 ? `${day.totalHours}h` : ''}</span>
+                            <span className="trend-bar-value">{day.totalHours > 0 ? `${day.totalHours}h` : '\u00A0'}</span>
                             <div
                               className={`trend-bar ${day.totalHours === 0 ? 'empty-bar' : ''} ${isWeekend ? 'weekend' : ''}`}
                               style={{ height: `${barHeight}px` }}
