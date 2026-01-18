@@ -4,6 +4,17 @@ const logger = require('../utils/logger');
 const { getLocalISOString, toLocalISOString } = require('../utils/datetime');
 
 /**
+ * Validate UUID format
+ * @param {string} id - String to validate
+ * @returns {boolean} True if valid UUID format
+ */
+const isValidUUID = (id) => {
+  if (!id || typeof id !== 'string') return false;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(id);
+};
+
+/**
  * Analyze screenshot endpoint
  * Triggered by Supabase webhook when a new screenshot is uploaded
  */
@@ -48,6 +59,32 @@ exports.analyzeScreenshot = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Missing required fields: screenshot_id (id), user_id, storage_url'
+      });
+    }
+
+    // Validate UUID formats
+    if (!isValidUUID(screenshot_id)) {
+      logger.error('Invalid screenshot_id format', { screenshot_id, body: req.body });
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid screenshot_id format: must be a valid UUID'
+      });
+    }
+
+    if (!isValidUUID(user_id)) {
+      logger.error('Invalid user_id format', { user_id, body: req.body });
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user_id format: must be a valid UUID'
+      });
+    }
+
+    // Validate organization_id if provided
+    if (organization_id && !isValidUUID(organization_id)) {
+      logger.error('Invalid organization_id format', { organization_id, body: req.body });
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid organization_id format: must be a valid UUID'
       });
     }
 

@@ -5,13 +5,17 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+.eggs/
+*.egg-info/
+*.egg
 
-# Environment variables
+# Environment variables (CRITICAL - contains secrets)
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+# Note: .env.example files are tracked (they are templates without secrets)
 
 # Logs
 logs/
@@ -28,7 +32,10 @@ pids
 
 # Coverage directory
 coverage/
+*.lcov
 .nyc_output/
+.coverage
+htmlcov/
 
 # IDE
 .vscode/
@@ -40,12 +47,12 @@ coverage/
 # OS
 .DS_Store
 Thumbs.db
+Desktop.ini
 
-# Build
+# Build outputs
 dist/
 build/
 out/
-*.spec
 
 # Electron
 *.asar
@@ -53,13 +60,40 @@ out/
 # Temporary files
 tmp/
 temp/
+tmpclaude-*
+nul
+*.tmp
+*.bak
 
-# Python
+# Python virtual environments
 venv/
 env/
 ENV/
 .venv
 
-# Supabase
-.supabase/
+# PyInstaller backups (keep .spec files - they are intentional)
+*.spec.bak
 
+# Supabase local
+.supabase/
+supabase/.temp/
+supabase/.branches/
+
+# Forge local
+.forge/
+
+# Testing
+.pytest_cache/
+.tox/
+.nox/
+
+# Security - Never commit these
+*.pem
+*.key
+*.crt
+*.p12
+credentials.json
+secrets.json
+
+# Local database files
+*.sqlite3

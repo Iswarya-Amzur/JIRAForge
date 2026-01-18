@@ -17,15 +17,18 @@ const ATLASSIAN_TOKEN_URL = 'https://auth.atlassian.com/oauth/token';
 const ATLASSIAN_ME_URL = 'https://api.atlassian.com/me';
 
 /**
- * Exchange Atlassian OAuth code for tokens
+ * Exchange Atlassian OAuth code for tokens (with PKCE support)
  * This endpoint replaces the desktop app's direct call to Atlassian
  *
  * POST /api/auth/atlassian/callback
- * Body: { code: string, redirect_uri: string }
+ * Body: { code: string, redirect_uri: string, code_verifier?: string }
+ *
+ * PKCE (RFC 7636): If code_verifier is provided, it will be included in the
+ * token exchange request to Atlassian for enhanced security.
  */
 exports.atlassianCallback = async (req, res) => {
   try {
-    const { code, redirect_uri } = req.body;
+    const { code, redirect_uri, code_verifier } = req.body;
 
     if (!code) {
       return res.status(400).json({
@@ -53,18 +56,26 @@ exports.atlassianCallback = async (req, res) => {
       });
     }
 
-    // Exchange code for tokens with Atlassian
-    logger.info('[Auth] Exchanging OAuth code for tokens');
+    // Build token request payload
+    const tokenRequestPayload = {
+      grant_type: 'authorization_code',
+      client_id: clientId,
+      client_secret: clientSecret,
+      code: code,
+      redirect_uri: redirect_uri
+    };
+
+    // PKCE: Include code_verifier if provided (required for PKCE flow)
+    if (code_verifier) {
+      tokenRequestPayload.code_verifier = code_verifier;
+      logger.info('[Auth] Exchanging OAuth code for tokens (with PKCE)');
+    } else {
+      logger.info('[Auth] Exchanging OAuth code for tokens (without PKCE - legacy flow)');
+    }
 
     const tokenResponse = await axios.post(
       ATLASSIAN_TOKEN_URL,
-      {
-        grant_type: 'authorization_code',
-        client_id: clientId,
-        client_secret: clientSecret,
-        code: code,
-        redirect_uri: redirect_uri
-      },
+      tokenRequestPayload,
       {
         headers: { 'Content-Type': 'application/json' },
         timeout: 30000

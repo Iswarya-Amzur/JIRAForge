@@ -540,15 +540,28 @@ class AtlassianAuthManager:
             print(f"[WARN] Failed to save tokens: {e}")
     
     def get_auth_url(self):
-        """Generate Atlassian OAuth authorization URL"""
+        """Generate Atlassian OAuth authorization URL with PKCE"""
         if not self.client_id:
             raise ValueError("ATLASSIAN_CLIENT_ID not configured")
-        
+
         # Generate state for CSRF protection
         state = secrets.token_urlsafe(32)
+
+        # PKCE: Generate code_verifier (43-128 characters, URL-safe)
+        code_verifier = secrets.token_urlsafe(64)
+
+        # PKCE: Create code_challenge = BASE64URL(SHA256(code_verifier))
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).decode().rstrip('=')
+
+        # Store state and code_verifier for callback verification
         self.tokens['oauth_state'] = state
+        self.tokens['code_verifier'] = code_verifier
         self._save_tokens()
-        
+
+        print(f"[OK] PKCE code_challenge generated (S256)")
+
         params = {
             'audience': 'api.atlassian.com',
             'client_id': self.client_id,
@@ -556,26 +569,34 @@ class AtlassianAuthManager:
             'redirect_uri': self.redirect_uri,
             'state': state,
             'response_type': 'code',
-            'prompt': 'consent'
+            'prompt': 'consent',
+            'code_challenge': code_challenge,
+            'code_challenge_method': 'S256'
         }
-        
+
         auth_url = f"{self.authorization_url}?{urllib.parse.urlencode(params)}"
         return auth_url
     
     def handle_callback(self, code, state):
-        """Handle OAuth callback and exchange code for tokens via AI Server"""
+        """Handle OAuth callback and exchange code for tokens via AI Server (with PKCE)"""
         # Verify state
         stored_state = self.tokens.get('oauth_state')
         if state != stored_state:
             raise ValueError("Invalid state parameter - possible CSRF attack")
 
+        # PKCE: Get the code_verifier we stored during get_auth_url()
+        code_verifier = self.tokens.get('code_verifier')
+        if not code_verifier:
+            raise ValueError("Missing code_verifier - PKCE flow was not properly initiated")
+
         # Exchange code for tokens via AI Server (client_secret is on server only)
-        print("[INFO] Exchanging OAuth code via AI Server...")
+        print("[INFO] Exchanging OAuth code via AI Server (with PKCE)...")
         response = requests.post(
             f"{self.ai_server_url}/api/auth/atlassian/callback",
             json={
                 'code': code,
-                'redirect_uri': self.redirect_uri
+                'redirect_uri': self.redirect_uri,
+                'code_verifier': code_verifier  # PKCE: Send verifier to AI server
             },
             headers={'Content-Type': 'application/json'},
             timeout=30
@@ -1964,6 +1985,17 @@ class BRDTimeTracker:
             action = data.get('action')
 
             if action == 'start_tracking':
+                # GDPR compliance: Check consent before starting tracking
+                if self.current_user:
+                    user_account_id = self.current_user.get('account_id')
+                    if not self.consent_manager.has_valid_consent(user_account_id):
+                        self.add_admin_log('WARN', 'Cannot start tracking - user consent not given')
+                        return jsonify({
+                            'success': False,
+                            'error': 'User consent required before tracking can start',
+                            'redirect': '/consent'
+                        }), 403
+
                 if not self.running:
                     self.start_tracking()
                     self.add_admin_log('INFO', 'Tracking started by admin')
@@ -3766,6 +3798,15 @@ class BRDTimeTracker:
         if not self.current_user_id:
             print("[WARN] Cannot start tracking - no user ID (authenticated or anonymous)")
             return
+
+        # GDPR compliance: Verify consent before starting (defensive check)
+        # Skip consent check for anonymous users (they'll provide consent on login)
+        if self.current_user and not self.current_user_id.startswith('anonymous_'):
+            user_account_id = self.current_user.get('account_id')
+            if not self.consent_manager.has_valid_consent(user_account_id):
+                print("[WARN] Cannot start tracking - user has not given consent for screenshot capture")
+                print("[INFO] User must visit /consent page to provide consent")
+                return
         
         # Log if we're in anonymous mode
         if self.current_user_id.startswith('anonymous_'):
