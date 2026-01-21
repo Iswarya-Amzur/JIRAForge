@@ -40,7 +40,7 @@ function TimeAnalyticsTab() {
   };
 
   // Desktop app download URL from Supabase public storage (no expiration)
-  const DESKTOP_APP_DOWNLOAD_URL = 'https://jvijitdewbypqbatfboi.supabase.co/storage/v1/object/public/desktop%20app/BRDTimeTracker.exe';
+  const DESKTOP_APP_DOWNLOAD_URL = 'https://jvijitdewbypqbatfboi.supabase.co/storage/v1/object/public/desktop%20app/TimeTracker.exe';
 
   // Handle download button click using Forge router (required for sandbox)
   const handleDownloadClick = () => {

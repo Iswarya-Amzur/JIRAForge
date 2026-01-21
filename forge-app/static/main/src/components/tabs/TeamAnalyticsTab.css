@@ -479,7 +479,7 @@
 
 .team-activity-trend .trend-bar {
   width: 100%;
-  background: #6250ff;
+  background: #6656fc;
   border-radius: 4px 4px 0 0;
   min-height: 4px;
   transition: background 0.2s ease, transform 0.2s ease;

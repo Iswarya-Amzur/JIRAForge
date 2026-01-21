@@ -62,7 +62,7 @@
 .no-groups-message button {
   margin-top: 10px;
   padding: 10px 20px;
-  background: #5244a8;
+  background: #6656fc;
   color: white;
   border: none;
   border-radius: 6px;
@@ -73,9 +73,9 @@
 }
 
 .no-groups-message button:hover {
-  background: #4338a0;
+  background: #5b4bf0;
   transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(82, 68, 168, 0.3);
+  box-shadow: 0 4px 8px rgba(102, 86, 252, 0.3);
 }
 
 .empty-state {
@@ -156,7 +156,7 @@
   justify-content: center;
   width: 24px;
   height: 24px;
-  color: #5244a8;
+  color: #6656fc;
 }
 
 .notification-text {
@@ -220,7 +220,7 @@
 }
 
 .notification-toggle-label .toggle-input:checked + .toggle-slider {
-  background-color: #5244a8;
+  background-color: #6656fc;
 }
 
 .notification-toggle-label .toggle-input:checked + .toggle-slider::before {
@@ -237,11 +237,11 @@
 }
 
 .notification-toggle-label .toggle-input:checked + .toggle-slider:hover {
-  background-color: #4338a0;
+  background-color: #5b4bf0;
 }
 
 .notification-toggle-label .toggle-input:focus + .toggle-slider {
-  box-shadow: 0 0 0 2px rgba(82, 68, 168, 0.3);
+  box-shadow: 0 0 0 2px rgba(102, 86, 252, 0.3);
 }
 
 .notification-settings-message {

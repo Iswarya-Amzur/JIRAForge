@@ -17,7 +17,7 @@
 }
 
 .accordion-item:hover {
-  border-color: #5244a8;
+  border-color: #6656fc;
 }
 
 
@@ -122,7 +122,7 @@
 
 .assign-button-compact {
   padding: 6px 16px;
-  background: #5244a8;
+  background: #6656fc;
   color: white;
   border: none;
   border-radius: 6px;
@@ -134,13 +134,13 @@
 }
 
 .assign-button-compact:hover {
-  background: #4338a0;
+  background: #5b4bf0;
   transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(82, 68, 168, 0.3);
+  box-shadow: 0 4px 8px rgba(102, 86, 252, 0.3);
 }
 
 .assign-button-compact:active {
-  background: #3a2e8f;
+  background: #4b3fdd;
   transform: translateY(0);
 }
 
@@ -203,8 +203,8 @@
 
 .group-recommendation.recommendation-assign_to_existing {
   background: #EDF4FF;
-  border-left: 3px solid #5244a8;
-  color: #5244a8;
+  border-left: 3px solid #6656fc;
+  color: #6656fc;
 }
 
 .group-recommendation.recommendation-create_new_issue {
@@ -233,7 +233,7 @@
   width: 20px;
   height: 20px;
   border: 2px solid var(--ds-border);
-  border-top-color: #5244a8;
+  border-top-color: #6656fc;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -293,7 +293,7 @@
 }
 
 .screenshot-card:hover {
-  border-color: #5244a8;
+  border-color: #6656fc;
   box-shadow: 0 4px 8px rgba(9, 30, 66, 0.15);
   transform: translateY(-2px);
 }
@@ -351,7 +351,7 @@
   position: absolute;
   top: 8px;
   right: 8px;
-  background: rgba(82, 68, 168, 0.9);
+  background: rgba(102, 86, 252, 0.9);
   color: white;
   padding: 6px;
   border-radius: 6px;
@@ -377,7 +377,7 @@
 .screenshot-time {
   font-size: 12px;
   font-weight: 600;
-  color: #5244a8;
+  color: #6656fc;
   margin-bottom: 8px;
 }
 
@@ -414,7 +414,7 @@
 .assign-button-full {
   width: auto;
   padding: 12px;
-  background: #5244a8;
+  background: #6656fc;
   color: white;
   border: none;
   border-radius: 6px;
@@ -425,13 +425,13 @@
 }
 
 .assign-button-full:hover {
-  background: #4338a0;
+  background: #5b4bf0;
   transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(82, 68, 168, 0.3);
+  box-shadow: 0 4px 8px rgba(102, 86, 252, 0.3);
 }
 
 .assign-button-full:active {
-  background: #3a2e8f;
+  background: #4b3fdd;
   transform: translateY(0);
 }
 
@@ -450,8 +450,8 @@
   gap: 8px;
   padding: 10px 24px;
   background: white;
-  color: #5244a8;
-  border: 1px solid #5244a8;
+  color: #6656fc;
+  border: 1px solid #6656fc;
   border-radius: 6px;
   cursor: pointer;
   font-size: 14px;
@@ -461,10 +461,10 @@
 }
 
 .load-more-btn:hover:not(:disabled) {
-  background: #5244a8;
+  background: #6656fc;
   color: white;
   transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(82, 68, 168, 0.3);
+  box-shadow: 0 4px 8px rgba(102, 86, 252, 0.3);
 }
 
 .load-more-btn:disabled {
@@ -477,7 +477,7 @@
   width: 14px;
   height: 14px;
   border: 2px solid var(--ds-border);
-  border-top-color: #5244a8;
+  border-top-color: #6656fc;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }

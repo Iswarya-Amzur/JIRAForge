@@ -116,12 +116,12 @@
 
 .sidebar-item:hover {
   background: var(--ds-background-neutral-subtle);
-  color: #6554ff;
+  color: #6656fc;
 }
 
 .sidebar-item.active {
-      background: #6554ff;
-    border-left-color: #6250ff;
+      background: #6656fc;
+    border-left-color: #6656fc;
     color: #ffffff;
     font-weight: 600;
 }
@@ -141,7 +141,7 @@
 }
 
 .sidebar-item:hover .sidebar-icon svg {
-  color: #6250ff;
+  color: #6656fc;
 }
 
 .sidebar-item.active .sidebar-icon svg {
