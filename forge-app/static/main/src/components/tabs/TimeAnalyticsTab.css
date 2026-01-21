@@ -17,57 +17,68 @@
 
 /* Download Banner */
 .download-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
   background: #fff;
-  border: none;
+  border: 1px solid #e1e4e8;
   border-radius: 8px;
-  padding: 16px;
+  padding: 24px;
   margin-bottom: 24px;
-  box-shadow: rgba(99, 99, 99, 0.2) 0px 2px 8px 0px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.download-banner:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 2px 6px rgba(161, 161, 161, 0.2);
+  box-shadow: rgba(99, 99, 99, 0.1) 0px 2px 8px 0px;
 }
 
 .download-banner-content {
   display: flex;
-  align-items: center;
-  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
 }
-
 
 .download-banner-text {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
+  flex: 1;
 }
 
 .download-banner-title {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
-  color: var(--ds-text);
-  letter-spacing: -0.1px;
+  color: #172B4D;
+  letter-spacing: -0.2px;
 }
 
 .download-banner-subtitle {
   font-size: 14px;
-  color: var(--ds-text-subtle);
+  color: #5E6C84;
   font-weight: 400;
-  line-height: 1.4;
+  line-height: 1.5;
+}
+
+.download-banner-platforms {
+  display: flex;
+  gap: 24px;
+  align-items: flex-end;
+}
+
+.platform-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.platform-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #172B4D;
+  text-align: center;
 }
 
 .download-button {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  background: #5244a8;
+  justify-content: center;
+  padding: 8px 24px;
+  background: #6656fc;
   color: white;
   font-size: 14px;
   font-weight: 600;
@@ -75,28 +86,16 @@
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  transition: all 0.2s ease;
   white-space: nowrap;
-  box-shadow: none;
+  min-width: 100px;
 }
 
-.download-button:hover {
-  background: #4338a0;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(82, 68, 168, 0.3);
-  color: white;
-  text-decoration: none;
+.download-button:hover:not(:disabled) {
+  background: #6656fc;
+  box-shadow: 0 4px 8px rgba(11, 153, 142, 0.3);
 }
 
-.download-button:active {
-  transform: translateY(0);
-  box-shadow: none;
-}
 
-.download-button svg {
-  width: 16px;
-  height: 16px;
-}
 
 /* Responsive adjustments for download banner */
 @media (max-width: 600px) {
@@ -139,56 +138,78 @@
 .cumulative-card {
   background: white;
   border-radius: 8px;
-  padding: 20px;
-  box-shadow: rgba(99, 99, 99, 0.2) 0px 2px 8px 0px;
+  padding: 16px;
+  box-shadow: rgba(99, 99, 99, 0.1) 0px 2px 8px 0px;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid #e1e4e8;
+  min-height: 80px;
 }
 
-.cumulative-card:hover {
+/* .cumulative-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 2px 6px rgba(161, 161, 161, 0.2);
+  box-shadow: 0 4px 12px rgba(161, 161, 161, 0.15);
+} */
+
+/* Card Icon */
+.card-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Card Content */
+.card-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 /* Individual card color themes */
 .cumulative-card:nth-child(1) {
-  background: #EDF4FF;
+  background: #fff;
 }
 
 .cumulative-card:nth-child(2) {
-  background: #FFF5E6;
+  background: #fff;
 }
 
 .cumulative-card:nth-child(3) {
-  background: #E8F7F0;
+  background: #fff;
 }
 
 .cumulative-card h3 {
-  margin-bottom: 8px;
+  margin: 0;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--ds-text-subtle);
-  margin-top: 0;
+  letter-spacing: 0.8px;
+  color: #5E6C84;
 }
 
 .cumulative-card .stat-value {
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 700;
-  color: var(--ds-text);
-  line-height: 1.1;
+  color: #172B4D;
+  line-height: 1;
   letter-spacing: -0.5px;
 }
 
 .cumulative-card .cumulative-stat {
-  padding: 8px 0;
+  padding: 0;
 }
 
 /* Timesheet Tabs */
 .timesheet-tabs {
   display: flex;
-  gap: var(--ds-space-100);
+ 
   margin-bottom: 0;
   border-bottom: 1px solid var(--ds-border);
   padding-bottom: 0;
@@ -218,7 +239,7 @@
 }
 
 .timesheet-tab.active {
-  background: #5244a8;
+  background: #6656fc;
   box-shadow: none;
   color: #fff;
 }
@@ -282,7 +303,7 @@
 
 .month-nav-btn:hover {
   background: var(--ds-background-neutral);
-  border-color: #5244a8;
+  border-color: #6656fc;
   color: var(--ds-text);
   box-shadow: 0 2px 4px rgba(82, 68, 168, 0.2);
 }
@@ -318,16 +339,16 @@
   padding: var(--ds-space-100) var(--ds-space-200);
   font-size: 13px;
   font-weight: 500;
-  color: #5244a8;
+  color: #6656fc;
   background: var(--ds-background-default);
-  border: 1px solid #5244a8;
+  border: 1px solid #6656fc;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .today-btn:hover {
-  background: #5244a8;
+  background: #6656fc;
   color: #fff;
 }
 
@@ -338,7 +359,7 @@
 }
 
 .timesheet-header h3 {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--ds-text);
   margin: 0;
@@ -357,15 +378,11 @@
   border: 1px solid var(--ds-border);
   border-radius: 8px;
   padding: var(--ds-space-200);
-  transition: all 0.2s ease;
-  box-shadow: 0 1px 2px rgba(9, 30, 66, 0.08);
 }
 
 .team-member-card:hover {
   background: #f6f9fe;
   border-color: var(--ds-border-focused);
-  box-shadow: 0 4px 8px rgba(9, 30, 66, 0.15);
-  transform: translateY(-2px);
 }
 
 .member-header {
@@ -417,7 +434,7 @@
 .member-total {
   font-size: 16px;
   font-weight: 600;
-  color: #5244a8;
+  color: #6656fc;
 }
 
 .member-tasks {
@@ -444,7 +461,7 @@
 .task-time {
   font-size: 13px;
   font-weight: 600;
-  color: #5244a8;
+  color: #6656fc;
 }
 
 /* Week View Styles */
@@ -506,7 +523,7 @@
 .total-cell {
   text-align: center;
   font-weight: 600;
-  color: #5244a8;
+  color: #6656fc;
   font-size: 14px;
   background: rgba(82, 68, 168, 0.05);
 }
@@ -526,7 +543,7 @@
 .grand-total-cell {
   text-align: center;
   font-weight: 700;
-  color: #5244a8;
+  color: #6656fc;
   font-size: 14px;
 }
 
@@ -622,7 +639,7 @@
   left: 0;
   right: 0;
   height: 4px;
-  background: #5244a8;
+  background: #6656fc;
   border-radius: 0;
 }
 
@@ -647,7 +664,7 @@
 }
 
 .calendar-cell.today .cell-day {
-  color: #5244a8;
+  color: #6656fc;
   font-weight: 700;
 }
 
@@ -746,7 +763,7 @@
 .summary-time {
   font-size: 13px;
   font-weight: 600;
-  color: #5244a8;
+  color: #6656fc;
 }
 
 .summary-percentage {

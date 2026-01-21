@@ -1,16 +1,18 @@
 /* Organization Analytics Tab Styles */
 
 .org-analytics {
-  background: #fff;
+  background: #F4F5F7;
   min-height: calc(100vh - 100px);
-  padding: var(--ds-space-200);
+  padding: 16px;
 }
 
 .org-analytics > h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
   color: var(--ds-text);
-    font-size: 20px;
-    font-weight: 700;
-    margin: 0;
+  letter-spacing: -0.3px;
+  margin-bottom: 6px;
 }
 
 /* KPI Cards Row */
@@ -36,58 +38,57 @@
 .org-kpi-card {
   background: white;
   border-radius: 8px;
-  padding: 20px;
+  padding: 16px;
   display: flex;
   align-items: center;
   gap: 16px;
-  box-shadow: rgba(99, 99, 99, 0.2) 0px 2px 8px 0px;
+  box-shadow: rgba(99, 99, 99, 0.1) 0px 2px 8px 0px;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  border: 1px solid #e1e4e8;
+  min-height: 80px;
 }
 
 .org-kpi-card:nth-child(1) {
-  background: #EDF4FF;
+  background: #fff;
 }
 
 .org-kpi-card:nth-child(2) {
-  background: #FFF5E6;
+  background: #fff;
 }
 
 .org-kpi-card:nth-child(3) {
-  background: #E8F7F0;
-}
-
-.org-kpi-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 16px rgba(9, 30, 66, 0.12);
+  background: #fff;
 }
 
 .kpi-icon {
   width: 48px;
   height: 48px;
-  border-radius: 100%;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 24px;
   flex-shrink: 0;
   color: #fff;
 }
 
 .org-kpi-card:nth-child(1) .kpi-icon {
-  background: #5244a8;
+  background: #667eea;
 }
 
 .org-kpi-card:nth-child(2) .kpi-icon {
-  background: #fd8a20;
+  background: #f5576c;
 }
 
 .org-kpi-card:nth-child(3) .kpi-icon {
-  background: #00A885;
+  background: #4facfe;
 }
 
 .kpi-content {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .kpi-value-row {
@@ -97,10 +98,10 @@
 }
 
 .kpi-value {
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 700;
-  color: var(--ds-text);
-  line-height: 1.2;
+  color: #172B4D;
+  line-height: 1;
   letter-spacing: -0.5px;
 }
 
@@ -178,10 +179,10 @@
 
 .kpi-label {
   font-size: 11px;
-  color: var(--ds-text-subtle);
+  color: #5E6C84;
   text-transform: uppercase;
-  letter-spacing: 0.6px;
-  margin-top: 4px;
+  letter-spacing: 0.8px;
+  margin-top: 0;
   font-weight: 600;
 }
 

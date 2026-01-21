@@ -5,7 +5,7 @@ export const AiDisclaimer = () => (
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    padding: '8px',
+    padding: '16px',
     background: '#F4F5F7',
     borderRadius: '3px',
     marginTop: '8px',

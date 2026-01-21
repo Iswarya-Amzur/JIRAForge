@@ -1,31 +1,27 @@
 /* Team Analytics Tab Styles */
 
 .team-analytics {
-  background: #fff;
+  background: #F4F5F7;
   min-height: calc(100vh - 100px);
-  padding: var(--ds-space-200);
+  padding: 16px;
 }
 
 .team-analytics > h2 {
-  font-size: 24px;
-  font-weight: 600;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
   color: var(--ds-text);
-  margin: 0 0 var(--ds-space-100) 0;
   letter-spacing: -0.3px;
-  padding: var(--ds-space-300) var(--ds-space-400);
-  background: var(--ds-background-default);
-  border-bottom: 1px solid var(--ds-border);
-  margin: -24px -24px var(--ds-space-300) -24px;
-  padding-bottom: var(--ds-space-300);
+  margin-bottom: 16px;
 }
 
 .team-analytics-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 0px;
+  margin-bottom: 6px;
   flex-wrap: wrap;
-  gap: var(--ds-space-200);
+  gap: 16px;
 }
 
 .team-analytics-header h2 {
@@ -33,6 +29,7 @@
   font-size: 20px;
   font-weight: 700;
   color: var(--ds-text);
+  letter-spacing: -0.3px;
 }
 
 .team-analytics-header .project-selector {
@@ -41,7 +38,7 @@
   gap: 8px;
   border: none;
   margin-bottom: 0;
-  padding: 14px 0px;
+  padding: 6px 0px;
   background: transparent;
 }
 
@@ -85,37 +82,30 @@
 .team-kpi-card {
   background: white;
   border-radius: 8px;
-  padding: 20px;
-  box-shadow: none;
+  padding: 16px;
+  box-shadow: rgba(99, 99, 99, 0.1) 0px 2px 8px 0px;
   display: flex;
   align-items: center;
   gap: 16px;
+  border: 1px solid #e1e4e8;
+  min-height: 80px;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
-.team-kpi-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 2px 6px rgba(161, 161, 161, 0.2);
-}
-
-/* Individual card color themes - matching screenshot */
+/* Individual card color themes */
 .team-kpi-card:nth-child(1) {
-  background: #EDF4FF;
-  box-shadow: rgba(99, 99, 99, 0.2) 0px 2px 8px 0px;
+  background: #fff;
 }
 
 .team-kpi-card:nth-child(2) {
-  background: #FFF5E6;
-  box-shadow: rgba(99, 99, 99, 0.2) 0px 2px 8px 0px;
+  background: #fff;
 }
 
 .team-kpi-card:nth-child(3) {
-  background: #E8F7F0;
-  box-shadow: rgba(99, 99, 99, 0.2) 0px 2px 8px 0px;
+  background: #fff;
 }
 
 .team-kpi-card .kpi-icon {
-  font-size: 24px;
   width: 48px;
   height: 48px;
   display: flex;
@@ -123,34 +113,29 @@
   justify-content: center;
   border-radius: 8px;
   flex-shrink: 0;
-  border: 3px solid;
-  position: relative;
 }
 
-/* Icon colors for each card - matching screenshot exactly */
+/* Icon colors for each card - matching Time Analytics consistency */
 .team-kpi-card:nth-child(1) .kpi-icon {
-  background: #5244a8;
-  border-color: transparent;
+  background: #667eea;
   color: #fff;
-  border-radius: 100%;
 }
 
 .team-kpi-card:nth-child(2) .kpi-icon {
-  background: #fd8a20;
-    border-color: transparent;
-    color: #fff;
-    border-radius: 100%;
+  background: #f5576c;
+  color: #fff;
 }
 
 .team-kpi-card:nth-child(3) .kpi-icon {
-  background: #00A885;
-  border-color: transparent;
+  background: #4facfe;
   color: #fff;
-  border-radius: 100%;
 }
 
 .team-kpi-card .kpi-content {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .team-kpi-card .kpi-value-row {
@@ -160,20 +145,20 @@
 }
 
 .team-kpi-card .kpi-value {
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 700;
-  color: var(--ds-text);
-  line-height: 1.1;
+  color: #172B4D;
+  line-height: 1;
   letter-spacing: -0.5px;
 }
 
 .team-kpi-card .kpi-label {
   font-size: 11px;
-  color: var(--ds-text-subtle);
+  color: #5E6C84;
   text-transform: uppercase;
-  letter-spacing: 0.6px;
+  letter-spacing: 0.8px;
   margin-top: 4px;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 /* KPI Info Icon and Tooltip */

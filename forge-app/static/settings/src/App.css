@@ -425,7 +425,7 @@
   border-left: 4px solid var(--ds-background-brand-bold);
   padding: var(--ds-space-200);
   border-radius: 4px;
-  margin-bottom: var(--ds-space-300);
+  
   display: flex;
   align-items: center;
   gap: var(--ds-space-200);

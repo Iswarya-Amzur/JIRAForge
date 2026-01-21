@@ -186,7 +186,7 @@ html, body, #root {
 
 /* Cumulative Statistics - Shared */
 .cumulative-stat {
-  text-align: center;
+  
   padding: var(--ds-space-300) var(--ds-space-200);
 }
 

@@ -1,20 +1,20 @@
 /* UnassignedWork Container and Header Styles */
 
 .unassigned-work-container {
-  background: #fff;
+  background: #f4f5f7;
   min-height: calc(100vh - 100px);
   padding: var(--ds-space-200);
 }
 
 .unassigned-work-header {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 
 .header-top-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 6px;
 }
 
 .unassigned-work-header h2 {
@@ -118,12 +118,12 @@
   justify-content: flex-start;
   margin-top: 16px;
   padding: 16px 20px;
-  background: #EDF4FF;
+  background: #fff;
   border-radius: 8px;
   flex-wrap: wrap;
+  border: 1px solid var(--ds-border);
   gap: 12px;
   box-shadow: rgba(99, 99, 99, 0.2) 0px 2px 8px 0px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .notification-toggle-container {
@@ -140,6 +140,14 @@
   font-size: 14px;
   color: var(--ds-text);
   font-weight: 600;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.notification-label-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .notification-icon {
@@ -152,7 +160,7 @@
 }
 
 .notification-text {
-  margin-right: 4px;
+  flex: 1;
 }
 
 .notification-hint {
@@ -172,7 +180,7 @@
   min-height: 24px;
   flex-shrink: 0;
   vertical-align: middle;
-  margin-left: 8px;
+  margin-left: auto;
 }
 
 .notification-toggle-label .toggle-switch-wrapper .toggle-input {

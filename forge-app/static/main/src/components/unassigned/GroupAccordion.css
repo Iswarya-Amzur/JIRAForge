@@ -18,21 +18,10 @@
 
 .accordion-item:hover {
   border-color: #5244a8;
-  box-shadow: 0 4px 8px rgba(9, 30, 66, 0.15);
-  transform: translateY(-2px);
 }
 
-.accordion-item.confidence-high {
-  border-left: 4px solid #00A885;
-}
 
-.accordion-item.confidence-medium {
-  border-left: 4px solid #fd8a20;
-}
 
-.accordion-item.confidence-low {
-  border-left: 4px solid #DE350B;
-}
 
 /* Accordion Header */
 .accordion-header {
@@ -42,7 +31,6 @@
   padding: 16px 20px;
   cursor: pointer;
   user-select: none;
-  transition: background 0.2s;
 }
 
 .accordion-header:hover {
@@ -66,7 +54,6 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.2s ease;
   font-weight: 600;
   line-height: 1;
 }

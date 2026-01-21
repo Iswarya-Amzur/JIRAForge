@@ -141,7 +141,7 @@
 }
 
 .sidebar-item:hover .sidebar-icon svg {
-  color: var(--ds-text-brand);
+  color: #6250ff;
 }
 
 .sidebar-item.active .sidebar-icon svg {

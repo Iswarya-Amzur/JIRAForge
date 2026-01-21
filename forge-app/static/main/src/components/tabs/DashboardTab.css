@@ -55,7 +55,6 @@
 /* Focus Tabs */
 .focus-tabs {
   display: flex;
-  gap: var(--ds-space-100);
   margin-bottom: 18px;
   border-bottom: 1px solid var(--ds-border);
   padding-bottom:0;
@@ -71,6 +70,7 @@
     padding: 10px 16px;
     transition: none;
     color: #333;
+    background: transparent;
 }
 
 .focus-tabs button:hover {
