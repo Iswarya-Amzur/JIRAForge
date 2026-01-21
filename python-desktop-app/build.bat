@@ -1,13 +1,13 @@
 @echo off
 REM ============================================================================
-REM BRD Time Tracker - Build Script for Windows
+REM Time Tracker - Build Script for Windows
 REM Creates a compressed standalone executable with embedded credentials
 REM No .env file needed for distribution - credentials are embedded in code
 REM ============================================================================
 
 echo.
 echo ============================================
-echo  BRD Time Tracker - Build Script
+echo  Time Tracker - Build Script
 echo ============================================
 echo.
 echo NOTE: Credentials are embedded in desktop_app.py
@@ -83,7 +83,7 @@ if errorlevel 1 (
 )
 
 REM Check if build was successful
-if exist "dist\BRDTimeTracker.exe" (
+if exist "dist\TimeTracker.exe" (
     echo.
     echo ============================================
     echo  BUILD SUCCESSFUL!
@@ -91,9 +91,9 @@ if exist "dist\BRDTimeTracker.exe" (
     echo.
 
     REM Get file size
-    for %%A in ("dist\BRDTimeTracker.exe") do (
+    for %%A in ("dist\TimeTracker.exe") do (
         set /a size=%%~zA / 1024 / 1024
-        echo Executable: dist\BRDTimeTracker.exe
+        echo Executable: dist\TimeTracker.exe
         echo Size: ~%%~zA bytes
     )
 
@@ -108,10 +108,10 @@ if exist "dist\BRDTimeTracker.exe" (
     echo   - Credentials embedded - no .env file needed
     echo   - Auto-start on Windows boot via registry
     echo   - Uninstaller generated on first run
-    echo   - Data stored in: %%LOCALAPPDATA%%\BRDTimeTracker
+    echo   - Data stored in: %%LOCALAPPDATA%%\TimeTracker
     echo.
     echo Users simply:
-    echo   1. Double-click BRDTimeTracker.exe
+    echo   1. Double-click TimeTracker.exe
     echo   2. Login with Atlassian
     echo   3. Done!
     echo.
