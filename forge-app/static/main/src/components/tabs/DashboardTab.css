@@ -247,29 +247,27 @@
   display: inline-block;
   padding: 4px 10px;
   border-radius: 50px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  text-transform: capitalize;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
 }
 
 .priority-highest,
 .priority-high {
-  background: #FFEBE6;
+  background: #ffebe6;
   color: #DE350B;
-  border-radius: 50px;
 }
 
 .priority-medium {
-  background: #FFF0B3;
-  color: #FF991F;
-  border-radius: 50px;
+  background: #FFF5E6;
+  color: #fd8a20;
 }
 
 .priority-low,
 .priority-lowest {
-  background: #E3FCEF;
-  color: #00875A;
-  border-radius: 50px;
+  background: #E8F7F0;
+  color: #00A885;
 }
 
 /* Expandable Rows for Work Sessions */
