@@ -56,7 +56,7 @@ function TimeAnalyticsTab() {
         <div className="download-banner-content">
           <div className="download-banner-text">
             <span className="download-banner-title">Timesheet Tracker</span>
-            <span className="download-banner-subtitle">Download Timesheet Tracker as a New User!</span>
+            <span className="download-banner-subtitle">Download Timesheet Tracker</span>
           </div>
           <div className="download-banner-platforms">
             <div className="platform-option">
