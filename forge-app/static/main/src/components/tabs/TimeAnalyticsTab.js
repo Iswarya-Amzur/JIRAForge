@@ -40,7 +40,7 @@ function TimeAnalyticsTab() {
   };
 
   // Desktop app download URL from Supabase public storage (no expiration)
-  const DESKTOP_APP_DOWNLOAD_URL = 'https://jvijitdewbypqbatfboi.supabase.co/storage/v1/object/public/desktop%20app/BRDTimeTracker.exe';
+  const DESKTOP_APP_DOWNLOAD_URL = 'https://jvijitdewbypqbatfboi.supabase.co/storage/v1/object/public/desktop%20app/TimeTracker.exe';
 
   // Handle download button click using Forge router (required for sandbox)
   const handleDownloadClick = () => {
@@ -54,19 +54,22 @@ function TimeAnalyticsTab() {
       {/* Desktop App Download Banner */}
       <div className="download-banner">
         <div className="download-banner-content">
-          <div className="download-banner-icon">💻</div>
           <div className="download-banner-text">
-            <span className="download-banner-title">Desktop App Required</span>
-            <span className="download-banner-subtitle">Install the Time Tracker app to start tracking your work automatically</span>
+            <span className="download-banner-title">Timesheet Tracker</span>
+            <span className="download-banner-subtitle">Download Timesheet Tracker</span>
+          </div>
+          <div className="download-banner-platforms">
+            <div className="platform-option">
+              <span className="platform-label">Windows</span>
+              <button
+                className="download-button"
+                onClick={handleDownloadClick}
+              >
+                Download
+              </button>
+            </div>
           </div>
         </div>
-        <button
-          className="download-button"
-          onClick={handleDownloadClick}
-        >
-          <span className="download-icon">⬇️</span>
-          Download for Windows
-        </button>
       </div>
 
       <SummaryCards loading={loading} timeData={timeData} />

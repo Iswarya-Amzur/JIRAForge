@@ -300,8 +300,14 @@ export async function getGroupScreenshots(req) {
 
           // Generate signed URL for thumbnail
           let signed_thumbnail_url = screenshot.thumbnail_url;
+          let signed_url = null;
+
           if (screenshot.storage_path) {
             try {
+              // Generate signed URL for full-size image
+              signed_url = await generateSignedUrl(supabaseConfig, 'screenshots', screenshot.storage_path, 3600);
+
+              // Generate signed URL for thumbnail
               let thumbPath;
               if (screenshot.storage_path.includes('/')) {
                 const dirPath = screenshot.storage_path.substring(0, screenshot.storage_path.lastIndexOf('/'));
@@ -323,7 +329,8 @@ export async function getGroupScreenshots(req) {
             timestamp: screenshot.timestamp,
             window_title: screenshot.window_title,
             application_name: screenshot.application_name,
-            signed_thumbnail_url
+            signed_thumbnail_url,
+            signed_url
           };
         })
       );
@@ -336,6 +343,13 @@ export async function getGroupScreenshots(req) {
     }
 
     const validScreenshots = screenshotsWithUrls.filter(Boolean);
+
+    // Sort screenshots by timestamp in descending order (latest first)
+    validScreenshots.sort((a, b) => {
+      const dateA = a.timestamp ? new Date(a.timestamp) : new Date(0);
+      const dateB = b.timestamp ? new Date(b.timestamp) : new Date(0);
+      return dateB - dateA;
+    });
 
     return {
       success: true,

@@ -95,6 +95,8 @@
   gap: var(--ds-space-150);
   padding: var(--ds-space-150) var(--ds-space-300);
   border: none;
+    border-bottom-left-radius: 8px;
+    border-top-left-radius: 8px;
   background: transparent;
   cursor: pointer;
   font-size: 14px;
@@ -114,23 +116,36 @@
 
 .sidebar-item:hover {
   background: var(--ds-background-neutral-subtle);
-  color: var(--ds-text-brand);
+  color: #6656fc;
 }
 
 .sidebar-item.active {
-  background: #DEEBFF;
-  color: var(--ds-text-brand);
-  border-left-color: var(--ds-background-brand-bold);
-  font-weight: 600;
+      background: #6656fc;
+    border-left-color: #6656fc;
+    color: #ffffff;
+    font-weight: 600;
 }
 
 .sidebar-icon {
-  font-size: 18px;
-  min-width: 20px;
+  min-width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+.sidebar-icon svg {
+  color: var(--ds-text-subtle);
+  transition: color 0.2s ease;
+}
+
+.sidebar-item:hover .sidebar-icon svg {
+  color: #6656fc;
+}
+
+.sidebar-item.active .sidebar-icon svg {
+  color: #ffffff;
 }
 
 .sidebar-label {

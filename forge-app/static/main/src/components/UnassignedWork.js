@@ -255,7 +255,10 @@ function UnassignedWork() {
               onClick={() => setShowBulkEditModal(true)}
               title="Bulk reassign activities by time interval"
             >
-              <span className="clock-icon">🕐</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
               Bulk Time Edit
             </button>
           </div>
@@ -278,8 +281,15 @@ function UnassignedWork() {
         <div className="notification-settings-row">
           <div className="notification-toggle-container">
             <label className="notification-toggle-label">
-              <span className="notification-icon">🔔</span>
-              <span className="notification-text">Desktop Notifications</span>
+              <div className="notification-label-content">
+                <span className="notification-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                  </svg>
+                </span>
+                <span className="notification-text">Desktop Notifications</span>
+              </div>
               <div className="toggle-switch-wrapper">
                 <input
                   type="checkbox"

@@ -68,7 +68,7 @@ html, body, #root {
   top: 0;
   left: 0;
   right: 0;
-  height: 3px;
+  height: 2px;
   background: linear-gradient(90deg, var(--ds-background-brand-bold) 0%, var(--ds-background-accent-blue) 100%);
   z-index: 100;
 }
@@ -147,6 +147,7 @@ html, body, #root {
   overflow-y: auto;
   padding: var(--ds-space-300);
   background: var(--ds-background-neutral);
+  padding: 0;
 }
 
 /* Analytics Grid - Shared */
@@ -159,19 +160,19 @@ html, body, #root {
 
 .analytics-card {
   background: var(--ds-background-default);
-  border: 1px solid var(--ds-border);
+  
   border-radius: 4px;
   padding: var(--ds-space-200);
   box-shadow: 0 1px 2px rgba(9, 30, 66, 0.1);
   transition: all 0.2s ease;
   position: relative;
-  border-top: 4px solid var(--ds-background-accent-blue);
+  
 }
 
 .analytics-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 8px 16px -4px rgba(9, 30, 66, 0.15);
-  border-color: var(--ds-border-focused);
+  
 }
 
 .analytics-card h3 {
@@ -185,7 +186,7 @@ html, body, #root {
 
 /* Cumulative Statistics - Shared */
 .cumulative-stat {
-  text-align: center;
+  
   padding: var(--ds-space-300) var(--ds-space-200);
 }
 
