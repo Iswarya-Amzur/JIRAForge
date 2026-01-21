@@ -463,25 +463,37 @@
 
 .add-button:disabled {
   background: #DFE1E6;
+  color: #A5ADBA;
   cursor: not-allowed;
 }
 
+/* All add buttons use consistent primary color */
 .add-button.blacklist-add {
-  background: #DE350B;
+  background: #6656fc;
 }
 
 .add-button.blacklist-add:hover:not(:disabled) {
-  background: #FF5630;
-  box-shadow: 0 2px 4px rgba(222, 53, 11, 0.3);
+  background: #5b4bf0;
+  box-shadow: 0 2px 4px rgba(102, 86, 252, 0.3);
+}
+
+.add-button.blacklist-add:disabled {
+  background: #DFE1E6;
+  color: #A5ADBA;
 }
 
 .add-button.private-add {
-  background: #6554C0;
+  background: #6656fc;
 }
 
 .add-button.private-add:hover:not(:disabled) {
-  background: #8777D9;
-  box-shadow: 0 2px 4px rgba(101, 84, 192, 0.3);
+  background: #5b4bf0;
+  box-shadow: 0 2px 4px rgba(102, 86, 252, 0.3);
+}
+
+.add-button.private-add:disabled {
+  background: #DFE1E6;
+  color: #A5ADBA;
 }
 
 /* Tags Container */
