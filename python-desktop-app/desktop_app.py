@@ -2840,7 +2840,7 @@ class TimeTracker:
             return []
 
         try:
-            jql = 'assignee = currentUser() AND status = "In Progress"'
+            jql = 'assignee = currentUser() AND Sprint in openSprints() AND status = "In Progress"'
             print(f"[INFO] Querying Jira with JQL (POST): {jql}")
 
             # Use /search/jql endpoint as requested by the 410 error message
