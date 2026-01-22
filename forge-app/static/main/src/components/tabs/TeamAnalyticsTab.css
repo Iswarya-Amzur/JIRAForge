@@ -170,7 +170,7 @@
 .team-kpi-card .kpi-info-icon {
   
   align-items: center;
-    background: #deebff;
+    background: transparent;
     border-radius: 50%;
     color: #1868db;
     border: 1px solid #4c9aff;
@@ -345,7 +345,6 @@
 
 /* Team Member Table */
 .team-member-table-container {
-  overflow-x: auto;
   overflow-y: visible;
   padding: 22px;
 }
@@ -645,20 +644,21 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 13px;
+  height: 13x;
   font-size: 10px;
   font-style: normal;
-  background: var(--ds-background-neutral);
-  color: var(--ds-text-subtle);
+  background: transparent;
+  color: var(--ds-text);
   border-radius: 50%;
   cursor: help;
   transition: background-color 0.15s ease;
+  border: 1px solid #1868db;
 }
 
 .info-icon:hover {
-  background: var(--ds-background-neutral-hovered);
-  color: var(--ds-text);
+  background: #1868db;
+    color: #fff;
 }
 
 .info-icon-wrapper:hover {

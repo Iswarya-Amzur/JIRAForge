@@ -61,7 +61,7 @@ function SummaryCards({ loading, timeData }) {
           </svg>
         </div>
         <div className="card-content">
-          <h3>Today's Total</h3>
+          <h3>Time Spent Today</h3>
           {loading ? (
             <p>Loading...</p>
           ) : (
@@ -82,7 +82,7 @@ function SummaryCards({ loading, timeData }) {
           </svg>
         </div>
         <div className="card-content">
-          <h3>This Week's Total</h3>
+          <h3>Time Spent This Week</h3>
           {loading ? (
             <p>Loading...</p>
           ) : (
@@ -105,7 +105,7 @@ function SummaryCards({ loading, timeData }) {
           </svg>
         </div>
         <div className="card-content">
-          <h3>This Month's Total</h3>
+          <h3>Time Spent This Month</h3>
           {loading ? (
             <p>Loading...</p>
           ) : (
