@@ -118,6 +118,7 @@
   font-size: 16px;
   font-weight: 600;
   color: #172b4d;
+  margin-bottom: 4px;
 }
 
 .assign-button-compact {
@@ -131,6 +132,7 @@
   cursor: pointer;
   transition: all 0.2s ease;
   white-space: nowrap;
+  display: none;
 }
 
 .assign-button-compact:hover {
@@ -194,11 +196,24 @@
 }
 
 .group-recommendation {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
   padding: 12px;
   border-radius: 4px;
   margin-bottom: 16px;
   font-size: 13px;
   line-height: 1.5;
+}
+
+.group-recommendation .recommendation-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.group-recommendation .confidence-badge {
+  flex-shrink: 0;
+  margin-left: 16px;
 }
 
 .group-recommendation.recommendation-assign_to_existing {

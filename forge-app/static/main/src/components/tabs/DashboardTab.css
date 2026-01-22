@@ -136,11 +136,12 @@
   padding: var(--ds-space-150) var(--ds-space-200);
   font-size: 14px;
   color: var(--ds-text);
+  line-height: 1.0;
 }
 
 .issue-key {
   font-weight: 600;
-  min-width: 180px;
+  min-width: 84px;
   display: flex;
   align-items: center;
   gap: 0;
@@ -204,14 +205,14 @@
 .issue-status,
 .issue-priority {
   text-align: center;
-  min-width: 100px;
+  min-width: 80px;
 }
 
 .issue-time {
   text-align: right;
   font-weight: 600;
-  color: var(--ds-text-brand);
-  min-width: 100px;
+  color: var(--ds-text-subtle);
+  min-width: 80px;
 }
 
 /* Status Badge */
@@ -386,7 +387,7 @@
 }
 
 .date-total {
-  color: var(--ds-text-brand);
+  color: var(--ds-text-subtle);
   font-weight: 600;
   font-size: 13px;
 }
@@ -422,11 +423,11 @@
 }
 
 .session-duration {
-  color: var(--ds-text-brand);
+  color: var(--ds-text-subtle);
   font-weight: 600;
-  min-width: 80px;
+  min-width: 24px;
   text-align: right;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 /* Session Actions Container */
@@ -465,7 +466,7 @@
   opacity: 0.8;
   transition: all 0.2s;
   border-radius: 4px;
-  display: flex;
+  display: none;
   align-items: center;
   gap: 4px;
   color: var(--ds-text-subtle);

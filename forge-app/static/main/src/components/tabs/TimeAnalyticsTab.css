@@ -433,7 +433,7 @@
 .member-total {
   font-size: 16px;
   font-weight: 600;
-  color: #6656fc;
+  color: var(--ds-text);
 }
 
 .member-tasks {
@@ -512,7 +512,7 @@
 }
 
 .time-cell {
-  text-align: center;
+  text-align: start;
   color: var(--ds-text);
   font-weight: 500;
   font-size: 13px;
@@ -520,9 +520,9 @@
 }
 
 .total-cell {
-  text-align: center;
+  text-align: start;
   font-weight: 600;
-  color: #6656fc;
+  color: var(--ds-text);
   font-size: 14px;
   background: rgba(82, 68, 168, 0.05);
 }
@@ -540,9 +540,9 @@
 }
 
 .grand-total-cell {
-  text-align: center;
+  text-align: start;
   font-weight: 700;
-  color: #6656fc;
+  color: var(--ds-text);
   font-size: 14px;
 }
 
@@ -761,7 +761,7 @@
 .summary-time {
   font-size: 13px;
   font-weight: 600;
-  color: #6656fc;
+  color: var(--ds-text);
 }
 
 .summary-percentage {

@@ -157,9 +157,6 @@ function GroupAccordion({
                       <p className="group-description-preview">{group.description}</p>
                     )}
                   </div>
-                  <span className={`confidence-badge confidence-${group.confidence}`}>
-                    {group.confidence}
-                  </span>
                 </div>
                 <div className="accordion-header-right">
                   <div className="stat-compact">
@@ -196,12 +193,17 @@ function GroupAccordion({
 
                   {group.recommendation && (
                     <div className={`group-recommendation recommendation-${group.recommendation.action}`}>
-                      <strong>AI Recommendation:</strong> {group.recommendation.reason}
-                      {group.recommendation.suggested_issue_key && (
-                        <div className="suggested-issue">
-                          Suggested Issue: <strong>{group.recommendation.suggested_issue_key}</strong>
-                        </div>
-                      )}
+                      <span className={`confidence-badge confidence-${group.confidence}`}>
+                        {group.confidence}
+                      </span>
+                      <div className="recommendation-content">
+                        <strong>AI Recommendation:</strong> {group.recommendation.reason}
+                        {group.recommendation.suggested_issue_key && (
+                          <div className="suggested-issue">
+                            Suggested Issue: <strong>{group.recommendation.suggested_issue_key}</strong>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
 
