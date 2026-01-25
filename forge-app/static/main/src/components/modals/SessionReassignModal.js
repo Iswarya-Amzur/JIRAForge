@@ -15,8 +15,10 @@ function SessionReassignModal({
 }) {
   if (!isOpen || !sessionToReassign) return null;
 
+  // Filter out the current issue and any "Done" issues (only show active/in-progress issues)
   const filteredIssues = activeIssues.filter(
-    issue => issue.key !== sessionToReassign.fromIssueKey
+    issue => issue.key !== sessionToReassign.fromIssueKey &&
+             issue.statusCategory !== 'done'
   );
 
   return (

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
-import { AssignmentModal, BulkEditModal, FullscreenViewer, GroupAccordion } from './unassigned';
+import { AssignmentModal, BulkEditModal, GroupAccordion } from './unassigned';
 import { AiDisclaimer } from './common/AiDisclaimer';
+import { formatTime } from '../utils';
 import './UnassignedWork.css';
 
 function UnassignedWork() {
@@ -23,11 +24,6 @@ function UnassignedWork() {
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [showBulkEditModal, setShowBulkEditModal] = useState(false);
-
-  // Fullscreen screenshot state
-  const [fullscreenOpen, setFullscreenOpen] = useState(false);
-  const [fullscreenScreenshots, setFullscreenScreenshots] = useState([]);
-  const [fullscreenIndex, setFullscreenIndex] = useState(0);
 
   // Notification settings state
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -161,31 +157,6 @@ function UnassignedWork() {
     }
   };
 
-  // Fullscreen handlers
-  const openFullscreen = (groupId, index, screenshots) => {
-    setFullscreenScreenshots(screenshots);
-    setFullscreenIndex(index);
-    setFullscreenOpen(true);
-  };
-
-  const closeFullscreen = () => {
-    setFullscreenOpen(false);
-    setFullscreenScreenshots([]);
-    setFullscreenIndex(0);
-  };
-
-  const nextFullscreenImage = () => {
-    if (fullscreenScreenshots.length > 0) {
-      setFullscreenIndex((prev) => (prev < fullscreenScreenshots.length - 1 ? prev + 1 : 0));
-    }
-  };
-
-  const prevFullscreenImage = () => {
-    if (fullscreenScreenshots.length > 0) {
-      setFullscreenIndex((prev) => (prev > 0 ? prev - 1 : fullscreenScreenshots.length - 1));
-    }
-  };
-
   // Assignment handlers
   const handleAssignClick = (groupWithDetails) => {
     setSelectedGroup(groupWithDetails);
@@ -209,19 +180,6 @@ function UnassignedWork() {
 
   const getTotalSessions = () => {
     return groups.reduce((sum, g) => sum + (g.session_count || 0), 0);
-  };
-
-  const formatDuration = (seconds) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-
-    if (hours > 0 && minutes > 0) {
-      return `${hours}h ${minutes}m`;
-    } else if (hours > 0) {
-      return `${hours}h`;
-    } else {
-      return `${minutes}m`;
-    }
   };
 
   if (loading) {
@@ -273,7 +231,7 @@ function UnassignedWork() {
           </span>
           <span className="summary-divider">•</span>
           <span className="summary-item">
-            <strong>{formatDuration(getTotalTime())}</strong> total time
+            <strong>{formatTime(getTotalTime())}</strong> total time
           </span>
         </div>
 
@@ -330,7 +288,6 @@ function UnassignedWork() {
         loadingMore={loadingMore}
         onLoadMore={loadMoreGroups}
         onAssignClick={handleAssignClick}
-        onOpenFullscreen={openFullscreen}
       />
 
       {/* Assignment Modal */}
@@ -341,16 +298,6 @@ function UnassignedWork() {
         userProjects={userProjects}
         onClose={() => setShowAssignModal(false)}
         onAssignmentComplete={handleAssignmentComplete}
-      />
-
-      {/* Fullscreen Screenshot View */}
-      <FullscreenViewer
-        isOpen={fullscreenOpen}
-        screenshots={fullscreenScreenshots}
-        currentIndex={fullscreenIndex}
-        onClose={closeFullscreen}
-        onNext={nextFullscreenImage}
-        onPrev={prevFullscreenImage}
       />
 
       {/* Bulk Time Edit Modal */}

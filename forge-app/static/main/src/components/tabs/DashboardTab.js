@@ -51,7 +51,9 @@ function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
 
   const calculateTotalDuration = (sessions) => {
     return sessions.reduce((sum, s) => {
-      return sum + (s.duration || Math.round((new Date(s.endTime) - new Date(s.startTime)) / 1000));
+      // Always calculate from time difference for accurate display
+      const calculatedDuration = Math.round((new Date(s.endTime) - new Date(s.startTime)) / 1000);
+      return sum + calculatedDuration;
     }, 0);
   };
 
@@ -177,8 +179,8 @@ function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
                                             {dateSessions.map((session, sessionIdx) => {
                                               const start = new Date(session.startTime);
                                               const end = new Date(session.endTime);
-                                              const sessionDuration = session.duration ||
-                                                Math.round((end - start) / 1000);
+                                              // Always calculate from time difference for accurate display
+                                              const sessionDuration = Math.round((end - start) / 1000);
 
                                               return (
                                                 <div key={sessionIdx} className="session-item">

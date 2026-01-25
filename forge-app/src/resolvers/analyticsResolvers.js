@@ -3,7 +3,10 @@
  * Resolver definitions for time analytics endpoints
  */
 
-import { fetchTimeAnalytics, fetchAllAnalytics, fetchProjectAnalytics, fetchProjectTeamAnalytics } from '../services/analyticsService.js';
+import { fetchTimeAnalytics, fetchTimeAnalyticsBatch, fetchAllAnalytics, fetchProjectAnalytics, fetchProjectTeamAnalytics } from '../services/analyticsService.js';
+
+// Feature flag for using batch API (set to true for production)
+const USE_BATCH_API = true;
 
 /**
  * Register analytics resolvers
@@ -12,6 +15,7 @@ import { fetchTimeAnalytics, fetchAllAnalytics, fetchProjectAnalytics, fetchProj
 export function registerAnalyticsResolvers(resolver) {
   /**
    * Resolver for fetching time analytics data from Supabase
+   * Uses optimized batch API to reduce API calls from 8+ to 1
    */
   resolver.define('getTimeAnalytics', async (req) => {
     const { context } = req;
@@ -19,7 +23,10 @@ export function registerAnalyticsResolvers(resolver) {
     const cloudId = context.cloudId;  // Multi-tenancy: Get Jira Cloud ID from context
 
     try {
-      const data = await fetchTimeAnalytics(accountId, cloudId);
+      // Use batch API for improved performance (reduces API calls from 8+ to 1)
+      const data = USE_BATCH_API 
+        ? await fetchTimeAnalyticsBatch(accountId, cloudId)
+        : await fetchTimeAnalytics(accountId, cloudId);
       return {
         success: true,
         data

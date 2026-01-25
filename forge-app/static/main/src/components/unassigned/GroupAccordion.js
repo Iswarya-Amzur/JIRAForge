@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { invoke } from '@forge/bridge';
+import { formatTime } from '../../utils';
 import './GroupAccordion.css';
 
 function GroupAccordion({
@@ -8,25 +9,44 @@ function GroupAccordion({
   totalGroups,
   loadingMore,
   onLoadMore,
-  onAssignClick,
-  onOpenFullscreen
+  onAssignClick
 }) {
   // Accordion states
   const [expandedGroups, setExpandedGroups] = useState(new Set());
-  const [groupScreenshots, setGroupScreenshots] = useState({});
-  const [loadingScreenshots, setLoadingScreenshots] = useState({});
+  const [groupWorkSessions, setGroupWorkSessions] = useState({});
+  const [loadingWorkSessions, setLoadingWorkSessions] = useState({});
   const [groupDetails, setGroupDetails] = useState({});
   const [loadingDetails, setLoadingDetails] = useState({});
 
-  const formatTimestamp = (timestamp) => {
-    const date = new Date(timestamp);
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
+  const formatTimeOfDay = (dateString) => {
+    const date = new Date(dateString);
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
       minute: '2-digit',
       hour12: true
     });
+  };
+
+  const formatDate = (dateString) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+  };
+
+  const getSessionDuration = (session) => {
+    // Use actual tracked duration from backend (sum of screenshot durations)
+    // Fall back to calculated time span for backwards compatibility
+    if (session.durationSeconds !== undefined && session.durationSeconds !== null) {
+      return session.durationSeconds;
+    }
+    // Fallback: calculate from time span (less accurate for merged sessions)
+    const start = new Date(session.startTime);
+    const end = new Date(session.endTime);
+    return Math.round((end - start) / 1000);
   };
 
   const toggleGroup = async (groupId) => {
@@ -36,7 +56,7 @@ function GroupAccordion({
       // Collapse
       newExpanded.delete(groupId);
     } else {
-      // Expand - load group details and screenshots if not already loaded
+      // Expand - load group details and work sessions if not already loaded
       newExpanded.add(groupId);
 
       // LAZY LOADING: Load group details (session_ids) if not cached
@@ -48,23 +68,23 @@ function GroupAccordion({
           if (detailsResult.success) {
             setGroupDetails(prev => ({ ...prev, [groupId]: detailsResult }));
 
-            // Now load screenshots using the session_ids from details
+            // Now load work sessions using the session_ids from details
             if (detailsResult.session_ids && detailsResult.session_ids.length > 0) {
-              setLoadingScreenshots(prev => ({ ...prev, [groupId]: true }));
+              setLoadingWorkSessions(prev => ({ ...prev, [groupId]: true }));
               try {
-                const screenshotsResult = await invoke('getGroupScreenshots', {
+                const sessionsResult = await invoke('getGroupWorkSessions', {
                   sessionIds: detailsResult.session_ids
                 });
-                if (screenshotsResult.success) {
-                  setGroupScreenshots(prev => ({
+                if (sessionsResult.success) {
+                  setGroupWorkSessions(prev => ({
                     ...prev,
-                    [groupId]: screenshotsResult.screenshots || []
+                    [groupId]: sessionsResult.dateGroups || []
                   }));
                 }
               } catch (err) {
-                console.error('Error loading screenshots for group:', err);
+                console.error('Error loading work sessions for group:', err);
               } finally {
-                setLoadingScreenshots(prev => ({ ...prev, [groupId]: false }));
+                setLoadingWorkSessions(prev => ({ ...prev, [groupId]: false }));
               }
             }
           } else {
@@ -76,19 +96,19 @@ function GroupAccordion({
           setLoadingDetails(prev => ({ ...prev, [groupId]: false }));
         }
       } else {
-        // Details already loaded, just load screenshots if needed
+        // Details already loaded, just load work sessions if needed
         const details = groupDetails[groupId];
-        if (!groupScreenshots[groupId] && details.session_ids && details.session_ids.length > 0) {
-          setLoadingScreenshots(prev => ({ ...prev, [groupId]: true }));
+        if (!groupWorkSessions[groupId] && details.session_ids && details.session_ids.length > 0) {
+          setLoadingWorkSessions(prev => ({ ...prev, [groupId]: true }));
           try {
-            const result = await invoke('getGroupScreenshots', { sessionIds: details.session_ids });
+            const result = await invoke('getGroupWorkSessions', { sessionIds: details.session_ids });
             if (result.success) {
-              setGroupScreenshots(prev => ({ ...prev, [groupId]: result.screenshots || [] }));
+              setGroupWorkSessions(prev => ({ ...prev, [groupId]: result.dateGroups || [] }));
             }
           } catch (err) {
-            console.error('Error loading screenshots for group:', err);
+            console.error('Error loading work sessions for group:', err);
           } finally {
-            setLoadingScreenshots(prev => ({ ...prev, [groupId]: false }));
+            setLoadingWorkSessions(prev => ({ ...prev, [groupId]: false }));
           }
         }
       }
@@ -136,8 +156,8 @@ function GroupAccordion({
       <div className="groups-accordion">
         {groups.map((group, index) => {
           const isExpanded = expandedGroups.has(group.id);
-          const screenshots = groupScreenshots[group.id] || [];
-          const isLoadingScreenshots = loadingScreenshots[group.id];
+          const dateGroups = groupWorkSessions[group.id] || [];
+          const isLoadingWorkSessionsForGroup = loadingWorkSessions[group.id];
           const isLoadingGroupDetails = loadingDetails[group.id];
           const details = groupDetails[group.id];
 
@@ -218,64 +238,49 @@ function GroupAccordion({
                   {/* Show details when loaded */}
                   {!isLoadingGroupDetails && details && (
                     <>
-                      <div className="screenshots-section">
-                        <h4 className="screenshots-title">
-                          Screenshots ({details.session_count})
-                        </h4>
-
-                        {isLoadingScreenshots && (
-                          <div className="loading-screenshots">Loading screenshots...</div>
+                      <div className="work-sessions-section">
+                        {isLoadingWorkSessionsForGroup && (
+                          <div className="loading-sessions">Loading work sessions...</div>
                         )}
 
-                        {!isLoadingScreenshots && screenshots.length === 0 && (
-                          <div className="no-screenshots">No screenshots available</div>
+                        {!isLoadingWorkSessionsForGroup && dateGroups.length === 0 && (
+                          <div className="no-sessions">No work sessions available</div>
                         )}
 
-                        {!isLoadingScreenshots && screenshots.length > 0 && (
-                          <div className="screenshots-grid">
-                            {screenshots.map((screenshot, idx) => (
-                              <div key={screenshot.id || idx} className="screenshot-card">
-                                <div
-                                  className="screenshot-thumbnail clickable"
-                                  onClick={() => onOpenFullscreen(group.id, idx, screenshots)}
-                                  title="Click to expand"
-                                >
-                                  {screenshot.signed_thumbnail_url ? (
-                                    <img
-                                      src={screenshot.signed_thumbnail_url}
-                                      alt={`Screenshot ${idx + 1}`}
-                                      loading="lazy"
-                                    />
-                                  ) : (
-                                    <div className="screenshot-placeholder">
-                                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
-                                          <circle cx="12" cy="13" r="4"></circle>
-                                        </svg>
-                                        <span>No preview</span>
-                                    </div>
-                                  )}
-                                  <div className="expand-icon">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                      <circle cx="11" cy="11" r="8"></circle>
-                                      <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                                      <line x1="11" y1="8" x2="11" y2="14"></line>
-                                      <line x1="8" y1="11" x2="14" y2="11"></line>
-                                    </svg>
-                                  </div>
+                        {!isLoadingWorkSessionsForGroup && dateGroups.length > 0 && (
+                          <div className="sessions-by-date">
+                            {dateGroups.map((dateGroup, dateIdx) => (
+                              <div key={dateIdx} className="date-group">
+                                <div className="date-header">
+                                  <span className="date-label">
+                                    {formatDate(dateGroup.date)}
+                                  </span>
+                                  <span className="date-total">
+                                    Total: {formatTime(dateGroup.totalSeconds)}
+                                  </span>
                                 </div>
-                                <div className="screenshot-info">
-                                  <div className="screenshot-time">
-                                    {formatTimestamp(screenshot.timestamp)}
-                                  </div>
-                                  <div className="screenshot-details">
-                                    <div className="screenshot-app" title={screenshot.application_name}>
-                                      {screenshot.application_name || 'Unknown'}
-                                    </div>
-                                    <div className="screenshot-window" title={screenshot.window_title}>
-                                      {screenshot.window_title || 'No title'}
-                                    </div>
-                                  </div>
+                                <div className="sessions-list">
+                                  {dateGroup.sessions.map((session, sessionIdx) => {
+                                    const sessionDuration = getSessionDuration(session);
+                                    return (
+                                      <div key={sessionIdx} className="session-item">
+                                        <span className="session-time">
+                                          {formatTimeOfDay(session.startTime)}
+                                          {' → '}
+                                          {formatTimeOfDay(session.endTime)}
+                                        </span>
+                                        <span className="session-duration-icon">
+                                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <circle cx="12" cy="12" r="10"></circle>
+                                            <polyline points="12 6 12 12 16 14"></polyline>
+                                          </svg>
+                                        </span>
+                                        <span className="session-duration">
+                                          {formatTime(sessionDuration)}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               </div>
                             ))}

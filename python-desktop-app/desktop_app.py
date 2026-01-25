@@ -2052,8 +2052,11 @@ class TimeTracker:
                 # Create or update user in Supabase
                 self.current_user = user_info
                 self.current_user_id = self.ensure_user_exists(user_info)
-                
+
                 print(f"[OK] Authenticated user: {user_info.get('email', 'unknown')}")
+
+                # Update desktop app status to logged in
+                self._update_desktop_status(logged_in=True)
 
                 # Associate any anonymous offline records with this user
                 self._associate_offline_records()
@@ -2374,6 +2377,9 @@ class TimeTracker:
                 try:
                     user_email = self.current_user.get('email', 'Unknown') if self.current_user else 'No user'
 
+                    # Update desktop status to logged out (before clearing user_id)
+                    self._update_desktop_status(logged_in=False)
+
                     # Stop tracking first
                     if self.running:
                         self.stop_tracking()
@@ -2649,6 +2655,57 @@ class TimeTracker:
         if cached:
             return cached.get('user_id')
         return None
+
+    def _update_desktop_status(self, logged_in=True):
+        """Update desktop app login status in Supabase
+
+        Args:
+            logged_in: True when logging in, False when logging out
+        """
+        if not self.current_user_id or self.current_user_id.startswith('anonymous_'):
+            return
+
+        try:
+            client = self.supabase_service if self.supabase_service else self.supabase
+            if not client:
+                print("[WARN] No Supabase client available for status update")
+                return
+
+            update_data = {
+                'desktop_logged_in': logged_in,
+                'desktop_last_heartbeat': datetime.now().isoformat()
+            }
+
+            # Add app version if logging in
+            if logged_in:
+                update_data['desktop_app_version'] = getattr(self, 'APP_VERSION', '1.0.0')
+
+            client.table('users').update(update_data).eq('id', self.current_user_id).execute()
+
+            status_text = "logged in" if logged_in else "logged out"
+            print(f"[OK] Desktop status updated: {status_text}")
+
+        except Exception as e:
+            print(f"[WARN] Failed to update desktop status: {e}")
+
+    def _send_heartbeat(self):
+        """Send heartbeat to Supabase to indicate app is still running"""
+        if not self.current_user_id or self.current_user_id.startswith('anonymous_'):
+            return
+
+        try:
+            client = self.supabase_service if self.supabase_service else self.supabase
+            if not client:
+                return
+
+            client.table('users').update({
+                'desktop_last_heartbeat': datetime.now().isoformat()
+            }).eq('id', self.current_user_id).execute()
+
+            print(f"[OK] Heartbeat sent")
+
+        except Exception as e:
+            print(f"[WARN] Failed to send heartbeat: {e}")
 
     def _associate_offline_records(self):
         """Associate any anonymous offline records with the current user"""
@@ -3831,21 +3888,31 @@ class TimeTracker:
         return result
 
     def start_sync_thread(self):
-        """Start background thread for periodic offline sync"""
+        """Start background thread for periodic offline sync and heartbeat"""
         def sync_worker():
+            heartbeat_counter = 0
+            heartbeat_interval = 10  # Send heartbeat every 10 iterations (5 minutes at 30s interval)
+
             while self.running:
                 try:
                     if self.tracking_active and self.current_user_id:
                         self.sync_offline_data()
+
+                        # Send heartbeat every 5 minutes (10 iterations * 30 seconds)
+                        heartbeat_counter += 1
+                        if heartbeat_counter >= heartbeat_interval:
+                            self._send_heartbeat()
+                            heartbeat_counter = 0
+
                 except Exception as e:
                     print(f"[ERROR] Sync thread error: {e}")
-                
+
                 # Check every 30 seconds
                 time.sleep(30)
-        
+
         self._sync_thread = threading.Thread(target=sync_worker, daemon=True)
         self._sync_thread.start()
-        print("[OK] Offline sync background thread started")
+        print("[OK] Offline sync and heartbeat background thread started")
 
     def tracking_loop(self):
         """Main tracking loop with idle detection and event-based window switch capture"""
@@ -4432,6 +4499,9 @@ class TimeTracker:
     
     def quit_app(self):
         """Quit application"""
+        # Update desktop status to logged out before quitting
+        self._update_desktop_status(logged_in=False)
+
         self.stop_tracking()
         if self.tray:
             self.tray.stop()

@@ -677,3 +677,211 @@ async function ensureOrganizationMembership(supabase, userId, organizationId) {
     logger.error('[ForgeProxy] Membership creation error:', error);
   }
 }
+
+/**
+ * Batch Dashboard Endpoint
+ * Fetches all data needed for the dashboard in a single request
+ * Reduces 8+ API calls to 1, significantly improving performance
+ */
+exports.getDashboardData = async (req, res) => {
+  try {
+    const { cloudId, accountId } = req.forgeContext;
+    const { 
+      canViewAllUsers = false,  // Whether user has admin privileges
+      maxDailySummaryDays = 30,
+      maxWeeklySummaryWeeks = 12,
+      maxIssuesInAnalytics = 50
+    } = req.body;
+
+    const supabase = getClient();
+    if (!supabase) {
+      return res.status(500).json({
+        success: false,
+        error: 'Database not configured'
+      });
+    }
+
+    logger.info('[ForgeProxy] Dashboard batch request', { cloudId, accountId });
+
+    // 1. Get or verify organization
+    const { data: orgs, error: orgError } = await supabase
+      .from('organizations')
+      .select('*')
+      .eq('jira_cloud_id', cloudId);
+
+    if (orgError) throw orgError;
+    if (!orgs || orgs.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Organization not found. Please reload the page.'
+      });
+    }
+    const organization = orgs[0];
+
+    // 2. Get or verify user
+    const { data: users, error: userError } = await supabase
+      .from('users')
+      .select('id, organization_id, email, display_name')
+      .eq('atlassian_account_id', accountId);
+
+    if (userError) throw userError;
+    if (!users || users.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found. Please reload the page.'
+      });
+    }
+    const user = users[0];
+    const userId = user.id;
+
+    // 3. Get membership in a single query
+    const { data: membership } = await supabase
+      .from('organization_members')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('organization_id', organization.id)
+      .single();
+
+    // Determine if user can view all data
+    const canViewTeamData = canViewAllUsers || membership?.can_view_team_analytics || false;
+
+    // 4. Execute all data queries in PARALLEL for maximum performance
+    const queries = [];
+
+    // Daily summary
+    const dailyQuery = supabase
+      .from('daily_time_summary')
+      .select('*')
+      .eq('organization_id', organization.id)
+      .order('work_date', { ascending: false })
+      .limit(maxDailySummaryDays);
+    
+    if (!canViewTeamData) {
+      dailyQuery.eq('user_id', userId);
+    }
+    queries.push(dailyQuery);
+
+    // Weekly summary
+    const weeklyQuery = supabase
+      .from('weekly_time_summary')
+      .select('*')
+      .eq('organization_id', organization.id)
+      .order('week_start', { ascending: false })
+      .limit(maxWeeklySummaryWeeks);
+    
+    if (!canViewTeamData) {
+      weeklyQuery.eq('user_id', userId);
+    }
+    queries.push(weeklyQuery);
+
+    // Project summary
+    const projectQuery = supabase
+      .from('project_time_summary')
+      .select('*')
+      .eq('organization_id', organization.id)
+      .order('total_seconds', { ascending: false });
+    queries.push(projectQuery);
+
+    // Analysis results with issue data
+    const analysisQuery = supabase
+      .from('analysis_results')
+      .select('active_task_key, active_project_key, work_type, screenshots(duration_seconds)')
+      .eq('organization_id', organization.id)
+      .not('active_task_key', 'is', null)
+      .order('created_at', { ascending: false });
+    
+    if (!canViewTeamData) {
+      analysisQuery.eq('user_id', userId);
+    }
+    queries.push(analysisQuery);
+
+    // All active users (for team view)
+    const usersQuery = canViewTeamData
+      ? supabase
+          .from('users')
+          .select('id, display_name, email')
+          .eq('organization_id', organization.id)
+          .eq('is_active', true)
+      : Promise.resolve({ data: [{ id: userId, display_name: user.display_name, email: user.email }] });
+    queries.push(usersQuery);
+
+    // Execute all queries in parallel
+    const [
+      dailyResult,
+      weeklyResult,
+      projectResult,
+      analysisResult,
+      allUsersResult
+    ] = await Promise.all(queries);
+
+    // Process analysis results to aggregate time by issue
+    const timeByIssue = aggregateTimeByIssue(
+      analysisResult.data || [], 
+      maxIssuesInAnalytics
+    );
+
+    logger.info('[ForgeProxy] Dashboard batch complete', { 
+      cloudId,
+      dailyCount: dailyResult.data?.length || 0,
+      weeklyCount: weeklyResult.data?.length || 0,
+      projectCount: projectResult.data?.length || 0
+    });
+
+    res.json({
+      success: true,
+      data: {
+        // Organization info - matching legacy format
+        organizationId: organization.id,
+        organizationName: organization.org_name,
+        // User info
+        userId: userId,
+        userDisplayName: user.display_name,
+        userEmail: user.email,
+        // Membership info
+        membership: membership || null,
+        canViewAllUsers: canViewTeamData,
+        // Analytics data - matching legacy format exactly
+        dailySummary: dailyResult.data || [],
+        weeklySummary: weeklyResult.data || [],
+        timeByProject: projectResult.data || [],
+        timeByIssue: timeByIssue,
+        allUsers: allUsersResult.data || []
+      }
+    });
+  } catch (error) {
+    logger.error('[ForgeProxy] Dashboard batch error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Helper function to aggregate time by issue
+ * @param {Array} results - Analysis results with screenshots
+ * @param {number} limit - Maximum issues to return
+ * @returns {Array} Aggregated time by issue
+ */
+function aggregateTimeByIssue(results, limit) {
+  const issueAggregation = {};
+  
+  results.forEach(result => {
+    const key = result.active_task_key;
+    if (!key) return;
+    
+    if (!issueAggregation[key]) {
+      issueAggregation[key] = {
+        issueKey: key,
+        projectKey: result.active_project_key,
+        totalSeconds: 0
+      };
+    }
+    issueAggregation[key].totalSeconds += result.screenshots?.duration_seconds || 0;
+  });
+
+  return Object.values(issueAggregation)
+    .sort((a, b) => b.totalSeconds - a.totalSeconds)
+    .slice(0, limit);
+}
+

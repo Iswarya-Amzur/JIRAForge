@@ -502,3 +502,103 @@
     transform: rotate(360deg);
   }
 }
+
+/* Work Sessions Section Styles */
+.work-sessions-section {
+  margin-bottom: 20px;
+}
+
+.work-sessions-title {
+  margin: 0 0 16px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #172B4D;
+}
+
+.loading-sessions,
+.no-sessions {
+  padding: 24px;
+  text-align: center;
+  color: #5e6c84;
+  font-size: 14px;
+  background: #F7F8F9;
+  border-radius: 6px;
+}
+
+.sessions-by-date {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.date-group {
+  border-left: 3px solid #6656fc;
+  padding-left: 16px;
+}
+
+.date-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #EBECF0;
+}
+
+.date-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #172B4D;
+}
+
+.date-total {
+  font-size: 13px;
+  color: #5e6c84;
+  font-weight: 500;
+}
+
+.sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #F7F8F9;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.session-item:hover {
+  background: #EDF4FF;
+}
+
+.session-time {
+  font-size: 14px;
+  color: #0052CC;
+  font-weight: 500;
+  flex: 1;
+}
+
+.session-duration-icon {
+  display: flex;
+  align-items: center;
+  color: #5e6c84;
+}
+
+.session-duration-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.session-duration {
+  font-size: 13px;
+  color: #172B4D;
+  font-weight: 600;
+  min-width: 50px;
+  text-align: right;
+}
