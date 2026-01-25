@@ -8,15 +8,29 @@ const logger = require('../../utils/logger');
 const { toLocalISOString } = require('../../utils/datetime');
 
 /**
- * Get all users who have unassigned activities (grouped by user and organization)
- * @returns {Promise<Array>} Array of user objects with unassigned work and their organization
+ * Get all users who have UNGROUPED unassigned activities (grouped by user and organization)
+ * Only returns users with activities that haven't been clustered into groups yet
+ * @returns {Promise<Array>} Array of user objects with ungrouped unassigned work and their organization
  */
 async function getUsersWithUnassignedWork() {
   try {
     const supabase = getClient();
+
+    // Step 1: Get all activity IDs that are already in groups
+    const { data: groupedActivities, error: groupedError } = await supabase
+      .from('unassigned_group_members')
+      .select('unassigned_activity_id');
+
+    if (groupedError) {
+      throw groupedError;
+    }
+
+    const groupedIdSet = new Set((groupedActivities || []).map(g => g.unassigned_activity_id));
+
+    // Step 2: Get all unassigned activities
     const { data, error } = await supabase
       .from('unassigned_activity')
-      .select('user_id, organization_id')
+      .select('id, user_id, organization_id')
       .eq('manually_assigned', false)
       .order('timestamp', { ascending: false });
 
@@ -24,9 +38,12 @@ async function getUsersWithUnassignedWork() {
       throw error;
     }
 
-    // Get unique user_id + organization_id combinations
+    // Step 3: Filter out activities that are already grouped
+    const ungroupedData = data.filter(activity => !groupedIdSet.has(activity.id));
+
+    // Get unique user_id + organization_id combinations from ungrouped activities only
     const uniqueCombos = new Map();
-    data.forEach(item => {
+    ungroupedData.forEach(item => {
       const key = `${item.user_id}_${item.organization_id}`;
       if (!uniqueCombos.has(key)) {
         uniqueCombos.set(key, { id: item.user_id, organization_id: item.organization_id });
@@ -41,14 +58,28 @@ async function getUsersWithUnassignedWork() {
 }
 
 /**
- * Get unassigned activities for a specific user within an organization
+ * Get UNGROUPED unassigned activities for a specific user within an organization
+ * Only returns activities that haven't been clustered into groups yet
  * @param {string} userId - User ID
  * @param {string} organizationId - Organization ID for multi-tenancy filtering
- * @returns {Promise<Array>} Array of unassigned activity sessions
+ * @returns {Promise<Array>} Array of ungrouped unassigned activity sessions
  */
 async function getUnassignedActivities(userId, organizationId) {
   try {
     const supabase = getClient();
+
+    // Step 1: Get all activity IDs that are already in groups
+    const { data: groupedActivities, error: groupedError } = await supabase
+      .from('unassigned_group_members')
+      .select('unassigned_activity_id');
+
+    if (groupedError) {
+      throw groupedError;
+    }
+
+    const groupedIdSet = new Set((groupedActivities || []).map(g => g.unassigned_activity_id));
+
+    // Step 2: Get unassigned activities with screenshot data
     // IMPORTANT: JOIN with screenshots to get duration_seconds (source of truth)
     // instead of using unassigned_activity.time_spent_seconds (stale)
     let query = supabase
@@ -82,10 +113,13 @@ async function getUnassignedActivities(userId, organizationId) {
       throw error;
     }
 
-    // Fetch analysis_metadata for each activity to get AI reasoning
+    // Step 3: Filter out activities that are already grouped
+    const ungroupedData = data.filter(activity => !groupedIdSet.has(activity.id));
+
+    // Fetch analysis_metadata for each ungrouped activity to get AI reasoning
     // Also map screenshots.duration_seconds to time_spent_seconds for compatibility
     const enrichedData = await Promise.all(
-      data.map(async (activity) => {
+      ungroupedData.map(async (activity) => {
         const { data: analysisData } = await supabase
           .from('analysis_results')
           .select('analysis_metadata')
@@ -275,17 +309,32 @@ async function hasClusteringRunRecently(hours = 24) {
 async function getUngroupedActivityCount() {
   try {
     const supabase = getClient();
-    // Get activities that are not manually assigned and not in any group
-    const { count, error } = await supabase
+
+    // Step 1: Get all activity IDs that are already in groups
+    const { data: groupedActivities, error: groupedError } = await supabase
+      .from('unassigned_group_members')
+      .select('unassigned_activity_id');
+
+    if (groupedError) {
+      throw groupedError;
+    }
+
+    const groupedIdSet = new Set((groupedActivities || []).map(g => g.unassigned_activity_id));
+
+    // Step 2: Get all unassigned activities that are not manually assigned
+    const { data, error } = await supabase
       .from('unassigned_activity')
-      .select('id', { count: 'exact', head: true })
+      .select('id')
       .eq('manually_assigned', false);
 
     if (error) {
       throw error;
     }
 
-    return count || 0;
+    // Step 3: Count only those NOT in groups
+    const ungroupedCount = (data || []).filter(activity => !groupedIdSet.has(activity.id)).length;
+
+    return ungroupedCount;
   } catch (error) {
     logger.error('Error getting ungrouped activity count:', error);
     return 0;
