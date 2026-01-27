@@ -408,6 +408,7 @@
   border: 1px solid var(--ds-border);
   font-size: 13px;
   transition: all 0.2s;
+  gap: 6px;
 }
 
 .session-item:hover {
@@ -448,6 +449,7 @@
   opacity: 0.6;
   transition: opacity 0.2s, transform 0.2s;
   border-radius: 4px;
+  color: var(--ds-text-brand);
 }
 
 .reassign-button:hover {

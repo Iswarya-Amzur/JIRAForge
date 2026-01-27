@@ -311,45 +311,69 @@ function TeamAnalyticsTab() {
               </div>
               <span className="section-subtitle">Team effort distribution across issues</span>
             </div>
-            <div className="issue-bars-container">
+            <div className="issue-list-container">
               {teamAnalytics?.teamTimeByIssue?.length > 0 ? (
-                (() => {
-                  const maxSeconds = Math.max(...teamAnalytics.teamTimeByIssue.map(i => i.totalSeconds), 1);
-                  return teamAnalytics.teamTimeByIssue.slice(0, 10).map((issue, idx) => {
-                    const percentage = Math.round((issue.totalSeconds / maxSeconds) * 100);
-                    return (
-                      <div key={idx} className="issue-bar-item">
-                        <a
-                          href={`/browse/${issue.issueKey}`}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            navigateToIssue(issue.issueKey);
-                          }}
-                          className="issue-key-link"
-                        >
-                          {issue.issueKey}
-                        </a>
-                        <div className="issue-stats-row">
-                          <span className="issue-hours">{formatTime(issue.totalSeconds)}</span>
-                          <span className="issue-percentage">- {percentage}%</span>
-                        </div>
-                        <div className="issue-bar-track">
-                          <div
-                            className="issue-bar-fill"
-                            style={{ width: `${percentage}%` }}
-                          ></div>
-                        </div>
-                        <div className="issue-contributors">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M20 21V19C20 17.9391 19.5786 16.9217 18.8284 16.1716C18.0783 15.4214 18.0609 15 17 15H7C5.93913 15 4.92172 15.4214 4.17157 16.1716C3.42143 16.9217 3 17.9391 3 19V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                            <path d="M12 11C14.2091 11 16 9.20914 16 7C16 4.79086 14.2091 3 12 3C9.79086 3 8 4.79086 8 7C8 9.20914 9.79086 11 12 11Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                          <span>{issue.contributors} {issue.contributors === 1 ? 'Member' : 'Members'}</span>
-                        </div>
-                      </div>
-                    );
-                  });
-                })()
+                <table className="issue-list-table">
+                  <thead>
+                    <tr>
+                      <th className="issue-rank-header">#</th>
+                      <th className="issue-key-header">Issue</th>
+                      <th className="issue-time-header">Time Spent</th>
+                      <th className="issue-progress-header">Distribution</th>
+                      <th className="issue-members-header">Contributors</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const maxSeconds = Math.max(...teamAnalytics.teamTimeByIssue.map(i => i.totalSeconds), 1);
+                      return teamAnalytics.teamTimeByIssue.slice(0, 10).map((issue, idx) => {
+                        const percentage = Math.round((issue.totalSeconds / maxSeconds) * 100);
+                        return (
+                          <tr key={idx} className="issue-list-row">
+                            <td className="issue-rank-cell">
+                              <span className={`rank-badge rank-${idx + 1}`}>{idx + 1}</span>
+                            </td>
+                            <td className="issue-key-cell">
+                              <a
+                                href={`/browse/${issue.issueKey}`}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  navigateToIssue(issue.issueKey);
+                                }}
+                                className="issue-key-link"
+                              >
+                                {issue.issueKey}
+                              </a>
+                            </td>
+                            <td className="issue-time-cell">
+                              <span className="time-value">{formatTime(issue.totalSeconds)}</span>
+                            </td>
+                            <td className="issue-progress-cell">
+                              <div className="progress-wrapper">
+                                <div className="issue-bar-track">
+                                  <div
+                                    className={`issue-bar-fill rank-fill-${Math.min(idx + 1, 6)}`}
+                                    style={{ width: `${percentage}%` }}
+                                  ></div>
+                                </div>
+                                <span className="progress-percentage">{percentage}%</span>
+                              </div>
+                            </td>
+                            <td className="issue-members-cell">
+                              <div className="contributors-badge">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                  <path d="M20 21V19C20 17.9391 19.5786 16.9217 18.8284 16.1716C18.0783 15.4214 18.0609 15 17 15H7C5.93913 15 4.92172 15.4214 4.17157 16.1716C3.42143 16.9217 3 17.9391 3 19V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                  <path d="M12 11C14.2091 11 16 9.20914 16 7C16 4.79086 14.2091 3 12 3C9.79086 3 8 4.79086 8 7C8 9.20914 9.79086 11 12 11Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                </svg>
+                                <span>{issue.contributors}</span>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
               ) : (
                 <p className="empty-state">No issue data available yet</p>
               )}

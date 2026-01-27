@@ -57,11 +57,11 @@ function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
 
   return (
     <div className="dashboard">
-      <h2>Dashboard</h2>
+      <h2>My Focus</h2>
 
       <div className="my-focus-widget">
-        <h2>My Focus</h2>
-        <p className="widget-subtitle">Your personalized development workflow hub</p>
+        {/* <h2>My Focus</h2>
+        <p className="widget-subtitle">Your personalized development workflow hub</p> */}
 
         <div className="focus-tabs">
           <button
