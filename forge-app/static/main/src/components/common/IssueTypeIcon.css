@@ -1,0 +1,57 @@
+/* Issue Type Icon Styles */
+.issue-type-icon-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.issue-type-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.issue-type-icon.jira-icon {
+  border-radius: 2px;
+}
+
+.issue-type-icon.svg-icon {
+  display: block;
+}
+
+/* Custom Tooltip - consistent with app-wide tooltip styles */
+.issue-type-tooltip {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #172B4D;
+  color: #FFFFFF;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  z-index: 9999;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+  pointer-events: none;
+}
+
+.issue-type-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #172B4D;
+}
+
+.issue-type-icon-wrapper:hover .issue-type-tooltip {
+  visibility: visible;
+  opacity: 1;
+}

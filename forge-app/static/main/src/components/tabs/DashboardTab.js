@@ -180,6 +180,31 @@ function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
                                               const sessionDuration = session.duration ||
                                                 Math.round((end - start) / 1000);
 
+                                              // Get unique apps from screenshots
+                                              const uniqueApps = session.screenshots
+                                                ? [...new Set(session.screenshots.map(s => s.applicationName).filter(Boolean))]
+                                                : [];
+                                              const visibleApps = uniqueApps.slice(0, 3);
+                                              const remainingApps = uniqueApps.slice(3);
+
+                                              // Simple heuristic for app classification (can be enhanced)
+                                              const productiveApps = ['code', 'visual studio', 'vscode', 'intellij', 'webstorm', 'pycharm', 'sublime', 'atom', 'notepad++', 'postman', 'terminal', 'cmd', 'powershell', 'git', 'jira', 'confluence', 'slack', 'teams', 'zoom', 'figma', 'sketch', 'excel', 'word', 'outlook', 'notion', 'trello', 'asana'];
+                                              const nonProductiveApps = ['netflix', 'youtube', 'spotify', 'facebook', 'instagram', 'twitter', 'tiktok', 'reddit', 'discord', 'twitch', 'game', 'steam'];
+
+                                              const getAppType = (appName) => {
+                                                const lowerApp = appName.toLowerCase();
+                                                if (productiveApps.some(p => lowerApp.includes(p))) return 'productive';
+                                                if (nonProductiveApps.some(n => lowerApp.includes(n))) return 'non-productive';
+                                                return 'neutral';
+                                              };
+
+                                              const getAppTypeLabel = (appName) => {
+                                                const type = getAppType(appName);
+                                                if (type === 'productive') return 'Productive App';
+                                                if (type === 'non-productive') return 'Non-Productive App';
+                                                return 'Other App';
+                                              };
+
                                               return (
                                                 <div key={sessionIdx} className="session-item">
                                                   <span className="session-time">
@@ -195,15 +220,40 @@ function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
                                                       hour12: true
                                                     })}
                                                   </span>
-                                                  <span className="stat-icon">
+                                                  {uniqueApps.length > 0 && (
+                                                    <div className="session-apps">
+                                                      {visibleApps.map((app, appIdx) => (
+                                                        <span
+                                                          key={appIdx}
+                                                          className={`session-app-chip ${getAppType(app)}`}
+                                                        >
+                                                          {app.length > 12 ? app.substring(0, 10) + '...' : app}
+                                                          <span className="chip-tooltip">{app} • {getAppTypeLabel(app)}</span>
+                                                        </span>
+                                                      ))}
+                                                      {remainingApps.length > 0 && (
+                                                        <span className="session-apps-more">
+                                                          +{remainingApps.length}
+                                                          <span className="session-apps-tooltip">
+                                                            {remainingApps.map((app, i) => (
+                                                              <span key={i}>{app}{i < remainingApps.length - 1 ? ', ' : ''}</span>
+                                                            ))}
+                                                          </span>
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                  )}
+                                                  <div className="session-right">
+                                                    <span className="stat-icon">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <circle cx="12" cy="12" r="10"></circle>
                         <polyline points="12 6 12 12 16 14"></polyline>
                       </svg>
                     </span>
-                                                  <span className="session-duration">
-                                                    {formatTime(sessionDuration)}
-                                                  </span>
+                                                    <span className="session-duration">
+                                                      {formatTime(sessionDuration)}
+                                                    </span>
+                                                  </div>
                                                   <div className="session-actions">
                                                     {session.screenshots?.length > 0 && (
                                                       <button

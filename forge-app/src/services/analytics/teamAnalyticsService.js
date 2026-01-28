@@ -116,21 +116,33 @@ export async function fetchProjectTeamAnalytics(accountId, cloudId, projectKey) 
       issueAggregation[key] = {
         issueKey: key,
         totalSeconds: 0,
-        userCount: new Set()
+        userIds: new Set()
       };
     }
     issueAggregation[key].totalSeconds += result.total_seconds || 0;
     if (result.user_id) {
-      issueAggregation[key].userCount.add(result.user_id);
+      issueAggregation[key].userIds.add(result.user_id);
     }
   });
 
   const teamTimeByIssue = Object.values(issueAggregation)
-    .map(item => ({
-      issueKey: item.issueKey,
-      totalSeconds: item.totalSeconds,
-      contributors: item.userCount.size
-    }))
+    .map(item => {
+      // Map user IDs to display names
+      const contributorDetails = Array.from(item.userIds).map(userId => {
+        const userInfo = (allUsers || []).find(u => u.id === userId);
+        return {
+          userId,
+          displayName: userInfo?.display_name || userInfo?.email || 'Unknown User'
+        };
+      });
+      
+      return {
+        issueKey: item.issueKey,
+        totalSeconds: item.totalSeconds,
+        contributors: item.userIds.size,
+        contributorDetails
+      };
+    })
     .sort((a, b) => b.totalSeconds - a.totalSeconds)
     .slice(0, MAX_ISSUES_IN_ANALYTICS);
 

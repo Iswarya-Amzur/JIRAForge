@@ -198,7 +198,7 @@ function AppContent() {
                 {sidebarOpen && <span className="sidebar-label">Team Analytics</span>}
               </button>
             )}
-            {userPermissions.isJiraAdmin && (
+            {/* {userPermissions.isJiraAdmin && (
               <button
                 className={`sidebar-item ${activeTab === 'org-analytics' ? 'active' : ''}`}
                 onClick={() => setActiveTab('org-analytics')}
@@ -221,7 +221,7 @@ function AppContent() {
                 </span>
                 {sidebarOpen && <span className="sidebar-label">Organization Analytics</span>}
               </button>
-            )}
+            )} */}
             {userPermissions.isJiraAdmin && (
               <button
                 className={`sidebar-item ${activeTab === 'timesheet-settings' ? 'active' : ''}`}
