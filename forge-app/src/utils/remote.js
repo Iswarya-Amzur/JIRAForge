@@ -244,5 +244,44 @@ export async function deleteFromStorage(bucket, path) {
   });
 }
 
+/**
+ * Fetch all dashboard data in a single batch request
+ * This replaces 8+ individual API calls with 1 request
+ * Significantly improves page load time and reduces server load
+ * 
+ * @param {Object} options - Dashboard options
+ * @param {boolean} options.canViewAllUsers - Whether user has admin/team view permissions
+ * @param {number} options.maxDailySummaryDays - Max days for daily summary (default: 30)
+ * @param {number} options.maxWeeklySummaryWeeks - Max weeks for weekly summary (default: 12)
+ * @param {number} options.maxIssuesInAnalytics - Max issues to return (default: 50)
+ * @returns {Promise<Object>} Complete dashboard data
+ */
+export async function fetchDashboardData(options = {}) {
+  const cacheKey = 'dashboard:batch';
+  
+  // Short-lived cache (30 seconds) for dashboard data
+  const cached = getFromCache(cacheKey);
+  if (cached) {
+    console.log('[Remote] Using cached dashboard data');
+    return cached;
+  }
+
+  console.log('[Remote] Fetching dashboard data (batch)');
+  
+  const result = await remoteRequest('/api/forge/dashboard', {
+    body: {
+      canViewAllUsers: options.canViewAllUsers || false,
+      maxDailySummaryDays: options.maxDailySummaryDays || 30,
+      maxWeeklySummaryWeeks: options.maxWeeklySummaryWeeks || 12,
+      maxIssuesInAnalytics: options.maxIssuesInAnalytics || 50
+    }
+  });
+
+  // Cache for 30 seconds - dashboard data is moderately dynamic
+  setInCache(cacheKey, result, 30 * 1000);
+
+  return result;
+}
+
 // Export the remote request function for custom calls
 export { remoteRequest };

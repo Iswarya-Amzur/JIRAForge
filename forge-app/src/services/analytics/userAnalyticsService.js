@@ -6,12 +6,48 @@
 import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, getUserOrganizationMembership, supabaseRequest } from '../../utils/supabase.js';
 import { isJiraAdmin, checkUserPermissions } from '../../utils/jira.js';
 import { MAX_DAILY_SUMMARY_DAYS, MAX_WEEKLY_SUMMARY_WEEKS, MAX_ISSUES_IN_ANALYTICS } from '../../config/constants.js';
+import { fetchDashboardData } from '../../utils/remote.js';
 
 /**
- * Fetch time analytics data for a user
+ * Fetch time analytics data using the optimized batch API
+ * This replaces 8+ individual API calls with a single batch request
+ * Recommended for production use - significantly improves performance
+ * 
+ * @param {string} accountId - Atlassian account ID  
+ * @param {string} cloudId - Jira Cloud ID for organization filtering
+ * @returns {Promise<Object>} Analytics data (daily, weekly, by project, by issue)
+ */
+export async function fetchTimeAnalyticsBatch(accountId, cloudId) {
+  // Determine user permissions for data filtering on server-side
+  const isAdmin = await isJiraAdmin();
+  const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS']);
+  const isProjectAdmin = permissions.permissions?.ADMINISTER_PROJECTS?.havePermission;
+  
+  // User can view all users if Jira admin or project admin
+  // Organization-level permissions will be checked server-side via membership
+  const canViewAllUsers = isAdmin || isProjectAdmin;
+
+  console.log('[Analytics] Using batch endpoint with canViewAllUsers:', canViewAllUsers);
+
+  // Single batch request replaces 8+ individual calls
+  const dashboardData = await fetchDashboardData({
+    canViewAllUsers,
+    maxDailySummaryDays: MAX_DAILY_SUMMARY_DAYS,
+    maxWeeklySummaryWeeks: MAX_WEEKLY_SUMMARY_WEEKS,
+    maxIssuesInAnalytics: MAX_ISSUES_IN_ANALYTICS
+  });
+
+  return dashboardData;
+}
+
+/**
+ * Fetch time analytics data for a user (Legacy - individual API calls)
+ * Consider using fetchTimeAnalyticsBatch() for better performance
+ * 
  * @param {string} accountId - Atlassian account ID
  * @param {string} cloudId - Jira Cloud ID for organization filtering
  * @returns {Promise<Object>} Analytics data (daily, weekly, by project, by issue)
+ * @deprecated Use fetchTimeAnalyticsBatch() for improved performance
  */
 export async function fetchTimeAnalytics(accountId, cloudId) {
   const supabaseConfig = await getSupabaseConfig(accountId);

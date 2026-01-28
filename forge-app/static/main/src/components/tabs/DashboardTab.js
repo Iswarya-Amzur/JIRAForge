@@ -51,7 +51,9 @@ function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
 
   const calculateTotalDuration = (sessions) => {
     return sessions.reduce((sum, s) => {
-      return sum + (s.duration || Math.round((new Date(s.endTime) - new Date(s.startTime)) / 1000));
+      // Use the actual accumulated duration from backend, not timestamp span
+      // Timestamp span includes idle time between merged screenshots
+      return sum + (s.duration || 0);
     }, 0);
   };
 
@@ -177,8 +179,9 @@ function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
                                             {dateSessions.map((session, sessionIdx) => {
                                               const start = new Date(session.startTime);
                                               const end = new Date(session.endTime);
-                                              const sessionDuration = session.duration ||
-                                                Math.round((end - start) / 1000);
+                                              // Use actual duration from backend (accumulated work time)
+                                              // Not timestamp span which includes idle gaps
+                                              const sessionDuration = session.duration || 0;
 
                                               return (
                                                 <div key={sessionIdx} className="session-item">

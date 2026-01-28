@@ -15,8 +15,10 @@ function SessionReassignModal({
 }) {
   if (!isOpen || !sessionToReassign) return null;
 
+  // Filter to show only "In Progress" issues (excluding the current issue)
   const filteredIssues = activeIssues.filter(
-    issue => issue.key !== sessionToReassign.fromIssueKey
+    issue => issue.key !== sessionToReassign.fromIssueKey &&
+             issue.status?.toLowerCase() === 'in progress'
   );
 
   return (

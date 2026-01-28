@@ -46,18 +46,28 @@ function isSystemApp(appName) {
 
 /**
  * Create clustering input text from session data
+ * Includes as much context as possible for better AI grouping
  */
 function createClusteringInput(session) {
   const reasoning = session.reasoning || session.analysis_metadata?.reasoning || 'No description available';
   const app = session.application_name?.replace('.exe', '') || 'Unknown';
   const windowTitle = session.window_title || 'Unknown';
   const isSystem = isSystemApp(app);
+  const extractedText = session.extracted_text || '';
+
+  // Extract useful context from extracted_text (file paths, URLs, etc.)
+  let additionalContext = '';
+  if (extractedText && extractedText.length > 0) {
+    // Limit to first 200 chars to avoid token bloat
+    const truncatedText = extractedText.substring(0, 200);
+    additionalContext = `\nScreen Content: ${truncatedText}${extractedText.length > 200 ? '...' : ''}`;
+  }
 
   return `
 Application: ${app}${isSystem ? ' [SYSTEM/IDLE - DO NOT MIX WITH WORK]' : ''}
 Window Title: ${windowTitle}
 Activity Description: ${reasoning}
-Duration: ${Math.round((session.time_spent_seconds || 0) / 60)} minutes
+Duration: ${Math.round((session.time_spent_seconds || 0) / 60)} minutes${additionalContext}
   `.trim();
 }
 
@@ -118,25 +128,37 @@ GROUPING RULES:
 2. **Group by PROJECT/TASK CONTEXT, not just application**
    - If someone works on the SAME project using VS Code, Cursor, Claude Code, and Terminal → GROUP THEM TOGETHER
    - Look at window titles, file paths, and activity descriptions to identify the project
-   - Example: All sessions showing "jira1" or "time-tracker" in the path = same project group
+   - Example: All sessions showing the same project folder or repository name in the path = same project group
 
 3. **Similar code editors working on same project = SAME GROUP**
-   - VS Code + Cursor + Claude Code + Sublime working on "ProjectX" → one group: "ProjectX Development"
+   - VS Code + Cursor + Claude Code + Sublime working on the same project → one group: "[Project Name] Development"
    - Terminal commands related to the same project → include in same group
 
 4. **Different projects = DIFFERENT GROUPS**
    - VS Code on "ProjectA" vs VS Code on "ProjectB" = SEPARATE groups
    - Browser researching "React docs" vs Browser on "YouTube" = SEPARATE groups
 
-5. **Examples of GOOD grouping:**
-   - ✅ VS Code (jira1) + Cursor (jira1) + Terminal (npm start for jira1) → "Jira Time Tracker Development"
-   - ✅ Chrome (Jira board) + Chrome (Jira issues) → "Jira Project Management"
-   - ✅ LockApp + ScreenSaver → "Idle/Break Time"
+5. **AVOID SINGLE-ACTIVITY GROUPS** (CRITICAL!)
+   - NEVER create a group with only 1 session unless it's truly unique
+   - If an activity seems standalone, try harder to find a related group
+   - Prefer FEWER, LARGER groups over MANY small groups
+   - It's better to have a slightly broader group than many 1-2 session groups
 
-6. **Examples of BAD grouping:**
+6. **BE AGGRESSIVE WITH MERGING**
+   - If two activities are even loosely related (same project, same type of work), group them
+   - Email about Project X + Coding on Project X = SAME GROUP
+   - Research for a feature + Implementing that feature = SAME GROUP
+
+7. **Examples of GOOD grouping:**
+   - ✅ VS Code (project-x) + Cursor (project-x) + Terminal (npm start for project-x) + Chrome (localhost:3000) → "Project X - Frontend Development"
+   - ✅ Chrome (project board) + Chrome (issue tracker) + Outlook (project emails) → "Project X - Planning & Coordination"
+   - ✅ LockApp + ScreenSaver → "Idle/Break Time"
+   - ✅ Research + Implementation + Testing for same feature → ONE group
+
+8. **Examples of BAD grouping:**
    - ❌ LockApp + VS Code → NEVER mix idle with work
-   - ❌ Chrome (YouTube) + VS Code (coding) → different activities
-   - ❌ VS Code (ProjectA) + VS Code (ProjectB) → different projects
+   - ❌ Creating 10 groups with 1-2 sessions each → Too fragmented
+   - ❌ "Email" as separate group when emails are about the project being worked on
 
 Pre-analysis:
 - System/Idle sessions: ${systemSessions.length} (LockApp, ScreenSaver, etc.)
@@ -147,36 +169,53 @@ Sessions to group:
 ${sessionDescriptions}
 
 Output Requirements:
-1. Group label should describe the PROJECT or ACTIVITY (max 50 chars)
-2. Description should explain what work was being done
-3. Confidence: high (clearly same project/task), medium (likely related), low (loosely connected)
-4. Suggest matching Jira issue if content matches
+1. **Group label**: Specific project/task name (max 50 chars)
+   - Good: "Time Tracker - Session Resolver Bug Fix"
+   - Bad: "Development Work" (too vague)
+
+2. **Description**: Detailed summary that answers WHAT, WHERE, and WHY (2-3 sentences)
+   - Include specific file names, URLs, or features worked on
+   - Mention the type of work (coding, debugging, reviewing, researching, etc.)
+   - Good: "Fixed session duration calculation in sessionResolvers.js. Updated formatDuration function to show seconds. Tested time display in GroupAccordion component."
+   - Bad: "Worked on code" (too vague)
+
+3. **Confidence**: high (clearly same project/task), medium (likely related), low (loosely connected)
+
+4. **Recommendation**: Suggest matching Jira issue based on content. Explain WHY it matches.
 
 Return ONLY valid JSON in this exact format (no markdown, no backticks):
 {
   "groups": [
     {
-      "label": "Group Name",
-      "description": "Brief description of the work",
+      "label": "Specific Project - Task Name",
+      "description": "Detailed description including: what files/URLs were accessed, what type of work was done (coding/debugging/researching/reviewing), and what was accomplished or attempted.",
       "session_indices": [1, 3, 5],
       "confidence": "high|medium|low",
       "recommendation": {
         "action": "assign_to_existing|create_new_issue",
         "suggested_issue_key": "SCRUM-X or null",
-        "reason": "Why this recommendation"
+        "reason": "Specific reason why this issue matches the work done"
       }
     }
   ]
 }`;
 
-    const systemPrompt = `You are a work activity clustering assistant that groups time tracking sessions.
+    const systemPrompt = `You are a work activity clustering assistant that groups time tracking sessions for accurate time reporting.
 
 KEY RULES:
 1. NEVER mix system/idle apps (LockApp, ScreenSaver) with work apps - they must be in separate groups
 2. Group by PROJECT/TASK CONTEXT - if VS Code, Cursor, Terminal all show "jira1" project, group them TOGETHER
 3. Different code editors working on the SAME project = SAME GROUP
 4. Look at window titles, file paths, and descriptions to identify which project/task the work belongs to
-5. Always respond with valid JSON only, no markdown formatting.`;
+5. Always respond with valid JSON only, no markdown formatting.
+
+CRITICAL - DESCRIPTIONS MUST BE SPECIFIC:
+- Extract specific file names, component names, or URLs from the session data
+- Describe the TYPE of work: coding, debugging, code review, research, documentation, etc.
+- Mention what was accomplished or attempted
+- NEVER use vague descriptions like "Development work" or "Coding activities"
+- Good example: "Implemented user authentication in authController.js. Added login validation in validators/auth.js. Created LoginForm React component with error handling."
+- Bad example: "Worked on the project"`;
 
     // Build messages array
     const messages = [
@@ -345,30 +384,125 @@ async function clusterInBatches(sessions, userIssues, batchSize) {
 
 /**
  * Merge similar groups from different batches
- * Groups with similar labels/content should be combined
+ * Uses fuzzy matching to combine groups with similar labels
  */
 function mergeGroups(groups) {
-  const groupMap = new Map();
+  if (groups.length === 0) return [];
+
+  const mergedGroups = [];
 
   for (const group of groups) {
-    // Normalize label for comparison
-    const normalizedLabel = group.label.toLowerCase().trim();
+    // Find existing group with similar label
+    const existingGroup = findSimilarGroup(mergedGroups, group.label);
 
-    if (groupMap.has(normalizedLabel)) {
+    if (existingGroup) {
       // Merge with existing group
-      const existing = groupMap.get(normalizedLabel);
-      existing.sessions = [...existing.sessions, ...group.sessions];
-      existing.session_ids = [...existing.session_ids, ...group.session_ids];
-      existing.total_seconds += group.total_seconds;
-      existing.session_count += group.session_count;
-      existing.total_time_formatted = formatDuration(existing.total_seconds);
+      existingGroup.sessions = [...existingGroup.sessions, ...group.sessions];
+      existingGroup.session_ids = [...existingGroup.session_ids, ...group.session_ids];
+      existingGroup.total_seconds += group.total_seconds;
+      existingGroup.session_count += group.session_count;
+      existingGroup.total_time_formatted = formatDuration(existingGroup.total_seconds);
+      // Keep the longer/more descriptive label
+      if (group.label.length > existingGroup.label.length) {
+        existingGroup.label = group.label;
+      }
+      // Keep the longer/more descriptive description
+      if (group.description && (!existingGroup.description || group.description.length > existingGroup.description.length)) {
+        existingGroup.description = group.description;
+      }
     } else {
       // Create new entry
-      groupMap.set(normalizedLabel, { ...group });
+      mergedGroups.push({ ...group });
     }
   }
 
-  return Array.from(groupMap.values());
+  // Post-process: Merge very small groups (1-2 sessions) into related larger groups
+  return consolidateSmallGroups(mergedGroups);
+}
+
+/**
+ * Find a group with a similar label using fuzzy matching
+ */
+function findSimilarGroup(groups, label) {
+  const normalizedLabel = normalizeLabel(label);
+  const labelWords = extractKeywords(label);
+
+  for (const group of groups) {
+    const existingNormalized = normalizeLabel(group.label);
+    const existingWords = extractKeywords(group.label);
+
+    // Check for exact match after normalization
+    if (existingNormalized === normalizedLabel) {
+      return group;
+    }
+
+    // Check if labels share significant keywords (at least 50% overlap)
+    const commonWords = labelWords.filter(w => existingWords.includes(w));
+    const similarity = commonWords.length / Math.max(labelWords.length, existingWords.length);
+
+    if (similarity >= 0.5 && commonWords.length >= 2) {
+      return group;
+    }
+
+    // Check if one label contains the other (substring match)
+    if (existingNormalized.includes(normalizedLabel) || normalizedLabel.includes(existingNormalized)) {
+      return group;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Normalize label for comparison
+ */
+function normalizeLabel(label) {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')  // Remove special chars
+    .replace(/\s+/g, ' ')          // Normalize spaces
+    .trim();
+}
+
+/**
+ * Extract meaningful keywords from a label
+ */
+function extractKeywords(label) {
+  const stopWords = ['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'];
+  return normalizeLabel(label)
+    .split(' ')
+    .filter(word => word.length > 2 && !stopWords.includes(word));
+}
+
+/**
+ * Consolidate very small groups (1-2 sessions) into related larger groups
+ */
+function consolidateSmallGroups(groups) {
+  const MIN_GROUP_SIZE = 2;
+  const smallGroups = groups.filter(g => g.session_count < MIN_GROUP_SIZE);
+  const largeGroups = groups.filter(g => g.session_count >= MIN_GROUP_SIZE);
+
+  // Try to merge each small group into a related large group
+  for (const smallGroup of smallGroups) {
+    const targetGroup = findSimilarGroup(largeGroups, smallGroup.label);
+
+    if (targetGroup) {
+      // Merge small group into large group
+      targetGroup.sessions = [...targetGroup.sessions, ...smallGroup.sessions];
+      targetGroup.session_ids = [...targetGroup.session_ids, ...smallGroup.session_ids];
+      targetGroup.total_seconds += smallGroup.total_seconds;
+      targetGroup.session_count += smallGroup.session_count;
+      targetGroup.total_time_formatted = formatDuration(targetGroup.total_seconds);
+      logger.info('[AI] Merged small group "%s" (%d sessions) into "%s"',
+        smallGroup.label, smallGroup.session_count, targetGroup.label);
+    } else {
+      // No match found, keep as separate group
+      largeGroups.push(smallGroup);
+    }
+  }
+
+  // Sort by session count (largest first)
+  return largeGroups.sort((a, b) => b.session_count - a.session_count);
 }
 
 /**

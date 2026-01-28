@@ -86,8 +86,14 @@ const forgeAuthMiddleware = async (req, res, next) => {
     // Validate the FIT token
     const payload = await validateFIT(token);
 
-    // Log full payload for debugging
-    logger.info('[FIT] Full token payload:', JSON.stringify(payload, null, 2));
+    // Log minimal token info (full payload only in debug mode to avoid CPU overhead)
+    if (process.env.LOG_LEVEL === 'debug') {
+      logger.debug('[FIT] Full token payload:', { 
+        app: payload.app?.id,
+        principal: typeof payload.principal === 'string' ? payload.principal : payload.principal?.accountId,
+        cloudId: payload.context?.cloudId
+      });
+    }
 
     // Extract context from validated token
     // accountId can be in different places depending on invocation type

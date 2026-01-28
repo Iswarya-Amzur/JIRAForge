@@ -4,18 +4,33 @@
 
 /**
  * Format duration in seconds to human-readable format
+ * Shows exact seconds for accuracy - individual times always add up to totals
  */
 export function formatDuration(seconds) {
+  if (!seconds || seconds < 0) return '0s';
+
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
 
-  if (hours > 0 && minutes > 0) {
-    return `${hours}h ${minutes}m`;
-  } else if (hours > 0) {
+  // For durations >= 1 hour: show hours and minutes (seconds less relevant at this scale)
+  if (hours > 0) {
+    if (minutes > 0) {
+      return `${hours}h ${minutes}m`;
+    }
     return `${hours}h`;
-  } else {
+  }
+
+  // For durations < 1 hour: show minutes and seconds for accuracy
+  if (minutes > 0) {
+    if (secs > 0) {
+      return `${minutes}m ${secs}s`;
+    }
     return `${minutes}m`;
   }
+
+  // Less than 1 minute: show seconds only
+  return `${secs}s`;
 }
 
 /**

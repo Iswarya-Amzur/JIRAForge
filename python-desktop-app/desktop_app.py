@@ -55,6 +55,15 @@ try:
 except ImportError:
     WIN32_AVAILABLE = False
 
+# Tkinter for pause popup window
+try:
+    import tkinter as tk
+    from tkinter import ttk
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+    print("[WARN] tkinter not available - pause popup window disabled")
+
 # ============================================================================
 # SINGLE INSTANCE LOCK
 # ============================================================================
@@ -1817,6 +1826,585 @@ class ConsentManager:
 
 
 # ============================================================================
+# PAUSE POPUP WINDOW
+# ============================================================================
+
+class PausePopupWindow:
+    """Floating always-on-top clock-style window that shows pause status with timer controls"""
+
+    def __init__(self, on_resume_callback=None, on_set_timer_callback=None, on_close_callback=None, selection_mode=False):
+        self.on_resume_callback = on_resume_callback
+        self.on_set_timer_callback = on_set_timer_callback  # Callback to set timed pause
+        self.on_close_callback = on_close_callback  # Callback when popup is closed (not resumed)
+        self.selection_mode = selection_mode  # True = selecting duration before pause, False = already paused
+        self.window = None
+        self.timer_label = None
+        self.title_label = None
+        self.status_label = None
+        self.canvas = None
+        self.pause_start_time = None
+        self.pause_end_time = None  # For timed pause countdown
+        self.is_timed_pause = False
+        self.running = False
+        self._update_job = None
+        self._drag_data = {"x": 0, "y": 0}
+        self.duration_combo = None
+        self.duration_options = None
+
+    def show(self, pause_start_time=None, pause_end_time=None):
+        """Show the pause popup window"""
+        if not TKINTER_AVAILABLE:
+            print("[WARN] Cannot show pause popup - tkinter not available")
+            return
+
+        self.pause_start_time = pause_start_time
+        self.pause_end_time = pause_end_time
+        self.is_timed_pause = pause_end_time is not None
+        self.running = True
+
+        # Run tkinter in a separate thread
+        thread = threading.Thread(target=self._create_window, daemon=True)
+        thread.start()
+
+    def _create_window(self):
+        """Create and run the tkinter window"""
+        try:
+            # Prevent implicit root window creation
+            # This ensures no extra empty "tk" window appears
+            self.window = tk.Tk()
+            self.window.withdraw()  # Hide immediately to prevent flash
+            self.window.title("Time Tracker - Paused")
+
+            # Window configuration
+            self.window.overrideredirect(True)  # Remove window decorations
+            self.window.attributes('-topmost', True)  # Always on top
+            self.window.attributes('-alpha', 0.95)  # Slight transparency
+
+            # Window size and position (bottom right corner)
+            window_width = 340  # Slightly wider for better visibility
+            # Selection mode has smaller height (no clock display)
+            window_height = 280 if self.selection_mode else 420
+            screen_width = self.window.winfo_screenwidth()
+            screen_height = self.window.winfo_screenheight()
+            x = screen_width - window_width - 20
+            y = screen_height - window_height - 60  # Above taskbar
+            self.window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+            # Colors
+            bg_color = '#1a1a2e'
+            card_color = '#16213e'
+            accent_color = '#FBBF24'  # Yellow/amber for paused
+            text_color = '#ffffff'
+            muted_color = '#9ca3af'
+            green_color = '#10b981'
+
+            # Main frame
+            main_frame = tk.Frame(self.window, bg=bg_color, padx=3, pady=3)
+            main_frame.pack(fill='both', expand=True)
+
+            # Inner frame
+            inner_frame = tk.Frame(main_frame, bg=card_color, padx=16, pady=12)
+            inner_frame.pack(fill='both', expand=True)
+
+            # Header with title and close button
+            header_frame = tk.Frame(inner_frame, bg=card_color)
+            header_frame.pack(fill='x', pady=(0, 8))
+
+            # Title - different text based on mode
+            if self.selection_mode:
+                title_text = "⏱  PAUSE TRACKING"
+            else:
+                title_text = "⏸  PAUSED"
+            
+            self.title_label = tk.Label(
+                header_frame,
+                text=title_text,
+                font=('Segoe UI', 14, 'bold'),
+                fg=accent_color,
+                bg=card_color
+            )
+            self.title_label.pack(side='left')
+
+            # Close button (X) - just closes popup
+            close_btn = tk.Label(
+                header_frame,
+                text="✕",
+                font=('Segoe UI', 12),
+                fg='#6b7280',
+                bg=card_color,
+                cursor='hand2'
+            )
+            close_btn.pack(side='right')
+            close_btn.bind('<Button-1>', lambda e: self._close_only())
+            close_btn.bind('<Enter>', lambda e: close_btn.config(fg='#ef4444'))
+            close_btn.bind('<Leave>', lambda e: close_btn.config(fg='#6b7280'))
+
+            if self.selection_mode:
+                # Selection mode: Show instruction text instead of clock
+                instruction_label = tk.Label(
+                    inner_frame,
+                    text="Select how long you want to\npause time tracking:",
+                    font=('Segoe UI', 11),
+                    fg=text_color,
+                    bg=card_color,
+                    justify='center'
+                )
+                instruction_label.pack(pady=(20, 20))
+            else:
+                # Paused mode: Show clock and timer
+                # Clock circle canvas
+                clock_frame = tk.Frame(inner_frame, bg=card_color)
+                clock_frame.pack(pady=8)
+
+                self.canvas = tk.Canvas(
+                    clock_frame,
+                    width=140,
+                    height=140,
+                    bg=card_color,
+                    highlightthickness=0
+                )
+                self.canvas.pack()
+
+                # Draw clock circle
+                self._draw_clock_face()
+
+                # Timer display in center of clock
+                self.timer_label = tk.Label(
+                    clock_frame,
+                    text="00:00",
+                    font=('Segoe UI Semibold', 22),
+                    fg=text_color,
+                    bg=card_color
+                )
+                self.timer_label.place(relx=0.5, rely=0.5, anchor='center')
+
+                # Status label (Paused for / Resumes in)
+                self.status_label = tk.Label(
+                    inner_frame,
+                    text="Paused for:" if not self.is_timed_pause else "Resumes in:",
+                    font=('Segoe UI', 10),
+                    fg=muted_color,
+                    bg=card_color
+                )
+                self.status_label.pack(pady=(0, 12))
+
+                # Prominent Resume button (at the top for easy access)
+                resume_btn_top = tk.Button(
+                    inner_frame,
+                    text="▶  Resume Tracking Now",
+                    font=('Segoe UI', 12, 'bold'),
+                    fg='white',
+                    bg=green_color,
+                    activebackground='#059669',
+                    activeforeground='white',
+                    relief='flat',
+                    cursor='hand2',
+                    pady=10,
+                    command=self._on_resume
+                )
+                resume_btn_top.pack(fill='x', pady=(0, 10))
+                resume_btn_top.bind('<Enter>', lambda e: resume_btn_top.config(bg='#059669'))
+                resume_btn_top.bind('<Leave>', lambda e: resume_btn_top.config(bg=green_color))
+
+                # Separator label
+                separator_label = tk.Label(
+                    inner_frame,
+                    text="─ OR SET AUTO-RESUME ─",
+                    font=('Segoe UI', 8),
+                    fg=muted_color,
+                    bg=card_color
+                )
+                separator_label.pack(pady=(0, 12))
+
+            # Duration picker section (Apple-style dropdown)
+            picker_section = tk.Frame(inner_frame, bg=card_color)
+            picker_section.pack(pady=(8, 8), fill='x')
+
+            picker_label = tk.Label(
+                picker_section,
+                text="Select auto-resume duration:",
+                font=('Segoe UI', 10, 'bold'),
+                fg=text_color,
+                bg=card_color
+            )
+            picker_label.pack(pady=(0, 10))
+
+            # Duration options (in minutes) with display labels
+            self.duration_options = [
+                ("5 minutes", 5),
+                ("10 minutes", 10),
+                ("15 minutes", 15),
+                ("20 minutes", 20),
+                ("30 minutes", 30),
+                ("45 minutes", 45),
+                ("1 hour", 60),
+                ("1.5 hours", 90),
+                ("2 hours", 120),
+                ("3 hours", 180),
+            ]
+            
+            # Style the combobox for dark theme
+            style = ttk.Style(self.window)  # Pass window as master to avoid creating implicit root
+            style.theme_use('clam')
+            style.configure('Dark.TCombobox',
+                fieldbackground='#374151',
+                background='#374151',
+                foreground=text_color,
+                arrowcolor=text_color,
+                bordercolor='#4b5563',
+                lightcolor='#4b5563',
+                darkcolor='#4b5563',
+                selectbackground=green_color,
+                selectforeground='white'
+            )
+            style.map('Dark.TCombobox',
+                fieldbackground=[('readonly', '#374151')],
+                selectbackground=[('readonly', green_color)],
+                selectforeground=[('readonly', 'white')]
+            )
+
+            # Picker row with dropdown and button
+            picker_row = tk.Frame(picker_section, bg=card_color)
+            picker_row.pack(fill='x')
+
+            # Create combobox dropdown
+            display_values = [opt[0] for opt in self.duration_options]
+            self.duration_combo = ttk.Combobox(
+                picker_row,
+                values=display_values,
+                state='readonly',
+                width=15,
+                font=('Segoe UI', 11),
+                style='Dark.TCombobox'
+            )
+            self.duration_combo.set("15 minutes")  # Default selection
+            self.duration_combo.pack(side='left', padx=(0, 10), ipady=6)
+
+            # Set timer button - different text based on mode
+            btn_text = "⏸  Pause Tracking" if self.selection_mode else "Set Timer"
+            set_btn = tk.Button(
+                picker_row,
+                text=btn_text,
+                font=('Segoe UI', 10, 'bold'),
+                fg='white',
+                bg=green_color,
+                activebackground='#059669',
+                activeforeground='white',
+                relief='flat',
+                cursor='hand2',
+                padx=16,
+                pady=8,
+                command=self._set_selected_duration
+            )
+            set_btn.pack(side='left')
+            set_btn.bind('<Enter>', lambda e: set_btn.config(bg='#059669'))
+            set_btn.bind('<Leave>', lambda e: set_btn.config(bg=green_color))
+
+            # In selection mode, add a Cancel button
+            if self.selection_mode:
+                cancel_btn = tk.Button(
+                    inner_frame,
+                    text="Cancel",
+                    font=('Segoe UI', 10),
+                    fg=text_color,
+                    bg='#374151',
+                    activebackground='#4b5563',
+                    activeforeground=text_color,
+                    relief='flat',
+                    cursor='hand2',
+                    pady=8,
+                    command=self._close_only
+                )
+                cancel_btn.pack(fill='x', pady=(12, 0))
+                cancel_btn.bind('<Enter>', lambda e: cancel_btn.config(bg='#4b5563'))
+                cancel_btn.bind('<Leave>', lambda e: cancel_btn.config(bg='#374151'))
+
+            # Make window draggable from header
+            header_frame.bind('<Button-1>', self._start_drag)
+            header_frame.bind('<B1-Motion>', self._on_drag)
+            self.title_label.bind('<Button-1>', self._start_drag)
+            self.title_label.bind('<B1-Motion>', self._on_drag)
+
+            # Start timer updates only in paused mode (not selection mode)
+            if not self.selection_mode:
+                self._update_timer()
+
+            # Show the window now that it's fully configured
+            self.window.deiconify()
+            
+            # Run the window
+            self.window.mainloop()
+            
+            # After mainloop exits, clean up in the same thread
+            # This prevents the "Tcl_AsyncDelete: async handler deleted by the wrong thread" error
+            try:
+                if self.window:
+                    self.window.destroy()
+            except:
+                pass
+            finally:
+                # Clear all tkinter references
+                self.window = None
+                self.timer_label = None
+                self.title_label = None
+                self.status_label = None
+                self.canvas = None
+                self.duration_combo = None
+
+        except Exception as e:
+            print(f"[ERROR] Failed to create pause popup: {e}")
+        finally:
+            self.running = False
+            # Ensure all references are cleared
+            self.window = None
+            self.timer_label = None
+            self.title_label = None
+            self.status_label = None
+            self.canvas = None
+            self.duration_combo = None
+
+    def _draw_clock_face(self):
+        """Draw a clock-like circular face"""
+        if not self.canvas:
+            return
+
+        # Clear canvas
+        self.canvas.delete("all")
+
+        cx, cy = 70, 70  # Center
+        radius = 60
+
+        # Outer ring (amber/yellow for paused state)
+        self.canvas.create_oval(
+            cx - radius, cy - radius,
+            cx + radius, cy + radius,
+            outline='#FBBF24',
+            width=4
+        )
+
+        # Inner circle (darker)
+        inner_radius = radius - 8
+        self.canvas.create_oval(
+            cx - inner_radius, cy - inner_radius,
+            cx + inner_radius, cy + inner_radius,
+            fill='#0f0f1a',
+            outline='#374151',
+            width=1
+        )
+
+        # Hour markers (12 small lines)
+        import math
+        for i in range(12):
+            angle = math.radians(i * 30 - 90)
+            x1 = cx + (radius - 12) * math.cos(angle)
+            y1 = cy + (radius - 12) * math.sin(angle)
+            x2 = cx + (radius - 18) * math.cos(angle)
+            y2 = cy + (radius - 18) * math.sin(angle)
+            self.canvas.create_line(x1, y1, x2, y2, fill='#6b7280', width=2)
+
+    def _draw_progress_arc(self, progress):
+        """Draw progress arc around the clock (0.0 to 1.0)"""
+        if not self.canvas or progress <= 0:
+            return
+
+        cx, cy = 70, 70
+        radius = 60
+
+        # Draw arc (progress from top, clockwise)
+        import math
+        start_angle = 90  # Start from top
+        extent = -360 * min(progress, 1.0)  # Clockwise
+
+        self.canvas.create_arc(
+            cx - radius, cy - radius,
+            cx + radius, cy + radius,
+            start=start_angle,
+            extent=extent,
+            outline='#10b981',  # Green progress
+            width=4,
+            style='arc'
+        )
+
+    def _start_drag(self, event):
+        """Start dragging the window"""
+        self._drag_data["x"] = event.x
+        self._drag_data["y"] = event.y
+
+    def _on_drag(self, event):
+        """Handle window dragging"""
+        if self.window:
+            x = self.window.winfo_x() + (event.x - self._drag_data["x"])
+            y = self.window.winfo_y() + (event.y - self._drag_data["y"])
+            self.window.geometry(f"+{x}+{y}")
+
+    def _update_timer(self):
+        """Update the timer display"""
+        if not self.running or not self.window:
+            return
+
+        try:
+            current_time = time.time()
+
+            if self.is_timed_pause and self.pause_end_time:
+                # Countdown mode
+                remaining = self.pause_end_time - current_time
+                if remaining <= 0:
+                    # Timer expired - auto resume
+                    self._on_resume()
+                    return
+
+                total_duration = self.pause_end_time - self.pause_start_time
+                elapsed = current_time - self.pause_start_time
+                progress = elapsed / total_duration if total_duration > 0 else 0
+
+                minutes = int(remaining // 60)
+                seconds = int(remaining % 60)
+
+                # Update status label
+                if self.status_label:
+                    self.status_label.config(text="Resumes in:")
+
+                # Redraw clock with progress
+                self._draw_clock_face()
+                self._draw_progress_arc(progress)
+
+            else:
+                # Count up mode (indefinite pause)
+                elapsed = current_time - self.pause_start_time
+                minutes = int(elapsed // 60)
+                seconds = int(elapsed % 60)
+
+                # Update status label
+                if self.status_label:
+                    self.status_label.config(text="Paused for:")
+
+            # Format time string
+            if minutes >= 60:
+                hours = minutes // 60
+                minutes = minutes % 60
+                time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            else:
+                time_str = f"{minutes:02d}:{seconds:02d}"
+
+            if self.timer_label:
+                self.timer_label.config(text=time_str)
+
+            # Schedule next update
+            if self.running and self.window:
+                self._update_job = self.window.after(1000, self._update_timer)
+
+        except Exception as e:
+            print(f"[WARN] Timer update error: {e}")
+
+    def _set_timer(self, minutes):
+        """Set a countdown timer for auto-resume"""
+        self.pause_end_time = time.time() + (minutes * 60)
+        self.is_timed_pause = True
+
+        # Notify the main app about the timed pause (in a separate thread)
+        if self.on_set_timer_callback:
+            threading.Thread(target=self.on_set_timer_callback, args=(minutes,), daemon=True).start()
+
+        print(f"[INFO] Auto-resume set for {minutes} minutes")
+
+    def _set_selected_duration(self):
+        """Set timer from dropdown selection"""
+        try:
+            if not self.duration_combo or not self.duration_options:
+                return
+
+            selected_text = self.duration_combo.get()
+            if not selected_text:
+                return
+            
+            # Find the minutes value for the selected option
+            minutes = None
+            for label, value in self.duration_options:
+                if label == selected_text:
+                    minutes = value
+                    break
+            
+            if minutes is None:
+                print(f"[WARN] Unknown duration selected: {selected_text}")
+                return
+            
+            # In selection mode, close popup after triggering callback
+            if self.selection_mode:
+                if not self.running:
+                    return  # Already closing
+                self.running = False
+                self._quit_mainloop()
+                # Call the callback to actually pause tracking
+                if self.on_set_timer_callback:
+                    threading.Thread(target=self.on_set_timer_callback, args=(minutes,), daemon=True).start()
+            else:
+                # Normal paused mode - just set the timer
+                self._set_timer(minutes)
+            
+        except Exception as e:
+            print(f"[WARN] Error setting timer from dropdown: {e}")
+
+    def _on_resume(self):
+        """Handle resume button click"""
+        if not self.running:
+            return  # Already closing
+        self.running = False
+        # Quit the mainloop (cleanup happens after mainloop exits in _create_window)
+        self._quit_mainloop()
+        # Then call the callback in a separate thread to avoid blocking
+        if self.on_resume_callback:
+            threading.Thread(target=self.on_resume_callback, daemon=True).start()
+
+    def _close_only(self):
+        """Close the popup without resuming tracking"""
+        if not self.running:
+            return  # Already closing
+        self.running = False
+        # Quit the mainloop (cleanup happens after mainloop exits in _create_window)
+        self._quit_mainloop()
+        
+        if self.selection_mode:
+            print("[INFO] Pause selection cancelled")
+        else:
+            print("[INFO] Pause popup closed (tracking still paused)")
+            
+        # Notify main app that popup was closed
+        if self.on_close_callback:
+            threading.Thread(target=self.on_close_callback, daemon=True).start()
+
+    def _quit_mainloop(self):
+        """Quit the tkinter mainloop (cleanup happens after mainloop exits)"""
+        try:
+            if self._update_job and self.window:
+                self.window.after_cancel(self._update_job)
+                self._update_job = None
+            if self.window:
+                # Only quit the mainloop - don't destroy here
+                # The destroy will happen after mainloop() returns in _create_window
+                self.window.quit()
+        except Exception as e:
+            pass  # Window may already be closed
+
+    def close(self):
+        """Close the popup window (safe to call from any thread)"""
+        if not self.running:
+            return  # Already closed
+        self.running = False
+        try:
+            if self.window:
+                # Schedule quit on tkinter's thread
+                self.window.after(0, self._quit_mainloop)
+        except Exception as e:
+            # Window might already be destroyed
+            pass
+
+    def update_for_timed_pause(self, pause_end_time):
+        """Update the popup for a timed pause"""
+        self.pause_end_time = pause_end_time
+        self.is_timed_pause = True
+
+
+# ============================================================================
 # MAIN APPLICATION
 # ============================================================================
 
@@ -1882,6 +2470,28 @@ class TimeTracker:
         self.running = False
         self.tracking_active = False
         self.is_idle = False  # Idle state - when no activity for idle_timeout seconds
+
+        # ============================================================================
+        # PAUSE SETTINGS (stored locally on user's machine)
+        # ============================================================================
+        self.pause_settings = {
+            'timed_pause_enabled': True,  # Offer timed pause options
+            'pause_durations': [5, 10, 15, 30, 60],  # Available durations in minutes
+            'show_resume_notification': True,  # Notify when auto-resume happens
+            'pause_reminder_enabled': True,  # Show reminders while paused
+            'pause_reminder_interval': 30  # Reminder interval in minutes
+        }
+        self.load_pause_settings()  # Load from file if exists
+
+        # Pause tracking state
+        self.pause_start_time = None  # When user paused tracking (None = not paused)
+        self.pause_end_time = None  # Scheduled auto-resume time (for timed pause)
+        self.pause_reminder_interval = self.pause_settings['pause_reminder_interval'] * 60  # Convert to seconds
+        self.pause_reminder_enabled = self.pause_settings['pause_reminder_enabled']
+        self.last_pause_reminder_time = 0  # Last time we sent a pause reminder
+        self.pause_popup = None  # Floating popup window when paused
+        self.next_popup_show_time = None  # When to show popup again (for periodic reappearance)
+        self.popup_show_count = 0  # How many times popup has been shown (for calculating intervals)
         self.needs_idle_resume = False  # Flag set by pynput when activity detected during idle
         self.last_activity_time = time.time()  # Last mouse/keyboard activity
         self.idle_timeout = 300  # 5 minutes idle timeout (in seconds)
@@ -2052,8 +2662,11 @@ class TimeTracker:
                 # Create or update user in Supabase
                 self.current_user = user_info
                 self.current_user_id = self.ensure_user_exists(user_info)
-                
+
                 print(f"[OK] Authenticated user: {user_info.get('email', 'unknown')}")
+
+                # Update desktop app status to logged in
+                self._update_desktop_status(logged_in=True)
 
                 # Associate any anonymous offline records with this user
                 self._associate_offline_records()
@@ -2089,14 +2702,22 @@ class TimeTracker:
             # Get offline status
             is_online = self.offline_manager.check_connectivity(force=False)
             pending_offline = self.offline_manager.get_pending_count()
-            
+
+            # Calculate pause duration if paused
+            pause_duration_seconds = 0
+            if self.pause_start_time:
+                pause_duration_seconds = int(time.time() - self.pause_start_time)
+
             return jsonify({
                 'authenticated': self.current_user is not None,
                 'tracking': self.tracking_active,
+                'running': self.running,
                 'user': self.current_user.get('email') if self.current_user else None,
                 'online': is_online,
                 'offline_pending': pending_offline,
-                'idle': self.is_idle
+                'idle': self.is_idle,
+                'is_paused': self.pause_start_time is not None,
+                'pause_duration_seconds': pause_duration_seconds
             })
         
         @self.app.route('/api/offline/sync', methods=['POST'])
@@ -2350,6 +2971,18 @@ class TimeTracker:
                     self.add_admin_log('INFO', 'Tracking stopped by admin')
                 return jsonify({'success': True, 'message': 'Tracking stopped'})
 
+            elif action == 'pause_tracking':
+                if self.tracking_active:
+                    self.pause_tracking()
+                    self.add_admin_log('INFO', 'Tracking paused by user')
+                return jsonify({'success': True, 'message': 'Tracking paused'})
+
+            elif action == 'resume_tracking':
+                if not self.tracking_active and self.running:
+                    self.resume_tracking()
+                    self.add_admin_log('INFO', 'Tracking resumed by user')
+                return jsonify({'success': True, 'message': 'Tracking resumed'})
+
             elif action == 'clear_logs':
                 self.admin_logs = []
                 self.add_admin_log('INFO', 'Logs cleared by admin')
@@ -2365,7 +2998,7 @@ class TimeTracker:
                     return jsonify({'success': False, 'error': str(e)}), 500
 
             elif action == 'refresh_settings':
-                self.load_tracking_settings()
+                self.fetch_tracking_settings()
                 self.add_admin_log('INFO', 'Settings refreshed by admin')
                 return jsonify({'success': True, 'message': 'Settings refreshed'})
 
@@ -2373,6 +3006,9 @@ class TimeTracker:
                 # Clear user credentials (logout user) - for testing purposes
                 try:
                     user_email = self.current_user.get('email', 'Unknown') if self.current_user else 'No user'
+
+                    # Update desktop status to logged out (before clearing user_id)
+                    self._update_desktop_status(logged_in=False)
 
                     # Stop tracking first
                     if self.running:
@@ -2410,6 +3046,55 @@ class TimeTracker:
 
             else:
                 return jsonify({'error': 'Unknown action'}), 400
+
+        # ============================================================================
+        # PAUSE SETTINGS API
+        # ============================================================================
+
+        @self.app.route('/api/pause-settings', methods=['GET', 'POST'])
+        def pause_settings_api():
+            """Get or update pause settings"""
+            if request.method == 'GET':
+                return jsonify({
+                    'success': True,
+                    'settings': self.pause_settings
+                })
+            elif request.method == 'POST':
+                try:
+                    data = request.get_json()
+                    if not data:
+                        return jsonify({'success': False, 'error': 'No data provided'}), 400
+
+                    # Update settings
+                    if 'timed_pause_enabled' in data:
+                        self.pause_settings['timed_pause_enabled'] = bool(data['timed_pause_enabled'])
+                    if 'pause_durations' in data:
+                        # Validate durations are positive integers
+                        durations = data['pause_durations']
+                        if isinstance(durations, list) and all(isinstance(d, int) and d > 0 for d in durations):
+                            self.pause_settings['pause_durations'] = sorted(durations)
+                    if 'show_resume_notification' in data:
+                        self.pause_settings['show_resume_notification'] = bool(data['show_resume_notification'])
+                    if 'pause_reminder_enabled' in data:
+                        self.pause_settings['pause_reminder_enabled'] = bool(data['pause_reminder_enabled'])
+                    if 'pause_reminder_interval' in data:
+                        interval = int(data['pause_reminder_interval'])
+                        if interval >= 5:  # Minimum 5 minutes
+                            self.pause_settings['pause_reminder_interval'] = interval
+
+                    # Save to file
+                    if self.save_pause_settings():
+                        self.add_admin_log('INFO', 'Pause settings updated')
+                        return jsonify({
+                            'success': True,
+                            'message': 'Pause settings saved',
+                            'settings': self.pause_settings
+                        })
+                    else:
+                        return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
+
+                except Exception as e:
+                    return jsonify({'success': False, 'error': str(e)}), 500
 
         # ============================================================================
         # CONSENT ROUTES (GDPR/Privacy Compliance)
@@ -2482,6 +3167,15 @@ class TimeTracker:
                 'consent_version': ConsentManager.CONSENT_VERSION,
                 'consent_info': consent_info
             })
+
+        # ============================================================================
+        # USER SETTINGS PAGE (Accessible to all users via system tray)
+        # ============================================================================
+
+        @self.app.route('/settings')
+        def settings_page():
+            """User settings page - accessible to all users"""
+            return self.render_settings_page()
 
     # ============================================================================
     # ADMIN HELPER METHODS
@@ -2649,6 +3343,57 @@ class TimeTracker:
         if cached:
             return cached.get('user_id')
         return None
+
+    def _update_desktop_status(self, logged_in=True):
+        """Update desktop app login status in Supabase
+
+        Args:
+            logged_in: True when logging in, False when logging out
+        """
+        if not self.current_user_id or self.current_user_id.startswith('anonymous_'):
+            return
+
+        try:
+            client = self.supabase_service if self.supabase_service else self.supabase
+            if not client:
+                print("[WARN] No Supabase client available for status update")
+                return
+
+            update_data = {
+                'desktop_logged_in': logged_in,
+                'desktop_last_heartbeat': datetime.now().isoformat()
+            }
+
+            # Add app version if logging in
+            if logged_in:
+                update_data['desktop_app_version'] = getattr(self, 'APP_VERSION', '1.0.0')
+
+            client.table('users').update(update_data).eq('id', self.current_user_id).execute()
+
+            status_text = "logged in" if logged_in else "logged out"
+            print(f"[OK] Desktop status updated: {status_text}")
+
+        except Exception as e:
+            print(f"[WARN] Failed to update desktop status: {e}")
+
+    def _send_heartbeat(self):
+        """Send heartbeat to Supabase to indicate app is still running"""
+        if not self.current_user_id or self.current_user_id.startswith('anonymous_'):
+            return
+
+        try:
+            client = self.supabase_service if self.supabase_service else self.supabase
+            if not client:
+                return
+
+            client.table('users').update({
+                'desktop_last_heartbeat': datetime.now().isoformat()
+            }).eq('id', self.current_user_id).execute()
+
+            print(f"[OK] Heartbeat sent")
+
+        except Exception as e:
+            print(f"[WARN] Failed to send heartbeat: {e}")
 
     def _associate_offline_records(self):
         """Associate any anonymous offline records with the current user"""
@@ -3096,13 +3841,13 @@ class TimeTracker:
                     'track_idle_time': settings.get('track_idle_time', True),
                     'idle_threshold_seconds': settings.get('idle_threshold_seconds', 300),
                     'whitelist_enabled': settings.get('whitelist_enabled', True),
-                    'whitelisted_apps': settings.get('whitelisted_apps', []),
+                    'whitelisted_apps': settings.get('whitelisted_apps') or [],  # Handle None values
                     'blacklist_enabled': settings.get('blacklist_enabled', True),
-                    'blacklisted_apps': settings.get('blacklisted_apps', []),
+                    'blacklisted_apps': settings.get('blacklisted_apps') or [],  # Handle None values
                     'non_work_threshold_percent': settings.get('non_work_threshold_percent', 30),
                     'flag_excessive_non_work': settings.get('flag_excessive_non_work', True),
                     'private_sites_enabled': settings.get('private_sites_enabled', True),
-                    'private_sites': settings.get('private_sites', [])
+                    'private_sites': settings.get('private_sites') or []  # Handle None values
                 }
                 
                 # Update capture interval from settings
@@ -3110,8 +3855,13 @@ class TimeTracker:
                 self.idle_timeout = self.tracking_settings['idle_threshold_seconds']
                 
                 self.tracking_settings_last_fetch = time.time()
-                print(f"[OK] Tracking settings loaded - interval: {self.capture_interval}s, whitelist: {len(self.tracking_settings['whitelisted_apps'])} apps, blacklist: {len(self.tracking_settings['blacklisted_apps'])} apps")
-                self.add_admin_log('INFO', f'Settings loaded: interval={self.capture_interval}s')
+                tracking_mode = self.tracking_settings.get('tracking_mode', 'interval')
+                event_enabled = self.tracking_settings.get('event_tracking_enabled', False)
+                mode_str = "interval + event" if (event_enabled or tracking_mode == 'event') else "interval-only"
+                print(f"[OK] Tracking settings loaded - mode: {mode_str}, interval: {self.capture_interval}s")
+                print(f"     - Whitelist enabled: {self.tracking_settings['whitelist_enabled']}, apps: {self.tracking_settings['whitelisted_apps']}")
+                print(f"     - Blacklist enabled: {self.tracking_settings['blacklist_enabled']}, apps: {self.tracking_settings['blacklisted_apps']}")
+                self.add_admin_log('INFO', f'Settings loaded: interval={self.capture_interval}s, mode={mode_str}')
 
             else:
                 print("[INFO] No tracking settings found in Supabase, using defaults")
@@ -3120,7 +3870,60 @@ class TimeTracker:
         except Exception as e:
             print(f"[WARN] Failed to fetch tracking settings: {e}")
             # Continue with default settings
-    
+
+    # ============================================================================
+    # PAUSE SETTINGS MANAGEMENT (Local Storage)
+    # ============================================================================
+
+    def get_pause_settings_file_path(self):
+        """Get the path to the pause settings file"""
+        # Store in user's app data directory
+        if sys.platform == 'win32':
+            app_data = os.environ.get('APPDATA', os.path.expanduser('~'))
+            settings_dir = os.path.join(app_data, 'TimeTracker')
+        else:
+            settings_dir = os.path.join(os.path.expanduser('~'), '.timetracker')
+
+        # Create directory if it doesn't exist
+        os.makedirs(settings_dir, exist_ok=True)
+        return os.path.join(settings_dir, 'pause_settings.json')
+
+    def load_pause_settings(self):
+        """Load pause settings from local file"""
+        try:
+            settings_file = self.get_pause_settings_file_path()
+            if os.path.exists(settings_file):
+                with open(settings_file, 'r') as f:
+                    saved_settings = json.load(f)
+
+                # Merge with defaults (in case new settings were added)
+                for key, value in saved_settings.items():
+                    if key in self.pause_settings:
+                        self.pause_settings[key] = value
+
+                print(f"[OK] Pause settings loaded from {settings_file}")
+            else:
+                print("[INFO] No pause settings file found, using defaults")
+        except Exception as e:
+            print(f"[WARN] Failed to load pause settings: {e}")
+
+    def save_pause_settings(self):
+        """Save pause settings to local file"""
+        try:
+            settings_file = self.get_pause_settings_file_path()
+            with open(settings_file, 'w') as f:
+                json.dump(self.pause_settings, f, indent=2)
+
+            # Update runtime values
+            self.pause_reminder_interval = self.pause_settings['pause_reminder_interval'] * 60
+            self.pause_reminder_enabled = self.pause_settings['pause_reminder_enabled']
+
+            print(f"[OK] Pause settings saved to {settings_file}")
+            return True
+        except Exception as e:
+            print(f"[ERROR] Failed to save pause settings: {e}")
+            return False
+
     # ============================================================================
     # UNASSIGNED WORK NOTIFICATION FUNCTIONS
     # ============================================================================
@@ -3213,10 +4016,6 @@ class TimeTracker:
                 duration="long"
             )
 
-            # Build URL to Jira Forge app's Time Tracker page
-            jira_app_url = self._get_jira_app_url()
-            notification.add_actions(label="Open in Jira", launch=jira_app_url)
-
             # Set notification sound
             notification.set_audio(audio.Default, loop=False)
 
@@ -3224,10 +4023,45 @@ class TimeTracker:
             notification.show()
 
             print(f"[OK] Unassigned work notification shown - {summary['pending_groups']} groups, {time_str} total")
-            print(f"[INFO] Notification URL: {jira_app_url}")
 
         except Exception as e:
             print(f"[WARN] Failed to show notification: {e}")
+
+    def show_pause_reminder_notification(self):
+        """Show notification reminding user they have paused tracking"""
+        if not WINOTIFY_AVAILABLE:
+            print("[INFO] Pause reminder skipped - winotify not available")
+            return
+
+        if not self.pause_start_time:
+            return
+
+        try:
+            pause_duration = time.time() - self.pause_start_time
+            minutes = int(pause_duration // 60)
+
+            if minutes < 60:
+                time_str = f"{minutes} minute{'s' if minutes != 1 else ''}"
+            else:
+                hours = minutes // 60
+                mins = minutes % 60
+                time_str = f"{hours}h {mins}m"
+
+            notification = Notification(
+                app_id="Time Tracker",
+                title="Tracking Paused",
+                msg=f"You've been paused for {time_str}. If you're doing productive work, resume from the system tray.",
+                duration="long"
+            )
+
+            notification.set_audio(audio.Default, loop=False)
+            notification.show()
+
+            self.last_pause_reminder_time = time.time()
+            print(f"[OK] Pause reminder notification shown - paused for {time_str}")
+
+        except Exception as e:
+            print(f"[WARN] Failed to show pause reminder notification: {e}")
 
     def _get_jira_app_url(self, tab=None):
         """Build the URL to open the Jira Forge app (Time Tracker)
@@ -3291,6 +4125,91 @@ class TimeTracker:
         except Exception as e:
             print(f"[WARN] Error checking unassigned work: {e}")
     
+    # Common app name aliases - maps various names to their canonical form
+    # This allows users to add "VS Code" or "vscode" and it will still match "Code.exe"
+    APP_ALIASES = {
+        # VS Code variants
+        'vscode': ['code', 'visualstudiocode', 'visual studio code'],
+        'code': ['vscode', 'visualstudiocode'],
+        # Cursor IDE
+        'cursor': ['cursor'],
+        # Browsers
+        'chrome': ['chrome', 'googlechrome', 'google chrome'],
+        'googlechrome': ['chrome'],
+        'firefox': ['firefox', 'mozilla', 'mozilla firefox'],
+        'edge': ['msedge', 'microsoft edge', 'microsoftedge'],
+        'msedge': ['edge', 'microsoft edge'],
+        'brave': ['brave', 'bravebrowser'],
+        'opera': ['opera', 'operagx'],
+        # Communication
+        'slack': ['slack'],
+        'teams': ['teams', 'msteams', 'microsoft teams'],
+        'msteams': ['teams'],
+        'zoom': ['zoom'],
+        'discord': ['discord'],
+        'skype': ['skype'],
+        'webex': ['webex', 'ciscowebex'],
+        # Development
+        'intellij': ['idea', 'idea64', 'intellij', 'intellijidea'],
+        'idea': ['intellij', 'idea64'],
+        'pycharm': ['pycharm', 'pycharm64'],
+        'webstorm': ['webstorm', 'webstorm64'],
+        'androidstudio': ['studio', 'studio64', 'android studio'],
+        'studio': ['androidstudio'],
+        'sublime': ['sublime_text', 'sublimetext', 'sublime text'],
+        'atom': ['atom'],
+        'notepad++': ['notepad++'],
+        'vim': ['vim', 'gvim', 'nvim', 'neovim'],
+        'emacs': ['emacs'],
+        # Productivity
+        'notion': ['notion'],
+        'obsidian': ['obsidian'],
+        'evernote': ['evernote'],
+        'onenote': ['onenote', 'microsoft onenote'],
+        # Design
+        'figma': ['figma'],
+        'sketch': ['sketch'],
+        'photoshop': ['photoshop', 'adobe photoshop'],
+        'illustrator': ['illustrator', 'adobe illustrator'],
+        'xd': ['xd', 'adobe xd'],
+        # Project Management
+        'jira': ['jira'],
+        'confluence': ['confluence'],
+        'trello': ['trello'],
+        'asana': ['asana'],
+        'monday': ['monday'],
+        # Office
+        'word': ['winword', 'microsoft word'],
+        'winword': ['word'],
+        'excel': ['excel', 'microsoft excel'],
+        'powerpoint': ['powerpnt', 'powerpoint', 'microsoft powerpoint'],
+        'powerpnt': ['powerpoint'],
+        'outlook': ['outlook', 'microsoft outlook'],
+        # Terminals
+        'terminal': ['terminal', 'windowsterminal', 'cmd', 'powershell', 'pwsh'],
+        'windowsterminal': ['terminal'],
+        'powershell': ['powershell', 'pwsh'],
+        'cmd': ['cmd', 'command prompt'],
+        'iterm': ['iterm', 'iterm2'],
+        'warp': ['warp'],
+        # Git
+        'github': ['github', 'githubdesktop'],
+        'gitlab': ['gitlab'],
+        'sourcetree': ['sourcetree'],
+        'gitkraken': ['gitkraken'],
+        # API Tools
+        'postman': ['postman'],
+        'insomnia': ['insomnia'],
+        # Databases
+        'datagrip': ['datagrip'],
+        'dbeaver': ['dbeaver'],
+        'tableplus': ['tableplus'],
+        'pgadmin': ['pgadmin'],
+        # Other Dev Tools
+        'docker': ['docker', 'dockerdesktop'],
+        'kubernetes': ['kubernetes', 'kubectl'],
+    }
+    
     def normalize_app_name(self, app_name):
         """Normalize application name for comparison"""
         if not app_name:
@@ -3299,44 +4218,74 @@ class TimeTracker:
         normalized = app_name.lower().replace('.exe', '').replace(' ', '').strip()
         return normalized
     
+    def get_app_aliases(self, app_name):
+        """Get all aliases for an app name (including the name itself)"""
+        normalized = self.normalize_app_name(app_name)
+        aliases = {normalized}  # Start with the normalized name itself
+        
+        # Add aliases if this app has any defined
+        if normalized in self.APP_ALIASES:
+            aliases.update(self.APP_ALIASES[normalized])
+        
+        # Also check if this name is an alias for another app
+        for canonical, alias_list in self.APP_ALIASES.items():
+            if normalized in alias_list or normalized == canonical:
+                aliases.add(canonical)
+                aliases.update(alias_list)
+        
+        return aliases
+    
+    def app_matches(self, app_name, pattern):
+        """Check if app_name matches pattern (considering aliases)"""
+        app_normalized = self.normalize_app_name(app_name)
+        pattern_normalized = self.normalize_app_name(pattern)
+        
+        # Get all aliases for both the app and the pattern
+        app_aliases = self.get_app_aliases(app_name)
+        pattern_aliases = self.get_app_aliases(pattern)
+        
+        # Check if any alias matches (substring in either direction)
+        for app_alias in app_aliases:
+            for pattern_alias in pattern_aliases:
+                if pattern_alias in app_alias or app_alias in pattern_alias:
+                    return True
+        
+        return False
+    
     def is_in_whitelist(self, app_name):
-        """Check if app exists in whitelist (regardless of toggle state)
-
-        Used to determine if an app should be skipped when whitelist toggle is OFF.
-        """
+        """Check if app exists in whitelist (using alias-aware matching)"""
         whitelisted_apps = self.tracking_settings.get('whitelisted_apps', [])
         if not whitelisted_apps:
             return False
 
-        normalized_app = self.normalize_app_name(app_name)
-
         for whitelist_entry in whitelisted_apps:
-            normalized_entry = self.normalize_app_name(whitelist_entry)
-            if normalized_entry in normalized_app or normalized_app in normalized_entry:
+            if self.app_matches(app_name, whitelist_entry):
                 return True
+
+        # Debug: Log when app is not found in whitelist (first occurrence only)
+        if not hasattr(self, '_whitelist_debug_logged'):
+            self._whitelist_debug_logged = set()
+        normalized_app = self.normalize_app_name(app_name)
+        if normalized_app not in self._whitelist_debug_logged:
+            self._whitelist_debug_logged.add(normalized_app)
+            print(f"[DEBUG] '{normalized_app}' not matched in whitelist: {whitelisted_apps}")
 
         return False
 
     def is_in_blacklist(self, app_name):
-        """Check if app exists in blacklist (regardless of toggle state)
-
-        Used to determine if an app should be skipped when blacklist toggle is OFF.
-        """
+        """Check if app exists in blacklist (using alias-aware matching)"""
         blacklisted_apps = self.tracking_settings.get('blacklisted_apps', [])
         if not blacklisted_apps:
             return False
 
-        normalized_app = self.normalize_app_name(app_name)
-
         for blacklist_entry in blacklisted_apps:
-            normalized_entry = self.normalize_app_name(blacklist_entry)
-            if normalized_entry in normalized_app or normalized_app in normalized_entry:
+            if self.app_matches(app_name, blacklist_entry):
                 return True
 
         return False
 
     def is_app_whitelisted(self, app_name):
-        """Check if application is in whitelist (work apps)"""
+        """Check if application is in whitelist (work apps) - uses alias-aware matching"""
         if not self.tracking_settings.get('whitelist_enabled', True):
             return True  # If whitelist disabled, allow all
 
@@ -3344,18 +4293,15 @@ class TimeTracker:
         if not whitelisted_apps:
             return True  # Empty whitelist means allow all
 
-        normalized_app = self.normalize_app_name(app_name)
-
-        # Check if any whitelist entry matches
+        # Check if any whitelist entry matches (with alias support)
         for whitelist_entry in whitelisted_apps:
-            normalized_entry = self.normalize_app_name(whitelist_entry)
-            if normalized_entry in normalized_app or normalized_app in normalized_entry:
+            if self.app_matches(app_name, whitelist_entry):
                 return True
 
         return False
 
     def is_app_blacklisted(self, app_name):
-        """Check if application is in blacklist (non-work apps)"""
+        """Check if application is in blacklist (non-work apps) - uses alias-aware matching"""
         if not self.tracking_settings.get('blacklist_enabled', True):
             return False  # If blacklist disabled, nothing is blacklisted
 
@@ -3363,12 +4309,9 @@ class TimeTracker:
         if not blacklisted_apps:
             return False  # Empty blacklist means nothing blocked
 
-        normalized_app = self.normalize_app_name(app_name)
-
-        # Check if any blacklist entry matches
+        # Check if any blacklist entry matches (with alias support)
         for blacklist_entry in blacklisted_apps:
-            normalized_entry = self.normalize_app_name(blacklist_entry)
-            if normalized_entry in normalized_app or normalized_app in normalized_entry:
+            if self.app_matches(app_name, blacklist_entry):
                 return True
 
         return False
@@ -3418,19 +4361,26 @@ class TimeTracker:
         if not self.tracking_settings.get('screenshot_monitoring_enabled', True):
             return (True, 'screenshot_monitoring_disabled')
 
-        # Check if app is private (should not be recorded at all)
-        if self.is_private_app(app_name, window_title):
-            return (True, 'private_app')
-
-        # Check if app is in whitelist but whitelist toggle is OFF
-        # When OFF, apps in the whitelist should NOT be tracked
-        if self.is_in_whitelist(app_name) and not self.tracking_settings.get('whitelist_enabled', True):
-            return (True, 'whitelist_disabled')
-
-        # Check if app is in blacklist but blacklist toggle is OFF
-        # When OFF, apps in the blacklist should NOT be tracked
-        if self.is_in_blacklist(app_name) and not self.tracking_settings.get('blacklist_enabled', True):
-            return (True, 'blacklist_disabled')
+        # TEMPORARILY DISABLED - whitelist/blacklist/private checks
+        # TODO: Re-enable after testing other features
+        # 
+        # # Check if app is private (should not be recorded at all)
+        # if self.is_private_app(app_name, window_title):
+        #     return (True, 'private_app')
+        #
+        # # Check blacklist FIRST (takes priority)
+        # # When blacklist is ENABLED, blacklisted apps should NOT be tracked
+        # if self.tracking_settings.get('blacklist_enabled', True):
+        #     if self.is_in_blacklist(app_name):
+        #         return (True, 'blacklisted_app')
+        #
+        # # Check whitelist
+        # # When whitelist is ENABLED, ONLY whitelisted apps should be tracked
+        # if self.tracking_settings.get('whitelist_enabled', True):
+        #     whitelisted_apps = self.tracking_settings.get('whitelisted_apps', [])
+        #     if whitelisted_apps:  # Only enforce if whitelist has apps
+        #         if not self.is_in_whitelist(app_name):
+        #             return (True, 'not_whitelisted')
 
         return (False, None)
 
@@ -3831,28 +4781,44 @@ class TimeTracker:
         return result
 
     def start_sync_thread(self):
-        """Start background thread for periodic offline sync"""
+        """Start background thread for periodic offline sync and heartbeat"""
         def sync_worker():
+            heartbeat_counter = 0
+            heartbeat_interval = 480  # Send heartbeat every 480 iterations (4 hours at 30s interval)
+
             while self.running:
                 try:
                     if self.tracking_active and self.current_user_id:
                         self.sync_offline_data()
+
+                        # Send heartbeat every 4 hours (480 iterations * 30 seconds)
+                        heartbeat_counter += 1
+                        if heartbeat_counter >= heartbeat_interval:
+                            self._send_heartbeat()
+                            heartbeat_counter = 0
+
                 except Exception as e:
                     print(f"[ERROR] Sync thread error: {e}")
-                
+
                 # Check every 30 seconds
                 time.sleep(30)
-        
+
         self._sync_thread = threading.Thread(target=sync_worker, daemon=True)
         self._sync_thread.start()
-        print("[OK] Offline sync background thread started")
+        print("[OK] Offline sync and heartbeat background thread started")
 
     def tracking_loop(self):
         """Main tracking loop with idle detection and event-based window switch capture"""
-        print("[OK] Tracking started (interval + event-based)")
-        
         # Fetch initial tracking settings from Supabase
         self.fetch_tracking_settings()
+        
+        # Log actual tracking mode from settings
+        tracking_mode = self.tracking_settings.get('tracking_mode', 'interval')
+        event_enabled = self.tracking_settings.get('event_tracking_enabled', False)
+        if event_enabled or tracking_mode == 'event':
+            print("[OK] Tracking started (interval + event-based)")
+        else:
+            print("[OK] Tracking started (interval-only mode)")
         
         # Track last screenshot time to prevent too frequent captures (for window switches)
         last_screenshot_time = 0
@@ -3881,6 +4847,31 @@ class TimeTracker:
                     break
 
                 if not self.tracking_active:
+                    # Check for auto-resume (timed pause expired)
+                    if self.pause_end_time and time.time() >= self.pause_end_time:
+                        print("[INFO] Timed pause expired - auto-resuming")
+                        self.resume_tracking(show_notification=True)
+                        self.add_admin_log('INFO', 'Tracking auto-resumed after timed pause')
+                        continue
+
+                    # Check if it's time to show popup again (periodic reappearance)
+                    current_time = time.time()
+                    if self.next_popup_show_time and current_time >= self.next_popup_show_time:
+                        # Only show if popup is not already open
+                        if not self.pause_popup or not (self.pause_popup.running and self.pause_popup.window):
+                            print(f"[INFO] Showing pause popup again (interval {self.popup_show_count + 1}/4)")
+                            self._show_pause_popup()
+                            # Reset next show time (will be recalculated when popup is closed)
+                            self.next_popup_show_time = None
+
+                    # Check for pause reminder while paused
+                    if self.pause_start_time and self.pause_reminder_enabled:
+                        time_since_last_reminder = time.time() - self.last_pause_reminder_time
+
+                        # Send reminder every pause_reminder_interval (30 min) while paused
+                        if time_since_last_reminder >= self.pause_reminder_interval:
+                            self.show_pause_reminder_notification()
+
                     time.sleep(1)
                     continue
 
@@ -3996,9 +4987,18 @@ class TimeTracker:
                 should_skip, skip_reason = self.should_skip_screenshot(app_name, window_title)
                 
                 if should_skip:
-                    if skip_reason == 'private_app':
-                        # Don't log too frequently for private apps
-                        pass
+                    # Log skip reasons (but not too frequently)
+                    if skip_reason == 'blacklisted_app':
+                        # Log blacklisted apps occasionally for transparency
+                        if not hasattr(self, '_last_blacklist_log') or time.time() - self._last_blacklist_log > 60:
+                            print(f"[SKIP] Blacklisted app not tracked: {app_name}")
+                            self._last_blacklist_log = time.time()
+                    elif skip_reason == 'not_whitelisted':
+                        # Log non-whitelisted apps occasionally
+                        if not hasattr(self, '_last_whitelist_log') or time.time() - self._last_whitelist_log > 60:
+                            print(f"[SKIP] App not in whitelist: {app_name}")
+                            self._last_whitelist_log = time.time()
+                    # Don't log private_app or screenshot_monitoring_disabled frequently
                     time.sleep(2)
                     continue
                 
@@ -4086,11 +5086,18 @@ class TimeTracker:
                 should_capture = False
                 capture_reason = None
                 
+                # Check if event-based tracking is enabled (window switch captures)
+                event_tracking_enabled = self.tracking_settings.get('event_tracking_enabled', False)
+                tracking_mode = self.tracking_settings.get('tracking_mode', 'interval')
+                
+                # Only capture on window switch if event tracking is enabled
                 if window_switched and time_since_last_screenshot >= min_screenshot_interval:
-                    # Window switch + enough time passed - capture new screenshot
-                    should_capture = True
-                    capture_reason = "window_switch"
-                elif time_since_last_interval >= current_capture_interval:
+                    if event_tracking_enabled or tracking_mode == 'event':
+                        # Window switch + event tracking enabled + enough time passed - capture new screenshot
+                        should_capture = True
+                        capture_reason = "window_switch"
+                
+                if time_since_last_interval >= current_capture_interval:
                     # Interval reached (using dynamic interval from settings)
                     # This ensures clean, non-overlapping time periods
                     updated_existing_record = False  # Track if we updated a previous record
@@ -4246,8 +5253,9 @@ class TimeTracker:
                 daemon=True
             ).start()
 
-        # Update tray icon to green
+        # Update tray icon to green and menu to show Pause option
         self.update_tray_icon()
+        self.update_tray_menu()
 
         print("[OK] Tracking started with idle detection")
         self.add_admin_log('INFO', f'Tracking started (interval: {self.capture_interval}s)')
@@ -4256,28 +5264,234 @@ class TimeTracker:
         """Stop screenshot tracking"""
         self.running = False
         self.tracking_active = False
+        self.pause_start_time = None  # Clear pause state when fully stopping
 
         # Update tray icon to blue
         self.update_tray_icon()
+        self.update_tray_menu()  # Update menu
 
         print("[OK] Tracking stopped")
         self.add_admin_log('INFO', 'Tracking stopped')
     
-    def pause_tracking(self):
-        """Pause screenshot tracking (can be resumed)"""
+    def pause_tracking(self, duration_minutes=None):
+        """Pause screenshot tracking (can be resumed)
+
+        Args:
+            duration_minutes: If provided, tracking will auto-resume after this many minutes.
+                            If None, tracking stays paused until manually resumed.
+        """
         if self.tracking_active:
             self.tracking_active = False
+            self.pause_start_time = time.time()  # Record when paused
+            self.last_pause_reminder_time = 0  # Reset reminder timer
+
+            # Set auto-resume time if duration specified
+            if duration_minutes:
+                self.pause_end_time = self.pause_start_time + (duration_minutes * 60)
+                print(f"[OK] Tracking paused for {duration_minutes} minutes")
+            else:
+                self.pause_end_time = None
+                print("[OK] Tracking paused (manual resume)")
+
             self.update_tray_icon()
-            print("[OK] Tracking paused")
+            self.update_tray_menu()  # Update menu to show Resume option
+
+            # Show the floating pause popup
+            self._show_pause_popup()
     
-    def resume_tracking(self):
-        """Resume screenshot tracking"""
+    def resume_tracking(self, show_notification=False):
+        """Resume screenshot tracking
+
+        Args:
+            show_notification: If True, show a notification that tracking resumed (for auto-resume)
+        """
         if not self.tracking_active and self.running:
+            # Log how long user was paused
+            if self.pause_start_time:
+                pause_duration = time.time() - self.pause_start_time
+                minutes = int(pause_duration // 60)
+                print(f"[INFO] Resuming after {minutes} minute(s) paused")
+
             self.tracking_active = True
+            self.pause_start_time = None  # Clear pause time
+            self.pause_end_time = None  # Clear auto-resume time
+            self.next_popup_show_time = None  # Clear next popup show time
+            self.popup_show_count = 0  # Reset popup show count
             self.is_idle = False
             self.last_activity_time = time.time()
             self.update_tray_icon()
+            self.update_tray_menu()  # Update menu to show Pause option
+
+            # Close the pause popup
+            self._close_pause_popup()
+
+            # Show notification if requested (for auto-resume)
+            if show_notification and self.pause_settings.get('show_resume_notification', True):
+                self._show_resume_notification()
+
             print("[OK] Tracking resumed")
+
+    def _show_pause_popup(self):
+        """Show the floating pause popup window"""
+        try:
+            # Close any existing popup
+            self._close_pause_popup()
+
+            # Create callback for when user clicks Resume in popup
+            def on_popup_resume():
+                # Resume tracking (this is called from popup thread)
+                self.resume_tracking()
+                self.add_admin_log('INFO', 'Tracking resumed from popup')
+
+            # Create callback for when user sets a timer from popup
+            def on_set_timer(minutes):
+                # Update main app's pause_end_time for auto-resume
+                self.pause_end_time = time.time() + (minutes * 60)
+                # Reset popup show tracking when timer is set
+                self.popup_show_count = 0
+                self.next_popup_show_time = None
+                self._calculate_next_popup_time()
+                self.add_admin_log('INFO', f'Auto-resume timer set for {minutes} minutes from popup')
+
+            # Create callback for when popup is closed (not resumed)
+            def on_popup_close():
+                # Calculate when to show popup again (at 1/4 intervals)
+                self._calculate_next_popup_time()
+
+            # Create and show popup
+            self.pause_popup = PausePopupWindow(
+                on_resume_callback=on_popup_resume,
+                on_set_timer_callback=on_set_timer,
+                on_close_callback=on_popup_close
+            )
+            self.pause_popup.show(self.pause_start_time, self.pause_end_time)
+            # If this is the initial show (not a periodic reappearance), reset count
+            if self.next_popup_show_time is None:
+                self.popup_show_count = 0
+            print("[OK] Pause popup shown")
+
+        except Exception as e:
+            print(f"[WARN] Failed to show pause popup: {e}")
+
+    def _close_pause_popup(self):
+        """Close the pause popup window if it's open"""
+        try:
+            if self.pause_popup:
+                # Check if popup is still running before trying to close
+                if self.pause_popup.running and self.pause_popup.window:
+                    self.pause_popup.close()
+                self.pause_popup = None
+        except Exception as e:
+            self.pause_popup = None
+            print(f"[WARN] Error closing pause popup: {e}")
+
+    def show_pause_selection_popup(self):
+        """Show popup for selecting pause duration BEFORE pausing (tray menu flow)"""
+        try:
+            # Close any existing popup
+            self._close_pause_popup()
+
+            # Create callback for when user selects duration and clicks "Pause Tracking"
+            def on_duration_selected(minutes):
+                # NOW actually pause tracking with the selected duration
+                self.pause_tracking(duration_minutes=minutes)
+                self.add_admin_log('INFO', f'Tracking paused for {minutes} minutes from selection popup')
+
+            # Create callback for when popup is closed without selecting (Cancel)
+            def on_popup_cancelled():
+                # User cancelled - don't pause, just log it
+                print("[INFO] Pause selection cancelled by user")
+
+            # Create and show popup in selection mode
+            self.pause_popup = PausePopupWindow(
+                on_resume_callback=None,  # Not used in selection mode
+                on_set_timer_callback=on_duration_selected,
+                on_close_callback=on_popup_cancelled,
+                selection_mode=True  # Enable selection mode
+            )
+            self.pause_popup.show()  # No pause times needed for selection mode
+            print("[OK] Pause selection popup shown")
+
+        except Exception as e:
+            print(f"[WARN] Failed to show pause selection popup: {e}")
+
+    def _calculate_next_popup_time(self):
+        """Calculate when to show the popup again (at 1/4 intervals of remaining pause time)"""
+        if not self.pause_end_time or not self.pause_start_time:
+            # No timed pause, don't schedule reappearance
+            self.next_popup_show_time = None
+            return
+
+        current_time = time.time()
+        remaining_time = self.pause_end_time - current_time
+        
+        if remaining_time <= 0:
+            # Pause is about to end, don't schedule
+            self.next_popup_show_time = None
+            return
+
+        # Calculate 1/4 intervals
+        # For 10 min pause: show at 7.5 min remaining (1/4), 5 min remaining (2/4), 2.5 min remaining (3/4)
+        # popup_show_count tracks how many times we've shown: 0=initial, 1=shown once, 2=shown twice, 3=shown three times
+        # After showing 3 times, we don't show again (next is auto-resume)
+        
+        if self.popup_show_count >= 3:
+            # Already shown 3 times, next is auto-resume (don't show popup)
+            self.next_popup_show_time = None
+            return
+
+        # Increment count for next show
+        self.popup_show_count += 1
+        
+        # Calculate time until next 1/4 mark
+        # If remaining is 10 min and count is 0 (just closed first time):
+        #   next_show_remaining = 10 * (4 - 1) / 4 = 10 * 3/4 = 7.5 min remaining
+        #   time_until_show = 10 - 7.5 = 2.5 min from now
+        # If remaining is 7.5 min and count is 1 (just closed second time):
+        #   next_show_remaining = 7.5 * (4 - 2) / 4 = 7.5 * 2/4 = 3.75 min remaining
+        #   But wait, we need to use original remaining time, not current
+        # Actually, let's recalculate from pause_end_time to be accurate
+        
+        # Calculate what fraction of total pause time remains
+        total_pause_duration = self.pause_end_time - self.pause_start_time
+        elapsed = current_time - self.pause_start_time
+        remaining_fraction = remaining_time / total_pause_duration if total_pause_duration > 0 else 0
+        
+        # Next show should be at (4 - popup_show_count) / 4 of remaining time
+        # For 10 min total: show at 7.5 min (3/4), 5 min (2/4), 2.5 min (1/4) remaining
+        target_fraction = (4 - self.popup_show_count) / 4.0
+        target_remaining = total_pause_duration * target_fraction
+        time_until_show = remaining_time - target_remaining
+        
+        if time_until_show <= 0:
+            # Too close to end, don't schedule
+            self.next_popup_show_time = None
+            return
+            
+        self.next_popup_show_time = current_time + time_until_show
+        
+        minutes_until = time_until_show / 60
+        print(f"[INFO] Popup will reappear in {minutes_until:.1f} minutes (interval {self.popup_show_count}/4, when {target_remaining/60:.1f} min remaining)")
+
+    def _show_resume_notification(self):
+        """Show a notification that tracking has auto-resumed"""
+        if not WINOTIFY_AVAILABLE:
+            return
+
+        try:
+            from winotify import Notification, audio
+
+            notification = Notification(
+                app_id="Time Tracker",
+                title="Tracking Resumed",
+                msg="Your timed pause has ended. Time tracking is now active.",
+                duration="short"
+            )
+            notification.set_audio(audio.Default, loop=False)
+            notification.show()
+            print("[OK] Resume notification shown")
+        except Exception as e:
+            print(f"[WARN] Failed to show resume notification: {e}")
     
     def create_tray_icon(self, state='blue'):
         """
@@ -4297,7 +5511,8 @@ class TimeTracker:
             'red': (220, 53, 69, 255),      # Red - not logged in
             'blue': (0, 82, 204, 255),      # Atlassian blue - logged in, not tracking
             'green': (40, 167, 69, 255),    # Green - logged in and actively tracking
-            'orange': (255, 152, 0, 255)    # Orange - logged in, tracking, but idle
+            'orange': (255, 152, 0, 255),   # Orange - logged in, tracking, but idle
+            'yellow': (251, 191, 36, 255)   # Yellow/Amber - tracking paused by user
         }
         
         icon_color = color_map.get(state, color_map['blue'])
@@ -4337,6 +5552,8 @@ class TimeTracker:
                 return 'orange'  # Anonymous mode, tracking active (use orange to indicate not logged in)
             else:
                 return 'red'  # Anonymous mode but not tracking
+        elif self.pause_start_time is not None:
+            return 'yellow'  # User manually paused tracking
         elif self.is_idle:
             return 'orange'  # Logged in, tracking enabled, but idle (no activity)
         elif self.tracking_active:
@@ -4369,12 +5586,46 @@ class TimeTracker:
             if not self.current_user:
                 webbrowser.open(f'http://localhost:{self.web_port}/login')
 
-        return pystray.Menu(
+        def do_pause():
+            # Show selection popup first - user must select duration before pausing
+            self.show_pause_selection_popup()
+
+        def do_resume():
+            self.resume_tracking()
+            self.add_admin_log('INFO', 'Tracking resumed from tray menu')
+
+        def open_settings():
+            webbrowser.open(f'http://localhost:{self.web_port}/settings')
+
+        # Build menu items list dynamically based on current state
+        menu_items = [
             item(
                 lambda text: get_menu_label(),
                 users_action
             )
-        )
+        ]
+
+        # Add Pause option when tracking is active
+        if self.tracking_active:
+            menu_items.append(item('Pause Tracking', do_pause))
+
+        # Add Resume option when paused
+        if self.pause_start_time is not None and self.running:
+            menu_items.append(item('Resume Tracking', do_resume))
+
+        # Always show Settings option
+        menu_items.append(pystray.Menu.SEPARATOR)
+        menu_items.append(item('Settings', open_settings))
+
+        return pystray.Menu(*menu_items)
+
+    def _exit_app(self):
+        """Exit the application from tray menu"""
+        print("[INFO] Exit requested from tray menu")
+        self._close_pause_popup()  # Close popup if open
+        self.stop()
+        if self.tray:
+            self.tray.stop()
 
     def update_tray_menu(self):
         """Force update the tray menu (call after login/logout)"""
@@ -4418,7 +5669,8 @@ class TimeTracker:
                     'red': '#DC3545',
                     'blue': '#0052CC',
                     'green': '#28A745',
-                    'orange': '#FF9800'
+                    'orange': '#FF9800',
+                    'yellow': '#FBBF24'
                 }
                 icon_image = PILImage.new('RGB', (16, 16), color=color_map.get(state, '#0052CC'))
 
@@ -4432,6 +5684,9 @@ class TimeTracker:
     
     def quit_app(self):
         """Quit application"""
+        # Update desktop status to logged out before quitting
+        self._update_desktop_status(logged_in=False)
+
         self.stop_tracking()
         if self.tray:
             self.tray.stop()
@@ -5275,6 +6530,389 @@ class TimeTracker:
 </html>'''
         return html
 
+    def render_settings_page(self):
+        """Render the user settings page (accessible to all users)"""
+        html = '''<!DOCTYPE html>
+<html>
+<head>
+    <title>Settings - Time Tracker</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        .card-header {
+            background: linear-gradient(135deg, #0052CC 0%, #2684FF 100%);
+            color: white;
+            padding: 24px;
+            text-align: center;
+        }
+        .card-header h1 {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+        .card-header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        .card-body {
+            padding: 32px;
+        }
+        .setting-section {
+            margin-bottom: 28px;
+            padding-bottom: 28px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .setting-section:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+        .setting-section h3 {
+            font-size: 16px;
+            color: #1f2937;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .setting-row {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+        .setting-row:last-child {
+            margin-bottom: 0;
+        }
+        .setting-info {
+            flex: 1;
+            padding-right: 16px;
+        }
+        .setting-label {
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 4px;
+        }
+        .setting-description {
+            font-size: 13px;
+            color: #6b7280;
+        }
+        .toggle-switch {
+            position: relative;
+            width: 48px;
+            height: 26px;
+            flex-shrink: 0;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #d1d5db;
+            border-radius: 26px;
+            transition: 0.3s;
+        }
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            border-radius: 50%;
+            transition: 0.3s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        input:checked + .toggle-slider {
+            background-color: #0052CC;
+        }
+        input:checked + .toggle-slider:before {
+            transform: translateX(22px);
+        }
+        .duration-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .duration-chip {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            background: #f3f4f6;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 2px solid transparent;
+        }
+        .duration-chip:hover {
+            background: #e5e7eb;
+        }
+        .duration-chip.selected {
+            background: #dbeafe;
+            border-color: #0052CC;
+        }
+        .duration-chip input {
+            display: none;
+        }
+        .duration-chip span {
+            font-size: 14px;
+            color: #374151;
+            font-weight: 500;
+        }
+        .number-input {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 8px;
+        }
+        .number-input input {
+            width: 80px;
+            padding: 10px 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 16px;
+            text-align: center;
+        }
+        .number-input input:focus {
+            outline: none;
+            border-color: #0052CC;
+        }
+        .number-input span {
+            color: #6b7280;
+            font-size: 14px;
+        }
+        .status-message {
+            margin-top: 20px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            text-align: center;
+            font-weight: 500;
+            display: none;
+        }
+        .status-message.success {
+            display: block;
+            background: #d1fae5;
+            color: #065f46;
+        }
+        .status-message.error {
+            display: block;
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .back-link {
+            display: block;
+            text-align: center;
+            margin-top: 20px;
+            color: white;
+            text-decoration: none;
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        .back-link:hover {
+            opacity: 1;
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <div class="card-header">
+                <h1>&#9881; Settings</h1>
+                <p>Configure your Time Tracker preferences</p>
+            </div>
+            <div class="card-body">
+                <!-- Timed Pause Section -->
+                <div class="setting-section">
+                    <h3>&#9208; Pause Options</h3>
+
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <div class="setting-label">Enable timed pause</div>
+                            <div class="setting-description">Show duration options when you pause tracking</div>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="timed-pause-enabled" onchange="saveSettings()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="setting-info" style="margin-top: 16px;">
+                        <div class="setting-label">Quick preset durations</div>
+                        <div class="setting-description">Select which preset durations to show as quick buttons. You can always enter any custom duration in the pause popup.</div>
+                    </div>
+                    <div class="duration-chips" id="pause-durations">
+                        <label class="duration-chip" onclick="toggleDuration(this)">
+                            <input type="checkbox" value="5">
+                            <span>5 min</span>
+                        </label>
+                        <label class="duration-chip" onclick="toggleDuration(this)">
+                            <input type="checkbox" value="10">
+                            <span>10 min</span>
+                        </label>
+                        <label class="duration-chip" onclick="toggleDuration(this)">
+                            <input type="checkbox" value="15">
+                            <span>15 min</span>
+                        </label>
+                        <label class="duration-chip" onclick="toggleDuration(this)">
+                            <input type="checkbox" value="30">
+                            <span>30 min</span>
+                        </label>
+                        <label class="duration-chip" onclick="toggleDuration(this)">
+                            <input type="checkbox" value="60">
+                            <span>60 min</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Notifications Section -->
+                <div class="setting-section">
+                    <h3>&#128276; Notifications</h3>
+
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <div class="setting-label">Resume notification</div>
+                            <div class="setting-description">Show a notification when tracking auto-resumes</div>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="show-resume-notification" onchange="saveSettings()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <div class="setting-label">Pause reminders</div>
+                            <div class="setting-description">Remind you when you've been paused for a while</div>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="pause-reminder-enabled" onchange="saveSettings()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="setting-info" style="margin-top: 16px;">
+                        <div class="setting-label">Reminder interval</div>
+                        <div class="setting-description">How often to remind you while paused</div>
+                    </div>
+                    <div class="number-input">
+                        <input type="number" id="pause-reminder-interval" min="5" max="120" value="30" onchange="saveSettings()">
+                        <span>minutes</span>
+                    </div>
+                </div>
+
+                <div id="status-message" class="status-message"></div>
+            </div>
+        </div>
+        <a href="/" class="back-link">&#8592; Back to Time Tracker</a>
+    </div>
+
+    <script>
+        // Load settings on page load
+        function loadSettings() {
+            fetch('/api/pause-settings')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success && data.settings) {
+                        const s = data.settings;
+
+                        document.getElementById('timed-pause-enabled').checked = s.timed_pause_enabled;
+                        document.getElementById('show-resume-notification').checked = s.show_resume_notification;
+                        document.getElementById('pause-reminder-enabled').checked = s.pause_reminder_enabled;
+                        document.getElementById('pause-reminder-interval').value = s.pause_reminder_interval;
+
+                        // Set duration chips
+                        const durations = s.pause_durations || [];
+                        document.querySelectorAll('#pause-durations .duration-chip').forEach(chip => {
+                            const val = parseInt(chip.querySelector('input').value);
+                            const isSelected = durations.includes(val);
+                            chip.querySelector('input').checked = isSelected;
+                            chip.classList.toggle('selected', isSelected);
+                        });
+                    }
+                })
+                .catch(err => console.error('Error loading settings:', err));
+        }
+
+        // Toggle duration chip selection
+        function toggleDuration(chip) {
+            const input = chip.querySelector('input');
+            input.checked = !input.checked;
+            chip.classList.toggle('selected', input.checked);
+            saveSettings();
+        }
+
+        // Save settings
+        function saveSettings() {
+            const settings = {
+                timed_pause_enabled: document.getElementById('timed-pause-enabled').checked,
+                show_resume_notification: document.getElementById('show-resume-notification').checked,
+                pause_reminder_enabled: document.getElementById('pause-reminder-enabled').checked,
+                pause_reminder_interval: parseInt(document.getElementById('pause-reminder-interval').value) || 30
+            };
+
+            // Collect selected durations
+            const durations = [];
+            document.querySelectorAll('#pause-durations .duration-chip input:checked').forEach(cb => {
+                durations.push(parseInt(cb.value));
+            });
+            settings.pause_durations = durations.length > 0 ? durations : [5, 10, 15, 30, 60];
+
+            fetch('/api/pause-settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings)
+            })
+            .then(r => r.json())
+            .then(data => {
+                const statusEl = document.getElementById('status-message');
+                if (data.success) {
+                    statusEl.textContent = '\\u2713 Settings saved!';
+                    statusEl.className = 'status-message success';
+                } else {
+                    statusEl.textContent = 'Failed to save: ' + (data.error || 'Unknown error');
+                    statusEl.className = 'status-message error';
+                }
+                setTimeout(() => { statusEl.className = 'status-message'; }, 3000);
+            })
+            .catch(err => {
+                const statusEl = document.getElementById('status-message');
+                statusEl.textContent = 'Failed to save settings';
+                statusEl.className = 'status-message error';
+            });
+        }
+
+        // Initialize
+        loadSettings();
+    </script>
+</body>
+</html>'''
+        return html
+
     def render_admin_dashboard(self):
         html = '''<!DOCTYPE html>
 <html>
@@ -5408,6 +7046,14 @@ class TimeTracker:
         .control-btn.danger {
             background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
             color: #fff;
+        }
+        .control-btn.warning {
+            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+            color: #000;
+        }
+        .control-btn.success {
+            background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+            color: #000;
         }
         .control-btn.secondary {
             background: rgba(255, 255, 255, 0.1);
@@ -5604,6 +7250,12 @@ class TimeTracker:
                     <button id="btn-stop" class="control-btn danger" onclick="controlAction('stop_tracking')">
                         &#9632; Stop Tracking
                     </button>
+                    <button id="btn-pause" class="control-btn warning" onclick="controlAction('pause_tracking')">
+                        &#9208; Pause Tracking
+                    </button>
+                    <button id="btn-resume" class="control-btn success" onclick="controlAction('resume_tracking')">
+                        &#9654; Resume Tracking
+                    </button>
                     <button class="control-btn secondary" onclick="controlAction('force_sync')">
                         &#128259; Force Sync
                     </button>
@@ -5793,7 +7445,13 @@ class TimeTracker:
                 .then(data => {
                     // Tracking status
                     const trackingEl = document.getElementById('tracking-status');
-                    if (data.is_idle) {
+                    if (data.is_paused) {
+                        // Format pause duration
+                        const pauseMins = Math.floor(data.pause_duration_seconds / 60);
+                        const pauseText = pauseMins > 0 ? ` (${pauseMins}m)` : '';
+                        trackingEl.textContent = 'Paused' + pauseText;
+                        trackingEl.className = 'status-value warning';
+                    } else if (data.is_idle) {
                         trackingEl.textContent = 'Idle';
                         trackingEl.className = 'status-value warning';
                     } else if (data.tracking_active) {
@@ -5842,9 +7500,17 @@ class TimeTracker:
                         screenshotsTodayEl.className = 'status-value active';
                     }
 
-                    // Update buttons
+                    // Update buttons visibility and state
                     document.getElementById('btn-start').disabled = data.running;
                     document.getElementById('btn-stop').disabled = !data.running;
+
+                    // Show pause when tracking is active, show resume when paused
+                    const btnPause = document.getElementById('btn-pause');
+                    const btnResume = document.getElementById('btn-resume');
+                    if (btnPause && btnResume) {
+                        btnPause.style.display = data.tracking_active ? 'inline-block' : 'none';
+                        btnResume.style.display = (data.is_paused && data.running) ? 'inline-block' : 'none';
+                    }
                 })
                 .catch(err => console.error('Error loading status:', err));
         }

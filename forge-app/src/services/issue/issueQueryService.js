@@ -182,6 +182,21 @@ export async function getActiveIssuesWithTime(accountId, cloudId) {
     sessions: sessionsByIssue[issue.key] || []
   }));
 
+  // Sort issues: In Progress first, then other statuses, then Done
+  const statusOrder = (status) => {
+    const lowerStatus = (status || '').toLowerCase();
+    if (lowerStatus === 'in progress') return 0;
+    if (lowerStatus === 'done') return 2;
+    return 1; // All other statuses (To Do, etc.) in the middle
+  };
+
+  enrichedIssues.sort((a, b) => {
+    const statusDiff = statusOrder(a.status) - statusOrder(b.status);
+    if (statusDiff !== 0) return statusDiff;
+    // Secondary sort by time tracked (most time first) within same status
+    return (b.timeTracked || 0) - (a.timeTracked || 0);
+  });
+
   return {
     issues: enrichedIssues,
     total: enrichedIssues.length

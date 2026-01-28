@@ -101,12 +101,63 @@ async function processUserUnassignedWork(userId, organizationId) {
 
   logger.info(`[Clustering] Created ${clusteringResult.groups.length} groups for user ${userId}`);
 
-  // 4. Save each group to database
-  for (const group of clusteringResult.groups) {
+  // 4. Deduplicate session_ids across all groups (prevent same activity in multiple groups)
+  const deduplicatedGroups = deduplicateSessionsAcrossGroups(clusteringResult.groups);
+
+  // 5. Save each group to database
+  for (const group of deduplicatedGroups) {
     await saveGroupToDatabase(userId, organizationId, group);
   }
 
-  logger.info(`[Clustering] Successfully saved ${clusteringResult.groups.length} groups for user ${userId}`);
+  logger.info(`[Clustering] Successfully saved ${deduplicatedGroups.length} groups for user ${userId}`);
+}
+
+/**
+ * Deduplicate session_ids across all groups to prevent same activity appearing in multiple groups
+ * This handles the case where AI might return overlapping sessions in different groups
+ * @param {Array} groups - Array of group objects from AI clustering
+ * @returns {Array} Groups with deduplicated session_ids (empty groups removed)
+ */
+function deduplicateSessionsAcrossGroups(groups) {
+  const seenSessionIds = new Set();
+  let totalDuplicatesRemoved = 0;
+
+  const deduplicatedGroups = groups.map(group => {
+    const originalSessionIds = group.session_ids || [];
+    const uniqueSessionIds = [];
+
+    for (const sessionId of originalSessionIds) {
+      if (seenSessionIds.has(sessionId)) {
+        totalDuplicatesRemoved++;
+        logger.warn(`[Clustering] Removing duplicate session ${sessionId} from group "${group.label}"`);
+      } else {
+        seenSessionIds.add(sessionId);
+        uniqueSessionIds.push(sessionId);
+      }
+    }
+
+    // If no sessions were removed, return the original group
+    if (uniqueSessionIds.length === originalSessionIds.length) {
+      return group;
+    }
+
+    // Calculate new total_seconds proportionally (rough estimate)
+    const ratio = uniqueSessionIds.length / originalSessionIds.length;
+    const newTotalSeconds = Math.round((group.total_seconds || 0) * ratio);
+
+    return {
+      ...group,
+      session_ids: uniqueSessionIds,
+      session_count: uniqueSessionIds.length,
+      total_seconds: newTotalSeconds
+    };
+  }).filter(group => group.session_count > 0); // Remove empty groups
+
+  if (totalDuplicatesRemoved > 0) {
+    logger.info(`[Clustering] Removed ${totalDuplicatesRemoved} duplicate session assignments across groups`);
+  }
+
+  return deduplicatedGroups;
 }
 
 // Valid values for recommended_action (must match database check constraint)

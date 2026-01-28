@@ -8,6 +8,6 @@
  * - teamAnalyticsService: Project/team analytics
  */
 
-export { fetchTimeAnalytics } from './analytics/userAnalyticsService.js';
+export { fetchTimeAnalytics, fetchTimeAnalyticsBatch } from './analytics/userAnalyticsService.js';
 export { fetchAllAnalytics } from './analytics/orgAnalyticsService.js';
 export { fetchProjectAnalytics, fetchProjectTeamAnalytics } from './analytics/teamAnalyticsService.js';

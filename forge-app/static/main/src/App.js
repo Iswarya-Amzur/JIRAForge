@@ -7,6 +7,7 @@ import UnassignedWork from './components/UnassignedWork';
 import TimesheetSettings from './shared/components/TimesheetSettings';
 import { DashboardTab, TimeAnalyticsTab, TeamAnalyticsTab, OrgAnalyticsTab, ScreenshotsTab, BRDUploadTab } from './components/tabs';
 import { SessionReassignModal, ScreenshotPreviewModal, FullscreenViewer } from './components/modals';
+import { DesktopAppStatusBanner } from './components/common';
 import { AppProvider, useApp } from './context';
 import { getInitialTab } from './utils';
 
@@ -241,6 +242,7 @@ function AppContent() {
         </aside>
 
         <main className="App-content">
+          <DesktopAppStatusBanner downloadUrl="https://jvijitdewbypqbatfboi.supabase.co/storage/v1/object/public/desktop%20app/TimeTracker.exe" />
           {activeTab === 'dashboard' && (
             <DashboardTab
               onOpenScreenshotPreview={openScreenshotPreview}

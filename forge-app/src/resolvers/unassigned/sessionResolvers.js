@@ -363,6 +363,138 @@ export async function getGroupScreenshots(req) {
 }
 
 /**
+ * Get work sessions for unassigned work group (grouped by date like Dashboard)
+ */
+export async function getGroupWorkSessions(req) {
+  try {
+    const { accountId, cloudId } = req.context;
+    const { sessionIds } = req.payload;
+
+    console.log(`[getGroupWorkSessions] Received ${sessionIds?.length || 0} session IDs`);
+
+    if (!sessionIds || !Array.isArray(sessionIds) || sessionIds.length === 0) {
+      return { success: false, error: 'No session IDs provided' };
+    }
+
+    const supabaseConfig = await getSupabaseConfig(accountId);
+    if (!supabaseConfig) {
+      return { success: false, error: 'Supabase not configured' };
+    }
+
+    // Get or create organization first (multi-tenancy)
+    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+    if (!organization) {
+      return { success: false, error: 'Unable to get organization information' };
+    }
+
+    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+
+    // Get unassigned_activity records with screenshot timing data
+    const sessionIdsParam = sessionIds.join(',');
+    const activities = await supabaseRequest(
+      supabaseConfig,
+      `unassigned_activity?id=in.(${sessionIdsParam})&user_id=eq.${userId}&select=id,analysis_result_id,window_title,application_name,timestamp,screenshot_id,screenshots(id,timestamp,start_time,end_time,duration_seconds,storage_path)&order=timestamp.asc`
+    );
+
+    if (!activities || activities.length === 0) {
+      return { success: true, workSessions: [], sessionsByDate: {} };
+    }
+
+    const activitiesArray = Array.isArray(activities) ? activities : [activities];
+
+    // Build work sessions similar to Dashboard logic
+    const workSessions = [];
+    const SESSION_GAP_THRESHOLD = 10 * 60 * 1000; // 10 minutes in milliseconds
+
+    // Sort by timestamp
+    const sortedActivities = [...activitiesArray].sort((a, b) => {
+      const timeA = a.screenshots?.timestamp || a.timestamp;
+      const timeB = b.screenshots?.timestamp || b.timestamp;
+      return new Date(timeA) - new Date(timeB);
+    });
+
+    for (const activity of sortedActivities) {
+      const screenshot = activity.screenshots;
+      if (!screenshot) continue;
+
+      const screenshotTimestamp = screenshot.timestamp || activity.timestamp;
+      const durationSeconds = screenshot.duration_seconds || 0;
+
+      // Calculate start and end time
+      // IMPORTANT: Always calculate startTime from endTime - durationSeconds for accurate display
+      // Don't rely on screenshot.start_time as it may equal timestamp (causing same start/end display)
+      const endTime = new Date(screenshotTimestamp);
+      const startTime = new Date(endTime.getTime() - (durationSeconds * 1000));
+
+      // Check if this can be merged with the last session
+      if (workSessions.length > 0) {
+        const lastSession = workSessions[workSessions.length - 1];
+        const timeSinceLastSession = startTime - new Date(lastSession.endTime);
+
+        if (timeSinceLastSession <= SESSION_GAP_THRESHOLD) {
+          // Extend existing session - update end time and accumulate actual duration
+          lastSession.endTime = endTime.toISOString();
+          lastSession.activityIds.push(activity.id);
+          lastSession.screenshotIds.push(screenshot.id);
+          // Track actual duration (sum of screenshot durations, not time span)
+          lastSession.durationSeconds = (lastSession.durationSeconds || 0) + durationSeconds;
+          continue;
+        }
+      }
+
+      // Create new session with actual duration tracking
+      workSessions.push({
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
+        date: startTime.toISOString().split('T')[0],
+        activityIds: [activity.id],
+        screenshotIds: [screenshot.id],
+        // Track actual duration from screenshot (not time span)
+        durationSeconds: durationSeconds
+      });
+    }
+
+    // Group sessions by date
+    const sessionsByDate = {};
+    workSessions.forEach(session => {
+      const dateKey = session.date;
+      if (!sessionsByDate[dateKey]) {
+        sessionsByDate[dateKey] = [];
+      }
+      sessionsByDate[dateKey].push(session);
+    });
+
+    // Calculate totals for each date using actual duration (not time span)
+    const dateGroups = Object.keys(sessionsByDate)
+      .sort((a, b) => new Date(b) - new Date(a)) // Most recent first
+      .map(dateKey => {
+        const sessions = sessionsByDate[dateKey];
+        // Use actual tracked durationSeconds (sum of screenshot durations)
+        const totalSeconds = sessions.reduce((sum, s) => {
+          return sum + (s.durationSeconds || 0);
+        }, 0);
+
+        return {
+          date: dateKey,
+          sessions: sessions,
+          totalSeconds: totalSeconds,
+          totalFormatted: formatDuration(totalSeconds)
+        };
+      });
+
+    return {
+      success: true,
+      workSessions: workSessions,
+      dateGroups: dateGroups
+    };
+
+  } catch (error) {
+    console.error('Error getting group work sessions:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
  * Register session resolvers
  */
 export function registerSessionResolvers(resolver) {
@@ -370,4 +502,5 @@ export function registerSessionResolvers(resolver) {
   resolver.define('getUnassignedGroups', getUnassignedGroups);
   resolver.define('getGroupDetails', getGroupDetails);
   resolver.define('getGroupScreenshots', getGroupScreenshots);
+  resolver.define('getGroupWorkSessions', getGroupWorkSessions);
 }

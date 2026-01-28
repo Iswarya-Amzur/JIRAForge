@@ -143,6 +143,9 @@ const forgeLimiter = rateLimit({
 // Generic Supabase query endpoint
 app.post('/api/forge/supabase/query', forgeLimiter, forgeAuthMiddleware, forgeProxyController.supabaseQuery);
 
+// Batch endpoint - fetches all dashboard data in single request (RECOMMENDED)
+app.post('/api/forge/dashboard', forgeLimiter, forgeAuthMiddleware, forgeProxyController.getDashboardData);
+
 // Organization management
 app.post('/api/forge/organization', forgeLimiter, forgeAuthMiddleware, forgeProxyController.getOrCreateOrganization);
 app.post('/api/forge/organization/membership', forgeLimiter, forgeAuthMiddleware, forgeProxyController.getOrganizationMembership);
