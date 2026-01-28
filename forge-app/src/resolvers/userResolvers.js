@@ -96,12 +96,12 @@ export function registerUserResolvers(resolver) {
         };
       }
 
-      // Case 2: Desktop app is logged in - check if heartbeat is recent (within 10 minutes)
+      // Case 2: Desktop app is logged in - check if heartbeat is recent (within 4.5 hours)
       if (desktop_logged_in) {
         const lastHeartbeat = new Date(desktop_last_heartbeat);
         const minutesAgo = (Date.now() - lastHeartbeat.getTime()) / 60000;
 
-        if (minutesAgo < 10) {
+        if (minutesAgo < 270) {  // 4.5 hours = 270 minutes (gives buffer for 4-hour heartbeat)
           // Active - desktop app is running
           return {
             success: true,

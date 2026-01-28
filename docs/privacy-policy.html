@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="JIRAForge Privacy Policy - Learn how we collect, use, and protect your data.">
+    <title>Privacy Policy | JIRAForge</title>
+    <style>
+        :root {
+            --primary-color: #0052CC;
+            --primary-dark: #0747A6;
+            --secondary-color: #172B4D;
+            --accent-color: #00875A;
+            --background-color: #FAFBFC;
+            --card-background: #FFFFFF;
+            --border-color: #DFE1E6;
+            --text-primary: #172B4D;
+            --text-secondary: #5E6C84;
+            --text-light: #6B778C;
+            --warning-bg: #FFFAE6;
+            --warning-border: #FFE380;
+            --info-bg: #DEEBFF;
+            --info-border: #4C9AFF;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background-color: var(--background-color);
+        }
+
+        /* Header */
+        header {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+            color: white;
+            padding: 60px 20px;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        header .subtitle {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        header .last-updated {
+            margin-top: 20px;
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+
+        /* Navigation */
+        .nav-container {
+            background: var(--card-background);
+            border-bottom: 1px solid var(--border-color);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .nav-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-logo {
+            font-weight: 700;
+            font-size: 1.2rem;
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            margin-left: 25px;
+            font-size: 0.9rem;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--primary-color);
+        }
+
+        /* Main Content */
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        /* Table of Contents */
+        .toc {
+            background: var(--card-background);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 30px;
+            margin-bottom: 40px;
+        }
+
+        .toc h2 {
+            font-size: 1.3rem;
+            margin-bottom: 20px;
+            color: var(--secondary-color);
+        }
+
+        .toc-list {
+            list-style: none;
+            columns: 2;
+            column-gap: 40px;
+        }
+
+        .toc-list li {
+            margin-bottom: 10px;
+            break-inside: avoid;
+        }
+
+        .toc-list a {
+            color: var(--primary-color);
+            text-decoration: none;
+            font-size: 0.95rem;
+            transition: color 0.2s;
+        }
+
+        .toc-list a:hover {
+            color: var(--primary-dark);
+            text-decoration: underline;
+        }
+
+        @media (max-width: 600px) {
+            .toc-list {
+                columns: 1;
+            }
+        }
+
+        /* Sections */
+        section {
+            background: var(--card-background);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+
+        section h2 {
+            font-size: 1.5rem;
+            color: var(--secondary-color);
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--primary-color);
+        }
+
+        section h3 {
+            font-size: 1.2rem;
+            color: var(--secondary-color);
+            margin: 25px 0 15px 0;
+        }
+
+        section h4 {
+            font-size: 1rem;
+            color: var(--text-secondary);
+            margin: 20px 0 10px 0;
+        }
+
+        p {
+            margin-bottom: 15px;
+            color: var(--text-primary);
+        }
+
+        /* Lists */
+        ul, ol {
+            margin: 15px 0 15px 25px;
+        }
+
+        li {
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        /* Tables */
+        .table-container {
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+
+        th {
+            background: var(--primary-color);
+            color: white;
+            padding: 12px 15px;
+            text-align: left;
+            font-weight: 600;
+        }
+
+        td {
+            padding: 12px 15px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        tr:nth-child(even) {
+            background: var(--background-color);
+        }
+
+        tr:hover {
+            background: var(--info-bg);
+        }
+
+        /* Callout Boxes */
+        .callout {
+            padding: 20px;
+            border-radius: 6px;
+            margin: 20px 0;
+        }
+
+        .callout-warning {
+            background: var(--warning-bg);
+            border-left: 4px solid var(--warning-border);
+        }
+
+        .callout-info {
+            background: var(--info-bg);
+            border-left: 4px solid var(--info-border);
+        }
+
+        .callout-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Contact Box */
+        .contact-box {
+            background: linear-gradient(135deg, #F4F5F7 0%, #EBECF0 100%);
+            border-radius: 8px;
+            padding: 25px;
+            margin: 20px 0;
+        }
+
+        .contact-box h4 {
+            color: var(--secondary-color);
+            margin-bottom: 15px;
+        }
+
+        .contact-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            color: var(--text-primary);
+        }
+
+        .contact-item .icon {
+            font-size: 1.2rem;
+        }
+
+        /* Links */
+        a {
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        /* Code/Technical */
+        code {
+            background: var(--background-color);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.9em;
+        }
+
+        /* Footer */
+        footer {
+            background: var(--secondary-color);
+            color: white;
+            padding: 40px 20px;
+            text-align: center;
+        }
+
+        footer p {
+            color: rgba(255,255,255,0.8);
+            margin-bottom: 10px;
+        }
+
+        footer a {
+            color: white;
+            opacity: 0.9;
+        }
+
+        footer a:hover {
+            opacity: 1;
+        }
+
+        .footer-links {
+            margin-top: 20px;
+        }
+
+        .footer-links a {
+            margin: 0 15px;
+            font-size: 0.9rem;
+        }
+
+        /* Print Styles */
+        @media print {
+            header {
+                background: none;
+                color: var(--text-primary);
+                padding: 20px 0;
+            }
+
+            .nav-container, .toc, footer {
+                display: none;
+            }
+
+            section {
+                border: none;
+                box-shadow: none;
+                page-break-inside: avoid;
+            }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            header h1 {
+                font-size: 1.8rem;
+            }
+
+            section {
+                padding: 20px;
+            }
+
+            .nav-content {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .nav-links a {
+                margin: 0 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="nav-container">
+        <div class="nav-content">
+            <a href="#" class="nav-logo">🕐 JIRAForge</a>
+            <div class="nav-links">
+                <a href="#collection">Data Collection</a>
+                <a href="#usage">How We Use Data</a>
+                <a href="#rights">Your Rights</a>
+                <a href="#contact">Contact</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Header -->
+    <header>
+        <h1>Privacy Policy</h1>
+        <p class="subtitle">How JIRAForge collects, uses, and protects your information</p>
+        <p class="last-updated"><strong>Last Updated:</strong> January 26, 2026 | <strong>Effective Date:</strong> January 26, 2026</p>
+    </header>
+
+    <!-- Main Content -->
+    <main class="container">
+        <!-- Introduction -->
+        <section>
+            <h2>Introduction</h2>
+            <p>This Privacy Policy explains how JIRAForge ("we," "us," or "our") collects, uses, shares, and protects information when you use our Jira time tracking application ("Forge App") and companion desktop application ("Desktop App"), collectively referred to as the "Services."</p>
+            <p>By using our Services, you acknowledge that you have read and understood this Privacy Policy. If you do not agree with our practices, please do not use our Services.</p>
+        </section>
+
+        <!-- Table of Contents -->
+        <div class="toc">
+            <h2>📑 Table of Contents</h2>
+            <ol class="toc-list">
+                <li><a href="#collection">Information We Collect</a></li>
+                <li><a href="#usage">How We Use Your Information</a></li>
+                <li><a href="#sharing">How We Share Your Information</a></li>
+                <li><a href="#retention">Data Retention</a></li>
+                <li><a href="#security">Data Security</a></li>
+                <li><a href="#transfers">International Data Transfers</a></li>
+                <li><a href="#legal-basis">Legal Basis for Processing</a></li>
+                <li><a href="#rights">Your Rights and Choices</a></li>
+                <li><a href="#ccpa">California Privacy Rights (CCPA)</a></li>
+                <li><a href="#desktop-app">Desktop App Disclosures</a></li>
+                <li><a href="#children">Children's Privacy</a></li>
+                <li><a href="#cookies">Cookie Notice</a></li>
+                <li><a href="#changes">Changes to This Policy</a></li>
+                <li><a href="#contact">Contact Us</a></li>
+            </ol>
+        </div>
+
+        <!-- Section 1: Information We Collect -->
+        <section id="collection">
+            <h2>1. Information We Collect</h2>
+            <p>We collect information to provide, maintain, and improve our Services. The types of information we collect depend on how you use our Services.</p>
+
+            <h3>1.1 Information You Provide to Us</h3>
+            
+            <h4>Account Information:</h4>
+            <ul>
+                <li>Name and email address (from your Atlassian account)</li>
+                <li>Organization/workspace information</li>
+                <li>User preferences and settings</li>
+            </ul>
+
+            <h4>Time Tracking Data:</h4>
+            <ul>
+                <li>Time entries (start time, end time, duration)</li>
+                <li>Project and task associations</li>
+                <li>Work descriptions and notes</li>
+                <li>Break periods and idle time records</li>
+            </ul>
+
+            <h3>1.2 Information Collected by the Desktop App</h3>
+            <p>When you install and use the JIRAForge Desktop App, we may collect the following information while you are actively tracking time:</p>
+
+            <h4>Screenshot Data:</h4>
+            <ul>
+                <li>Periodic screenshots of your desktop screen (frequency configurable by your administrator)</li>
+                <li>Screenshots are captured only when time tracking is active</li>
+                <li>You will receive a notification when screenshot capture is enabled</li>
+            </ul>
+
+            <h4>Activity Data:</h4>
+            <ul>
+                <li>Names and titles of active applications and windows</li>
+                <li>Time spent in each application</li>
+                <li>Active vs. idle time detection</li>
+                <li>Keyboard and mouse activity levels (activity counts only)</li>
+            </ul>
+
+            <div class="callout callout-warning">
+                <div class="callout-title">⚠️ Important: We Are NOT a Keylogger</div>
+                <p>JIRAForge only detects whether keyboard/mouse activity is occurring, <strong>not</strong> the content of what you type. We do not capture passwords, personal messages, or any typed content.</p>
+            </div>
+
+            <h4>Device Information:</h4>
+            <ul>
+                <li>Operating system type and version</li>
+                <li>Device identifiers</li>
+                <li>IP address</li>
+                <li>Application version</li>
+            </ul>
+
+            <h3>1.3 Information Collected Automatically</h3>
+            <ul>
+                <li>Access times and dates</li>
+                <li>Features used within the Services</li>
+                <li>Error logs and performance data</li>
+                <li>Browser type (for web-based features)</li>
+                <li>Cookies and similar technologies</li>
+            </ul>
+
+            <h3>1.4 Information from Third Parties</h3>
+            <p>We receive information from Atlassian/Jira including:</p>
+            <ul>
+                <li>Jira project and issue information</li>
+                <li>User profile data from your Atlassian account</li>
+                <li>Workspace and team membership information</li>
+            </ul>
+        </section>
+
+        <!-- Section 2: How We Use Your Information -->
+        <section id="usage">
+            <h2>2. How We Use Your Information</h2>
+
+            <h3>2.1 Providing and Operating the Services</h3>
+            <ul>
+                <li>Tracking and recording work time</li>
+                <li>Generating timesheets and reports</li>
+                <li>Syncing time entries with Jira issues</li>
+                <li>Providing productivity insights and analytics</li>
+                <li>Processing idle time and break management</li>
+            </ul>
+
+            <h3>2.2 AI-Powered Features</h3>
+            <p>We use artificial intelligence to provide enhanced features, including:</p>
+            <ul>
+                <li><strong>Smart Time Suggestions:</strong> Analyzing work patterns to suggest time entries</li>
+                <li><strong>Activity Categorization:</strong> Automatically categorizing work activities</li>
+                <li><strong>Screenshot Analysis:</strong> Using AI to extract context from screenshots (optional feature)</li>
+            </ul>
+
+            <div class="callout callout-info">
+                <div class="callout-title">ℹ️ Third-Party AI Processing</div>
+                <p>Some AI features utilize OpenAI's services. When enabled, screenshot images may be processed by OpenAI for text extraction and analysis. Data sent to OpenAI is subject to <a href="https://openai.com/privacy" target="_blank">OpenAI's Privacy Policy</a>. You can disable AI-powered features in your settings.</p>
+            </div>
+
+            <h3>2.3 Security and Fraud Prevention</h3>
+            <ul>
+                <li>Authenticating users and verifying access</li>
+                <li>Detecting and preventing unauthorized access</li>
+                <li>Monitoring for security threats</li>
+                <li>Enforcing our Terms of Service</li>
+            </ul>
+
+            <h3>2.4 Improving Our Services</h3>
+            <ul>
+                <li>Analyzing usage patterns to improve features</li>
+                <li>Debugging and fixing issues</li>
+                <li>Developing new functionality</li>
+                <li>Conducting research and analytics</li>
+            </ul>
+
+            <h3>2.5 Communications</h3>
+            <ul>
+                <li>Sending service-related notifications</li>
+                <li>Responding to support requests</li>
+                <li>Providing product updates (with consent)</li>
+            </ul>
+        </section>
+
+        <!-- Section 3: How We Share Your Information -->
+        <section id="sharing">
+            <h2>3. How We Share Your Information</h2>
+            <p><strong>We do not sell your personal information.</strong> We share information only in the following circumstances:</p>
+
+            <h3>3.1 With Your Organization</h3>
+            <p>If you use JIRAForge through an employer or organization:</p>
+            <ul>
+                <li><strong>Administrators</strong> can view time entries, reports, and (if enabled) screenshots</li>
+                <li><strong>Managers</strong> designated by your administrator can access your work data</li>
+                <li><strong>Team members</strong> may see aggregated project time data</li>
+            </ul>
+            <p>Your organization controls the data collected about you through their use of our Services.</p>
+
+            <h3>3.2 With Service Providers (Sub-Processors)</h3>
+            <p>We use trusted third-party service providers to help operate our Services:</p>
+
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Provider</th>
+                            <th>Purpose</th>
+                            <th>Location</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Supabase</strong></td>
+                            <td>Database hosting, file storage, authentication</td>
+                            <td>USA/EU</td>
+                        </tr>
+                        <tr>
+                            <td><strong>OpenAI</strong></td>
+                            <td>AI-powered analysis features (optional)</td>
+                            <td>USA</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Atlassian</strong></td>
+                            <td>Jira integration, OAuth authentication</td>
+                            <td>Global</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p>These providers are contractually obligated to protect your data and use it only for the purposes we specify.</p>
+
+            <h3>3.3 For Legal Reasons</h3>
+            <p>We may disclose your information if required to:</p>
+            <ul>
+                <li>Comply with applicable laws, regulations, or legal processes</li>
+                <li>Respond to lawful requests from public authorities</li>
+                <li>Protect our rights, property, or safety</li>
+                <li>Enforce our Terms of Service</li>
+                <li>Detect and prevent fraud or security issues</li>
+            </ul>
+
+            <h3>3.4 Business Transfers</h3>
+            <p>In the event of a merger, acquisition, or sale of assets, your information may be transferred to the acquiring entity, subject to the same privacy protections.</p>
+
+            <h3>3.5 With Your Consent</h3>
+            <p>We may share your information with third parties when you explicitly consent to such sharing.</p>
+        </section>
+
+        <!-- Section 4: Data Retention -->
+        <section id="retention">
+            <h2>4. Data Retention</h2>
+            <p>We retain your information for as long as necessary to provide our Services and fulfill the purposes described in this Privacy Policy.</p>
+
+            <h3>4.1 Retention Periods</h3>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Data Type</th>
+                            <th>Retention Period</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Time entries</td>
+                            <td>Duration of account + 7 years (for business records)</td>
+                        </tr>
+                        <tr>
+                            <td>Screenshots</td>
+                            <td>90 days (configurable by administrator)</td>
+                        </tr>
+                        <tr>
+                            <td>Activity logs</td>
+                            <td>30 days</td>
+                        </tr>
+                        <tr>
+                            <td>Account information</td>
+                            <td>Duration of account + 30 days after deletion</td>
+                        </tr>
+                        <tr>
+                            <td>Audit logs</td>
+                            <td>1 year</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>4.2 Data Deletion</h3>
+            <ul>
+                <li>You may request deletion of your data at any time (see <a href="#rights">Your Rights</a>)</li>
+                <li>When you delete your account, we will delete or anonymize your data within 30 days</li>
+                <li>Some data may be retained longer if required by law or for legitimate business purposes</li>
+            </ul>
+        </section>
+
+        <!-- Section 5: Data Security -->
+        <section id="security">
+            <h2>5. Data Security</h2>
+            <p>We implement industry-standard security measures to protect your information:</p>
+
+            <h3>5.1 Technical Safeguards</h3>
+            <ul>
+                <li><strong>Encryption in Transit:</strong> All data transmitted using TLS 1.2+ (HTTPS)</li>
+                <li><strong>Encryption at Rest:</strong> Stored data encrypted using AES-256</li>
+                <li><strong>Authentication:</strong> OAuth 2.0 with PKCE for secure login</li>
+                <li><strong>Access Controls:</strong> Role-based access to limit data exposure</li>
+                <li><strong>Secure Storage:</strong> Screenshots and files stored in encrypted cloud storage</li>
+            </ul>
+
+            <h3>5.2 Organizational Safeguards</h3>
+            <ul>
+                <li>Regular security assessments and audits</li>
+                <li>Employee training on data protection</li>
+                <li>Incident response procedures</li>
+                <li>Vendor security reviews</li>
+            </ul>
+
+            <h3>5.3 Your Responsibilities</h3>
+            <ul>
+                <li>Keep your login credentials secure</li>
+                <li>Log out of shared devices</li>
+                <li>Report any suspected security incidents to us immediately</li>
+            </ul>
+
+            <div class="callout callout-info">
+                <p>Despite our efforts, no method of transmission or storage is 100% secure. We cannot guarantee absolute security.</p>
+            </div>
+        </section>
+
+        <!-- Section 6: International Data Transfers -->
+        <section id="transfers">
+            <h2>6. International Data Transfers</h2>
+            <p>Our Services may process data in countries outside your country of residence, including the United States.</p>
+
+            <h3>6.1 Transfer Mechanisms</h3>
+            <p>For transfers of personal data from the European Economic Area (EEA), United Kingdom, or Switzerland to countries not deemed adequate by relevant authorities, we rely on:</p>
+            <ul>
+                <li><strong>Standard Contractual Clauses (SCCs)</strong> approved by the European Commission</li>
+                <li><strong>UK International Data Transfer Agreement</strong> where applicable</li>
+                <li><strong>Data Privacy Framework</strong> certifications of our service providers</li>
+            </ul>
+
+            <h3>6.2 Your Protections</h3>
+            <p>Regardless of where your data is processed, we apply the same privacy protections described in this Policy.</p>
+        </section>
+
+        <!-- Section 7: Legal Basis for Processing -->
+        <section id="legal-basis">
+            <h2>7. Legal Basis for Processing (EEA/UK Users)</h2>
+            <p>If you are located in the European Economic Area or United Kingdom, we process your personal data based on the following legal grounds:</p>
+
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Processing Activity</th>
+                            <th>Legal Basis</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Providing the Services</td>
+                            <td>Performance of contract</td>
+                        </tr>
+                        <tr>
+                            <td>Time tracking and reporting</td>
+                            <td>Performance of contract</td>
+                        </tr>
+                        <tr>
+                            <td>Screenshot capture (employer-enabled)</td>
+                            <td>Legitimate interests of employer</td>
+                        </tr>
+                        <tr>
+                            <td>Security and fraud prevention</td>
+                            <td>Legitimate interests</td>
+                        </tr>
+                        <tr>
+                            <td>AI-powered features</td>
+                            <td>Consent</td>
+                        </tr>
+                        <tr>
+                            <td>Marketing communications</td>
+                            <td>Consent</td>
+                        </tr>
+                        <tr>
+                            <td>Legal compliance</td>
+                            <td>Legal obligation</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Section 8: Your Rights and Choices -->
+        <section id="rights">
+            <h2>8. Your Rights and Choices</h2>
+            <p>Depending on your location, you may have the following rights regarding your personal data:</p>
+
+            <h3>8.1 Access and Portability</h3>
+            <ul>
+                <li><strong>Right to Access:</strong> Request a copy of the personal data we hold about you</li>
+                <li><strong>Right to Portability:</strong> Receive your data in a structured, machine-readable format</li>
+            </ul>
+
+            <h3>8.2 Correction and Deletion</h3>
+            <ul>
+                <li><strong>Right to Rectification:</strong> Correct inaccurate or incomplete data</li>
+                <li><strong>Right to Erasure:</strong> Request deletion of your personal data ("right to be forgotten")</li>
+            </ul>
+
+            <h3>8.3 Restriction and Objection</h3>
+            <ul>
+                <li><strong>Right to Restrict Processing:</strong> Limit how we use your data in certain circumstances</li>
+                <li><strong>Right to Object:</strong> Object to processing based on legitimate interests or for direct marketing</li>
+            </ul>
+
+            <h3>8.4 Consent Withdrawal</h3>
+            <ul>
+                <li><strong>Right to Withdraw Consent:</strong> Where processing is based on consent, you may withdraw it at any time</li>
+            </ul>
+
+            <h3>8.5 How to Exercise Your Rights</h3>
+            <div class="contact-box">
+                <h4>Submit a Data Subject Request</h4>
+                <div class="contact-item">
+                    <span class="icon">📧</span>
+                    <span><strong>Email:</strong> privacy@jiraforge.com</span>
+                </div>
+                <div class="contact-item">
+                    <span class="icon">📝</span>
+                    <span><strong>Subject Line:</strong> "Data Subject Request - [Your Request Type]"</span>
+                </div>
+                <p style="margin-top: 15px;">We will respond to your request within <strong>30 days</strong> (or as required by applicable law). We may need to verify your identity before processing your request.</p>
+            </div>
+
+            <h3>8.6 Complaints</h3>
+            <p>If you believe your privacy rights have been violated, you have the right to lodge a complaint with your local data protection authority:</p>
+            <ul>
+                <li><strong>EU:</strong> <a href="https://edpb.europa.eu/about-edpb/board/members_en" target="_blank">List of EU Data Protection Authorities</a></li>
+                <li><strong>UK:</strong> <a href="https://ico.org.uk/" target="_blank">Information Commissioner's Office (ICO)</a></li>
+                <li><strong>California:</strong> <a href="https://oag.ca.gov/privacy" target="_blank">California Attorney General</a></li>
+            </ul>
+        </section>
+
+        <!-- Section 9: California Privacy Rights (CCPA) -->
+        <section id="ccpa">
+            <h2>9. California Privacy Rights (CCPA/CPRA)</h2>
+            <p>If you are a California resident, you have additional rights under the California Consumer Privacy Act (CCPA) and California Privacy Rights Act (CPRA):</p>
+
+            <h3>9.1 Right to Know</h3>
+            <p>You may request that we disclose:</p>
+            <ul>
+                <li>Categories of personal information collected</li>
+                <li>Categories of sources from which information is collected</li>
+                <li>Business or commercial purpose for collecting information</li>
+                <li>Categories of third parties with whom we share information</li>
+                <li>Specific pieces of personal information collected about you</li>
+            </ul>
+
+            <h3>9.2 Right to Delete</h3>
+            <p>You may request deletion of personal information we have collected from you, subject to certain exceptions.</p>
+
+            <h3>9.3 Right to Opt-Out of Sale/Sharing</h3>
+            <div class="callout callout-info">
+                <p><strong>We do not sell your personal information.</strong> We do not share your personal information for cross-context behavioral advertising.</p>
+            </div>
+
+            <h3>9.4 Right to Non-Discrimination</h3>
+            <p>We will not discriminate against you for exercising your privacy rights.</p>
+
+            <h3>9.5 How to Submit a Request</h3>
+            <div class="contact-box">
+                <h4>California Privacy Request</h4>
+                <div class="contact-item">
+                    <span class="icon">📧</span>
+                    <span><strong>Email:</strong> privacy@jiraforge.com</span>
+                </div>
+                <div class="contact-item">
+                    <span class="icon">📝</span>
+                    <span><strong>Subject Line:</strong> "California Privacy Request"</span>
+                </div>
+                <p style="margin-top: 15px;">We will verify your identity using the email address associated with your account.</p>
+            </div>
+        </section>
+
+        <!-- Section 10: Desktop App Specific Disclosures -->
+        <section id="desktop-app">
+            <h2>10. Desktop App Specific Disclosures</h2>
+            <p>The JIRAForge Desktop App has additional data collection capabilities that require specific disclosure:</p>
+
+            <h3>10.1 Screenshot Capture</h3>
+            <div class="table-container">
+                <table>
+                    <tbody>
+                        <tr>
+                            <td><strong>When Captured</strong></td>
+                            <td>Only while time tracking is actively running</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Frequency</strong></td>
+                            <td>Configurable by your administrator (default: every 10 minutes)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Notification</strong></td>
+                            <td>You will see a visual indicator when screenshot capture is enabled</td>
+                        </tr>
+                        <tr>
+                            <td><strong>What's Captured</strong></td>
+                            <td>Your entire desktop screen at the moment of capture</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Storage</strong></td>
+                            <td>Screenshots are uploaded securely to encrypted cloud storage</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Access</strong></td>
+                            <td>Visible to you, your designated managers, and administrators</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Deletion</strong></td>
+                            <td>Automatically deleted after retention period (default: 90 days)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>10.2 Application/Window Tracking</h3>
+            <ul>
+                <li><strong>What's Tracked:</strong> Names and titles of active applications and browser windows</li>
+                <li><strong>Purpose:</strong> Categorizing work activities and generating productivity reports</li>
+                <li><strong>Privacy Consideration:</strong> Window titles may contain sensitive information (e.g., document names, email subjects)</li>
+            </ul>
+
+            <h3>10.3 Idle Detection</h3>
+            <ul>
+                <li><strong>How It Works:</strong> Monitors keyboard and mouse activity to detect idle periods</li>
+                <li><strong>Threshold:</strong> Configurable idle timeout (default: 5 minutes of inactivity)</li>
+                <li><strong>Purpose:</strong> Accurate time tracking and automatic break detection</li>
+                <li><strong>Privacy Note:</strong> We detect activity presence only, NOT the content of your actions</li>
+            </ul>
+
+            <h3>10.4 Background Operation</h3>
+            <ul>
+                <li><strong>When Running:</strong> The Desktop App may run in the background while tracking time</li>
+                <li><strong>System Tray:</strong> Accessible via system tray icon</li>
+                <li><strong>Resource Usage:</strong> Minimal CPU and memory footprint</li>
+                <li><strong>Auto-Start:</strong> Configurable option to start with your operating system</li>
+            </ul>
+
+            <h3>10.5 Opting Out</h3>
+            <p>You may:</p>
+            <ul>
+                <li>Disable screenshot capture (if permitted by your administrator)</li>
+                <li>Pause or stop time tracking at any time</li>
+                <li>Uninstall the Desktop App</li>
+                <li>Request data deletion through your account settings</li>
+            </ul>
+        </section>
+
+        <!-- Section 11: Children's Privacy -->
+        <section id="children">
+            <h2>11. Children's Privacy</h2>
+            <p>Our Services are not directed to individuals under the age of 18. We do not knowingly collect personal information from children under 18. If we become aware that we have collected personal information from a child under 18, we will take steps to delete such information.</p>
+            <p>If you believe we have inadvertently collected information from a child under 18, please contact us at <a href="mailto:privacy@jiraforge.com">privacy@jiraforge.com</a>.</p>
+        </section>
+
+        <!-- Section 12: Cookie Notice -->
+        <section id="cookies">
+            <h2>12. Cookie Notice</h2>
+
+            <h3>12.1 What Are Cookies</h3>
+            <p>Cookies are small text files stored on your device when you visit websites or use applications.</p>
+
+            <h3>12.2 Cookies We Use</h3>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Cookie Type</th>
+                            <th>Purpose</th>
+                            <th>Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Essential</strong></td>
+                            <td>Authentication, security, core functionality</td>
+                            <td>Session</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Functional</strong></td>
+                            <td>User preferences, settings</td>
+                            <td>1 year</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Analytics</strong></td>
+                            <td>Usage patterns, performance monitoring</td>
+                            <td>1 year</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <h3>12.3 Managing Cookies</h3>
+            <p>You can control cookies through your browser settings. Note that disabling essential cookies may affect the functionality of our Services.</p>
+        </section>
+
+        <!-- Section 13: Third-Party Links -->
+        <section>
+            <h2>13. Third-Party Links</h2>
+            <p>Our Services may contain links to third-party websites or services. We are not responsible for the privacy practices of these third parties. We encourage you to review their privacy policies before providing any personal information.</p>
+        </section>
+
+        <!-- Section 14: Changes to This Privacy Policy -->
+        <section id="changes">
+            <h2>14. Changes to This Privacy Policy</h2>
+            <p>We may update this Privacy Policy from time to time. When we make material changes:</p>
+            <ul>
+                <li>We will update the "Last Updated" date at the top of this Policy</li>
+                <li>We will notify you via email or through our Services</li>
+                <li>We may require you to acknowledge or accept the changes</li>
+            </ul>
+            <p>Your continued use of our Services after changes become effective constitutes acceptance of the updated Privacy Policy.</p>
+        </section>
+
+        <!-- Section 15: Contact Us -->
+        <section id="contact">
+            <h2>15. Contact Us</h2>
+            <p>If you have questions, concerns, or requests regarding this Privacy Policy or our privacy practices, please contact us:</p>
+
+            <div class="contact-box">
+                <h4>JIRAForge Privacy Team</h4>
+                <div class="contact-item">
+                    <span class="icon">📧</span>
+                    <span><strong>Email:</strong> <a href="mailto:privacy@jiraforge.com">privacy@jiraforge.com</a></span>
+                </div>
+                <div class="contact-item">
+                    <span class="icon">📍</span>
+                    <span><strong>Address:</strong> [Your Company Address]</span>
+                </div>
+                <div class="contact-item">
+                    <span class="icon">📞</span>
+                    <span><strong>Phone:</strong> [Your Phone Number]</span>
+                </div>
+            </div>
+
+            <div class="contact-box" style="margin-top: 20px;">
+                <h4>Data Protection Officer (DPO)</h4>
+                <div class="contact-item">
+                    <span class="icon">📧</span>
+                    <span><strong>Email:</strong> <a href="mailto:dpo@jiraforge.com">dpo@jiraforge.com</a></span>
+                </div>
+            </div>
+
+            <div class="contact-box" style="margin-top: 20px;">
+                <h4>EU Representative</h4>
+                <p>For users in the European Union:</p>
+                <div class="contact-item">
+                    <span class="icon">📧</span>
+                    <span><strong>Email:</strong> <a href="mailto:eu-representative@jiraforge.com">eu-representative@jiraforge.com</a></span>
+                </div>
+                <div class="contact-item">
+                    <span class="icon">📍</span>
+                    <span><strong>Address:</strong> [EU Representative Address]</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Appendix A: Sub-Processor List -->
+        <section>
+            <h2>Appendix A: Sub-Processor List</h2>
+            <p>The following sub-processors are used by JIRAForge:</p>
+
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Sub-Processor</th>
+                            <th>Service</th>
+                            <th>Data Processed</th>
+                            <th>Location</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Supabase, Inc.</td>
+                            <td>Database & Storage</td>
+                            <td>All user data, screenshots</td>
+                            <td>USA (AWS)</td>
+                        </tr>
+                        <tr>
+                            <td>OpenAI, LLC</td>
+                            <td>AI Analysis</td>
+                            <td>Screenshots (optional), text</td>
+                            <td>USA</td>
+                        </tr>
+                        <tr>
+                            <td>Atlassian Pty Ltd</td>
+                            <td>Integration & Auth</td>
+                            <td>User profile, Jira data</td>
+                            <td>Global</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p><em>Last updated: January 26, 2026</em></p>
+        </section>
+
+        <!-- Appendix B: Data Retention Schedule -->
+        <section>
+            <h2>Appendix B: Data Retention Schedule</h2>
+
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Data Category</th>
+                            <th>Retention Period</th>
+                            <th>Basis</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Account Information</td>
+                            <td>Account lifetime + 30 days</td>
+                            <td>Contract</td>
+                        </tr>
+                        <tr>
+                            <td>Time Entries</td>
+                            <td>7 years</td>
+                            <td>Legal/Business records</td>
+                        </tr>
+                        <tr>
+                            <td>Screenshots</td>
+                            <td>90 days (default)</td>
+                            <td>Legitimate interests</td>
+                        </tr>
+                        <tr>
+                            <td>Activity Logs</td>
+                            <td>30 days</td>
+                            <td>Legitimate interests</td>
+                        </tr>
+                        <tr>
+                            <td>Support Tickets</td>
+                            <td>3 years</td>
+                            <td>Legitimate interests</td>
+                        </tr>
+                        <tr>
+                            <td>Audit Logs</td>
+                            <td>1 year</td>
+                            <td>Security/Compliance</td>
+                        </tr>
+                        <tr>
+                            <td>Marketing Consent Records</td>
+                            <td>Duration of consent + 3 years</td>
+                            <td>Legal obligation</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer>
+        <p>© 2026 JIRAForge. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="#">Terms of Service</a>
+            <a href="#">Cookie Policy</a>
+            <a href="#">Security</a>
+            <a href="mailto:privacy@jiraforge.com">Contact</a>
+        </div>
+    </footer>
+</body>
+</html>

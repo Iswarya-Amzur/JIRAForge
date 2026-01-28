@@ -56,7 +56,7 @@ export const DEFAULT_TRACKING_SETTINGS = {
   trackIdleTime: true,
   idleThresholdSeconds: 300, // 5 minutes
   whitelistEnabled: true,
-  whitelistedApps: ['vscode', 'code', 'chrome', 'slack', 'jira', 'github', 'zoom', 'teams', 'postman'],
+  whitelistedApps: ['code', 'cursor', 'chrome', 'slack', 'jira', 'github', 'zoom', 'teams', 'postman', 'msedge', 'firefox'],
   blacklistEnabled: true,
   blacklistedApps: ['netflix', 'youtube', 'spotify', 'facebook', 'instagram', 'twitter', 'tiktok'],
   nonWorkThresholdPercent: 30,

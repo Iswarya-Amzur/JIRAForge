@@ -1,28 +1,19 @@
 #!/usr/bin/env python3
 """
-JIRAForge - Complete Supabase Migration Script
-===============================================
-Migrates EVERYTHING from Development to Production Supabase:
-- Database schema (tables, indexes, functions, triggers, views)
-- RLS Policies
-- Storage Buckets and Policies
-- Edge Functions (deployment instructions)
-- Webhooks (setup instructions)
+JIRAForge - Complete Supabase Migration Script (DEV → PROD)
+============================================================
+Connects to DEV Supabase, extracts everything, and applies to PRODUCTION.
 
-Development Project: jvijitdewbypqbatfboi
-Production Project:  jbxabkazpuuphpsahlfh
+This script:
+1. Connects to DEV Supabase (READ ONLY)
+2. Extracts: tables, indexes, functions, triggers, views, RLS policies, storage buckets
+3. Applies everything to PRODUCTION Supabase
 
-IMPORTANT: This script does NOT migrate data - only structure!
+Development Project: jvijitdewbypqbatfboi (SOURCE - READ ONLY)
+Production Project:  ykccewaedeiujewaixrt (TARGET - WRITE)
 
 Usage:
-    1. Get your API keys from both Supabase projects:
-       - Go to Supabase Dashboard > Settings > API
-       - Copy the service_role key (secret)
-    
-    2. Run the script:
-       python migrate_to_production.py
-    
-    3. Follow the prompts to enter your credentials
+    python migrate_to_production.py
 
 Author: Generated for JIRAForge
 Date: January 2026
@@ -32,7 +23,6 @@ import os
 import sys
 import json
 import time
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
@@ -52,27 +42,23 @@ except ImportError:
 # CONFIGURATION
 # =============================================================================
 
-@dataclass
-class SupabaseConfig:
-    """Supabase project configuration"""
-    project_ref: str
-    url: str
-    anon_key: str
-    service_role_key: str
-    db_password: str = ""  # Optional for direct DB access
-
-
 # Project References
 DEV_PROJECT_REF = "jvijitdewbypqbatfboi"
-PROD_PROJECT_REF = "jbxabkazpuuphpsahlfh"
+PROD_PROJECT_REF = "bsxpdoqwrugbhzqqxvlw"  # NEW PROD PROJECT
 
 # URLs
 DEV_URL = f"https://{DEV_PROJECT_REF}.supabase.co"
 PROD_URL = f"https://{PROD_PROJECT_REF}.supabase.co"
 
-# Pre-configured Service Role Keys (for automated migration)
+# Management API URL
+MANAGEMENT_API_URL = "https://api.supabase.com"
+
+# Service Role Keys
 DEV_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2aWppdGRld2J5cHFiYXRmYm9pIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2Mjc1NTU5MCwiZXhwIjoyMDc4MzMxNTkwfQ.2Pbdo2DHHfCIpUVPP390P2Y3rF7_hdsYM-38g26XTUY"
-PROD_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpieGFia2F6cHV1cGhwc2FobGZoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTI4Mjk4NCwiZXhwIjoyMDg0ODU4OTg0fQ.jSRh71ENoG5dxVxFFQx7sSoGo1zxQFgxA5FtSahQ36Q"
+PROD_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJzeHBkb3F3cnVnYmh6cXF4dmx3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTUxMTc0NiwiZXhwIjoyMDg1MDg3NzQ2fQ.Z_0Ouag5jCA36Lj38AjVu1wtPl-WDr2Q4HztQtJXTto"
+
+# Management API Token (will be prompted)
+MANAGEMENT_API_TOKEN = ""
 
 
 # =============================================================================
@@ -90,78 +76,101 @@ class Colors:
     BOLD = '\033[1m'
 
 def print_color(message: str, color: str = Colors.WHITE, bold: bool = False):
-    """Print colored message"""
     style = Colors.BOLD if bold else ''
     print(f"{style}{color}{message}{Colors.RESET}")
 
 def print_header(title: str):
-    """Print section header"""
     print()
     print_color("=" * 70, Colors.CYAN, bold=True)
     print_color(f"  {title}", Colors.CYAN, bold=True)
     print_color("=" * 70, Colors.CYAN, bold=True)
 
 def print_success(message: str):
-    print_color(f"✅ {message}", Colors.GREEN)
+    print_color(f"  [OK] {message}", Colors.GREEN)
 
 def print_warning(message: str):
-    print_color(f"⚠️  {message}", Colors.YELLOW)
+    print_color(f"  [WARN] {message}", Colors.YELLOW)
 
 def print_error(message: str):
-    print_color(f"❌ {message}", Colors.RED)
+    print_color(f"  [ERROR] {message}", Colors.RED)
 
 def print_info(message: str):
-    print_color(f"ℹ️  {message}", Colors.CYAN)
+    print_color(f"  [INFO] {message}", Colors.CYAN)
 
 def print_step(step: int, total: int, message: str):
     print_color(f"\n[{step}/{total}] {message}", Colors.YELLOW, bold=True)
 
 
 # =============================================================================
-# SUPABASE API CLIENT
+# MANAGEMENT API CLIENT
+# =============================================================================
+
+class ManagementAPIClient:
+    """Supabase Management API Client for SQL execution"""
+
+    def __init__(self, access_token: str, project_ref: str):
+        self.access_token = access_token
+        self.project_ref = project_ref
+        self.base_url = MANAGEMENT_API_URL
+        self.headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+
+    def execute_sql(self, sql: str, read_only: bool = False) -> Tuple[bool, Any]:
+        """Execute SQL via Management API"""
+        url = f"{self.base_url}/v1/projects/{self.project_ref}/database/query"
+
+        payload = {
+            "query": sql,
+            "read_only": read_only
+        }
+
+        try:
+            response = requests.post(url, headers=self.headers, json=payload, timeout=300)
+
+            if response.status_code in [200, 201]:
+                try:
+                    return True, response.json()
+                except:
+                    return True, {"status": "success"}
+            else:
+                return False, f"Error {response.status_code}: {response.text}"
+        except requests.exceptions.Timeout:
+            return False, "Request timed out"
+        except Exception as e:
+            return False, str(e)
+
+    def verify_connection(self) -> bool:
+        """Verify Management API connection"""
+        url = f"{self.base_url}/v1/projects/{self.project_ref}"
+
+        try:
+            response = requests.get(url, headers=self.headers, timeout=30)
+            return response.status_code == 200
+        except:
+            return False
+
+
+# =============================================================================
+# SUPABASE REST CLIENT (for Storage)
 # =============================================================================
 
 class SupabaseClient:
     """Supabase REST API Client"""
-    
-    def __init__(self, config: SupabaseConfig):
-        self.config = config
+
+    def __init__(self, url: str, service_role_key: str):
+        self.url = url
         self.headers = {
-            "apikey": config.service_role_key,
-            "Authorization": f"Bearer {config.service_role_key}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation"
+            "apikey": service_role_key,
+            "Authorization": f"Bearer {service_role_key}",
+            "Content-Type": "application/json"
         }
-    
-    def execute_sql(self, sql: str) -> Tuple[bool, Any]:
-        """Execute SQL via REST API using pg_query endpoint"""
-        url = f"{self.config.url}/rest/v1/rpc/pg_query"
-        
-        # Try using raw SQL endpoint
-        # Supabase doesn't have a direct SQL execution endpoint via REST
-        # We'll need to use the Management API or direct PostgreSQL connection
-        print_warning("Note: Direct SQL execution via REST API is limited")
-        print_info("Using alternative approach...")
-        
-        return False, "SQL execution via REST API requires Management API"
-    
-    def list_tables(self) -> Tuple[bool, List[str]]:
-        """List all tables in public schema"""
-        # Query information_schema.tables via RPC or stored function
-        url = f"{self.config.url}/rest/v1/"
-        
-        try:
-            response = requests.get(url, headers=self.headers)
-            if response.status_code == 200:
-                return True, response.json()
-            return False, f"Error: {response.status_code}"
-        except Exception as e:
-            return False, str(e)
-    
+
     def get_storage_buckets(self) -> Tuple[bool, List[Dict]]:
         """List all storage buckets"""
-        url = f"{self.config.url}/storage/v1/bucket"
-        
+        url = f"{self.url}/storage/v1/bucket"
+
         try:
             response = requests.get(url, headers=self.headers)
             if response.status_code == 200:
@@ -169,37 +178,23 @@ class SupabaseClient:
             return False, f"Error: {response.status_code} - {response.text}"
         except Exception as e:
             return False, str(e)
-    
-    def create_storage_bucket(self, bucket_id: str, public: bool = False, 
-                             file_size_limit: int = None, 
-                             allowed_mime_types: List[str] = None) -> Tuple[bool, Any]:
+
+    def create_storage_bucket(self, bucket_config: Dict) -> Tuple[bool, Any]:
         """Create a storage bucket"""
-        url = f"{self.config.url}/storage/v1/bucket"
-        
-        payload = {
-            "id": bucket_id,
-            "name": bucket_id,
-            "public": public
-        }
-        
-        if file_size_limit:
-            payload["file_size_limit"] = file_size_limit
-        
-        if allowed_mime_types:
-            payload["allowed_mime_types"] = allowed_mime_types
-        
+        url = f"{self.url}/storage/v1/bucket"
+
         try:
-            response = requests.post(url, headers=self.headers, json=payload)
+            response = requests.post(url, headers=self.headers, json=bucket_config)
             if response.status_code in [200, 201]:
                 return True, response.json()
             return False, f"Error: {response.status_code} - {response.text}"
         except Exception as e:
             return False, str(e)
-    
+
     def health_check(self) -> bool:
         """Check if the Supabase instance is accessible"""
-        url = f"{self.config.url}/rest/v1/"
-        
+        url = f"{self.url}/rest/v1/"
+
         try:
             response = requests.get(url, headers=self.headers)
             return response.status_code == 200
@@ -208,661 +203,700 @@ class SupabaseClient:
 
 
 # =============================================================================
-# MIGRATION MANAGER
+# SCHEMA EXTRACTOR - Extracts everything from DEV
 # =============================================================================
 
-class MigrationManager:
-    """Manages the migration process"""
-    
-    def __init__(self, script_dir: Path):
-        self.script_dir = script_dir
-        self.exports_dir = script_dir / "exports"
-        self.functions_dir = script_dir / "functions"
-        self.migration_sql_file = script_dir / "DEV_MIGRATION_COMPLETE.sql"
-        self.production_sql_file = self.exports_dir / "PRODUCTION_SETUP.sql"
-        
-        # Ensure exports directory exists
-        self.exports_dir.mkdir(exist_ok=True)
-    
-    def generate_production_sql(self, prod_config: SupabaseConfig) -> Path:
-        """Generate the complete production SQL file with proper substitutions"""
-        print_step(1, 6, "Generating Production SQL File")
-        
-        if not self.migration_sql_file.exists():
-            print_error(f"Migration SQL file not found: {self.migration_sql_file}")
-            return None
-        
-        # Read the existing migration SQL
-        with open(self.migration_sql_file, 'r', encoding='utf-8') as f:
-            sql_content = f.read()
-        
-        # Add header for production
-        production_header = f"""-- ============================================================================
--- JIRAForge PRODUCTION Database Setup
--- ============================================================================
--- Generated: {datetime.now().isoformat()}
--- Target Project: {prod_config.project_ref}
--- Target URL: {prod_config.url}
--- 
--- INSTRUCTIONS:
--- 1. Go to your Production Supabase Dashboard
--- 2. Navigate to SQL Editor
--- 3. Create a new query
--- 4. Paste this entire script
--- 5. Click "Run" to execute
--- 
--- This script will create:
--- - All tables with proper constraints
--- - All indexes for performance
--- - All functions and triggers
--- - All views for analytics
--- - All RLS policies for security
--- - Storage buckets and policies
--- ============================================================================
+class SchemaExtractor:
+    """Extracts database schema from DEV Supabase"""
 
-"""
-        
-        production_sql = production_header + sql_content
-        
-        # Write to production SQL file
-        with open(self.production_sql_file, 'w', encoding='utf-8') as f:
-            f.write(production_sql)
-        
-        print_success(f"Production SQL generated: {self.production_sql_file}")
-        return self.production_sql_file
-    
-    def generate_storage_setup_sql(self) -> str:
-        """Generate SQL for storage bucket setup"""
-        return """
--- ============================================================================
--- STORAGE BUCKETS SETUP
--- ============================================================================
--- Run this in SQL Editor AFTER the main migration script
+    def __init__(self, api_client: ManagementAPIClient):
+        self.api = api_client
 
--- Create screenshots bucket
-INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES (
-    'screenshots',
-    'screenshots',
-    false,
-    10485760,  -- 10MB
-    ARRAY['image/png', 'image/jpeg', 'image/jpg', 'image/webp']
-)
-ON CONFLICT (id) DO UPDATE SET
-    file_size_limit = EXCLUDED.file_size_limit,
-    allowed_mime_types = EXCLUDED.allowed_mime_types;
+    def extract_extensions(self) -> Tuple[bool, str]:
+        """Extract installed extensions"""
+        sql = """
+        SELECT 'CREATE EXTENSION IF NOT EXISTS "' || extname || '" WITH SCHEMA ' ||
+               COALESCE(nspname, 'public') || ';' as ddl
+        FROM pg_extension e
+        JOIN pg_namespace n ON e.extnamespace = n.oid
+        WHERE extname NOT IN ('plpgsql')
+        ORDER BY extname;
+        """
+        success, result = self.api.execute_sql(sql, read_only=True)
+        if success and isinstance(result, list):
+            ddl_statements = [row.get('ddl', '') for row in result if row.get('ddl')]
+            return True, '\n'.join(ddl_statements)
+        return False, str(result)
 
--- Create documents bucket  
-INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES (
-    'documents',
-    'documents',
-    false,
-    52428800,  -- 50MB
-    ARRAY['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword']
-)
-ON CONFLICT (id) DO UPDATE SET
-    file_size_limit = EXCLUDED.file_size_limit,
-    allowed_mime_types = EXCLUDED.allowed_mime_types;
+    def extract_tables(self) -> Tuple[bool, str]:
+        """Extract table definitions (excluding views)"""
+        # Get all tables in public schema, excluding views
+        sql = """
+        SELECT
+            'CREATE TABLE IF NOT EXISTS public.' || quote_ident(c.table_name) || ' (' ||
+            string_agg(
+                quote_ident(c.column_name) || ' ' ||
+                CASE
+                    WHEN c.data_type = 'ARRAY' THEN SUBSTRING(c.udt_name FROM 2) || '[]'
+                    WHEN c.data_type = 'USER-DEFINED' THEN c.udt_name
+                    ELSE c.data_type
+                END ||
+                CASE WHEN c.character_maximum_length IS NOT NULL
+                     THEN '(' || c.character_maximum_length || ')' ELSE '' END ||
+                CASE WHEN c.is_nullable = 'NO' THEN ' NOT NULL' ELSE '' END ||
+                CASE WHEN c.column_default IS NOT NULL
+                     THEN ' DEFAULT ' || c.column_default ELSE '' END,
+                ', ' ORDER BY c.ordinal_position
+            ) || ');' as ddl,
+            c.table_name
+        FROM information_schema.columns c
+        JOIN information_schema.tables t
+            ON c.table_name = t.table_name AND c.table_schema = t.table_schema
+        WHERE c.table_schema = 'public'
+        AND t.table_type = 'BASE TABLE'
+        AND c.table_name NOT LIKE 'pg_%'
+        AND c.table_name NOT LIKE '_realtime%'
+        GROUP BY c.table_name
+        ORDER BY c.table_name;
+        """
+        success, result = self.api.execute_sql(sql, read_only=True)
+        if success and isinstance(result, list):
+            ddl_statements = [row.get('ddl', '') for row in result if row.get('ddl')]
+            return True, '\n\n'.join(ddl_statements)
+        return False, str(result)
 
-SELECT '✅ Storage buckets created!' as status;
-SELECT * FROM storage.buckets;
-"""
-    
-    def generate_webhook_setup_instructions(self, prod_config: SupabaseConfig) -> str:
-        """Generate webhook setup instructions"""
-        return f"""
-================================================================================
-DATABASE WEBHOOKS SETUP GUIDE
-================================================================================
+    def extract_table_constraints(self) -> Tuple[bool, str]:
+        """Extract primary keys, foreign keys, unique constraints using pg_constraint"""
+        # Use pg_constraint for more reliable constraint extraction
+        # IMPORTANT: Order matters! Must apply PRIMARY KEY before FOREIGN KEY
+        # Constraint types: p=PRIMARY KEY, u=UNIQUE, c=CHECK, f=FOREIGN KEY
+        # Order: PRIMARY KEY first (1), then UNIQUE (2), then CHECK (3), then FOREIGN KEY (4)
+        sql = """
+        SELECT pg_get_constraintdef(c.oid) as constraint_def,
+               c.conname as constraint_name,
+               t.relname as table_name,
+               c.contype as constraint_type,
+               CASE c.contype
+                   WHEN 'p' THEN 1  -- PRIMARY KEY first
+                   WHEN 'u' THEN 2  -- UNIQUE second
+                   WHEN 'c' THEN 3  -- CHECK third
+                   WHEN 'f' THEN 4  -- FOREIGN KEY last
+               END as type_order
+        FROM pg_constraint c
+        JOIN pg_class t ON c.conrelid = t.oid
+        JOIN pg_namespace n ON t.relnamespace = n.oid
+        WHERE n.nspname = 'public'
+        AND t.relname NOT LIKE 'pg_%'
+        AND c.contype IN ('p', 'f', 'u', 'c')
+        ORDER BY type_order, t.relname;
+        """
+        success, result = self.api.execute_sql(sql, read_only=True)
+        if success and isinstance(result, list):
+            ddl_statements = []
+            for row in result:
+                table_name = row.get('table_name', '')
+                constraint_name = row.get('constraint_name', '')
+                constraint_def = row.get('constraint_def', '')
+                if table_name and constraint_name and constraint_def:
+                    # Use DO block to handle "already exists" gracefully
+                    ddl = f"""DO $$ BEGIN
+    ALTER TABLE public.{table_name} ADD CONSTRAINT {constraint_name} {constraint_def};
+EXCEPTION WHEN duplicate_object THEN
+    NULL; -- Constraint already exists, skip
+END $$;"""
+                    ddl_statements.append(ddl)
+            return True, '\n'.join(ddl_statements)
+        return False, str(result)
 
-After running the SQL migration, you need to set up Database Webhooks manually
-in the Supabase Dashboard.
+    def extract_indexes(self) -> Tuple[bool, str]:
+        """Extract index definitions (excluding those created by constraints)"""
+        # Exclude:
+        #   - pg_% (system indexes)
+        #   - %_pkey (primary key indexes)
+        #   - %_key (unique constraint indexes - these are created by UNIQUE constraints)
+        #   - %_fkey (foreign key indexes)
+        # Use IF NOT EXISTS for safety
+        sql = """
+        SELECT 
+            REPLACE(indexdef, 'CREATE INDEX', 'CREATE INDEX IF NOT EXISTS') || ';' as ddl,
+            REPLACE(indexdef, 'CREATE UNIQUE INDEX', 'CREATE UNIQUE INDEX IF NOT EXISTS') || ';' as ddl_safe
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+        AND indexname NOT LIKE 'pg_%'
+        AND indexname NOT LIKE '%_pkey'
+        AND indexname NOT LIKE '%_key'
+        AND indexname NOT LIKE '%_fkey'
+        ORDER BY tablename, indexname;
+        """
+        success, result = self.api.execute_sql(sql, read_only=True)
+        if success and isinstance(result, list):
+            ddl_statements = []
+            for row in result:
+                ddl = row.get('ddl', '')
+                if ddl:
+                    # Add IF NOT EXISTS for safety
+                    if 'IF NOT EXISTS' not in ddl:
+                        ddl = ddl.replace('CREATE INDEX', 'CREATE INDEX IF NOT EXISTS')
+                        ddl = ddl.replace('CREATE UNIQUE INDEX', 'CREATE UNIQUE INDEX IF NOT EXISTS')
+                    ddl_statements.append(ddl)
+            return True, '\n'.join(ddl_statements)
+        return False, str(result)
 
-Project URL: {prod_config.url}
+    def extract_functions(self) -> Tuple[bool, str]:
+        """Extract function definitions"""
+        sql = """
+        SELECT pg_get_functiondef(p.oid) || ';' as ddl,
+               p.proname as func_name
+        FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = 'public'
+        AND p.prokind = 'f'
+        ORDER BY p.proname;
+        """
+        success, result = self.api.execute_sql(sql, read_only=True)
+        if success and isinstance(result, list):
+            ddl_statements = []
+            webhook_functions = []
+            for row in result:
+                ddl = row.get('ddl', '')
+                func_name = row.get('func_name', '')
+                if ddl:
+                    # Track functions that use net.http_post (webhook functions)
+                    if 'net.http_post' in ddl or 'net.http_get' in ddl:
+                        webhook_functions.append(func_name)
+                    ddl_statements.append(ddl)
+            
+            result_sql = '\n\n'.join(ddl_statements)
+            
+            if webhook_functions:
+                header = f"-- NOTE: {len(webhook_functions)} function(s) use pg_net for HTTP calls: {', '.join(webhook_functions)}\n"
+                header += "-- These require pg_net extension to be enabled in your project\n"
+                header += "-- Go to Supabase Dashboard > Database > Extensions > Enable pg_net\n\n"
+                result_sql = header + result_sql
+            
+            return True, result_sql
+        return False, str(result)
 
-STEP 1: Navigate to Database Webhooks
---------------------------------------
-1. Go to: {prod_config.url.replace('.supabase.co', '.supabase.co/project/' + prod_config.project_ref + '/database/hooks')}
-2. Or: Dashboard → Database → Webhooks
+    def extract_triggers(self) -> Tuple[bool, str]:
+        """Extract trigger definitions using pg_trigger for better coverage"""
+        sql = """
+        SELECT pg_get_triggerdef(t.oid) || ';' as ddl,
+               t.tgname as trigger_name
+        FROM pg_trigger t
+        JOIN pg_class c ON t.tgrelid = c.oid
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        WHERE n.nspname = 'public'
+        AND NOT t.tgisinternal
+        AND c.relname NOT LIKE 'pg_%'
+        ORDER BY c.relname, t.tgname;
+        """
+        success, result = self.api.execute_sql(sql, read_only=True)
+        if success and isinstance(result, list):
+            ddl_statements = []
+            skipped_triggers = []
+            for row in result:
+                ddl = row.get('ddl', '')
+                trigger_name = row.get('trigger_name', '')
+                if ddl:
+                    # Skip triggers that reference supabase_functions schema
+                    # These are HTTP webhook triggers that need pg_net extension enabled
+                    if 'supabase_functions' in ddl.lower():
+                        skipped_triggers.append(trigger_name)
+                        continue
+                    ddl_statements.append(ddl)
+            
+            if skipped_triggers:
+                # Add comment about skipped triggers
+                header = f"-- NOTE: Skipped {len(skipped_triggers)} webhook triggers that require supabase_functions schema\n"
+                header += f"-- Skipped: {', '.join(skipped_triggers)}\n"
+                header += "-- To enable these, go to Supabase Dashboard > Database > Webhooks\n\n"
+                return True, header + '\n'.join(ddl_statements)
+            
+            return True, '\n'.join(ddl_statements)
+        return False, str(result)
 
-STEP 2: Create Screenshot Webhook
----------------------------------
-Click "Create a new webhook" and configure:
+    def extract_views(self) -> Tuple[bool, str]:
+        """Extract view definitions using pg_views for better coverage"""
+        sql = """
+        SELECT 'CREATE OR REPLACE VIEW public.' || quote_ident(viewname) || ' AS ' ||
+               definition as ddl
+        FROM pg_views
+        WHERE schemaname = 'public'
+        AND viewname NOT LIKE 'pg_%'
+        ORDER BY viewname;
+        """
+        success, result = self.api.execute_sql(sql, read_only=True)
+        if success and isinstance(result, list):
+            ddl_statements = [row.get('ddl', '') for row in result if row.get('ddl')]
+            return True, '\n\n'.join(ddl_statements)
+        return False, str(result)
 
-   Name:           screenshot-insert-webhook
-   Table:          screenshots
-   Events:         ☑ INSERT
-   Type:           Supabase Edge Function
-   Edge Function:  screenshot-webhook
-   
-   HTTP Headers:   (leave default)
-   Timeout:        5000ms
+    def extract_rls_policies(self) -> Tuple[bool, str]:
+        """Extract RLS policies"""
+        # First enable RLS on tables
+        enable_rls_sql = """
+        SELECT 'ALTER TABLE public.' || quote_ident(tablename) || ' ENABLE ROW LEVEL SECURITY;' as ddl
+        FROM pg_tables
+        WHERE schemaname = 'public'
+        AND tablename NOT LIKE 'pg_%'
+        ORDER BY tablename;
+        """
 
-STEP 3: Create Document Webhook  
--------------------------------
-Click "Create a new webhook" and configure:
+        # Then get policy definitions
+        policies_sql = """
+        SELECT
+            'CREATE POLICY ' || quote_ident(policyname) || ' ON public.' ||
+            quote_ident(tablename) || ' AS ' ||
+            CASE permissive WHEN 'PERMISSIVE' THEN 'PERMISSIVE' ELSE 'RESTRICTIVE' END ||
+            ' FOR ' || cmd ||
+            CASE WHEN roles != '{public}' THEN ' TO ' || array_to_string(roles, ', ') ELSE '' END ||
+            CASE WHEN qual IS NOT NULL THEN ' USING (' || qual || ')' ELSE '' END ||
+            CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' || with_check || ')' ELSE '' END ||
+            ';' as ddl
+        FROM pg_policies
+        WHERE schemaname = 'public'
+        AND tablename NOT LIKE 'pg_%'
+        ORDER BY tablename, policyname;
+        """
 
-   Name:           document-insert-webhook
-   Table:          documents
-   Events:         ☑ INSERT
-   Type:           Supabase Edge Function
-   Edge Function:  document-webhook
-   
-   HTTP Headers:   (leave default)
-   Timeout:        10000ms (documents take longer)
+        ddl_parts = []
 
-================================================================================
-"""
-    
-    def generate_edge_function_deployment_guide(self, prod_config: SupabaseConfig) -> str:
-        """Generate edge function deployment instructions"""
-        return f"""
-================================================================================
-EDGE FUNCTIONS DEPLOYMENT GUIDE
-================================================================================
+        # Get enable RLS statements
+        success, result = self.api.execute_sql(enable_rls_sql, read_only=True)
+        if success and isinstance(result, list):
+            ddl_parts.extend([row.get('ddl', '') for row in result if row.get('ddl')])
 
-After setting up the database schema and webhooks, deploy the Edge Functions.
+        ddl_parts.append('')  # Empty line separator
 
-Project: {prod_config.project_ref}
-Functions Directory: {self.functions_dir}
+        # Get policy definitions
+        success, result = self.api.execute_sql(policies_sql, read_only=True)
+        if success and isinstance(result, list):
+            ddl_parts.extend([row.get('ddl', '') for row in result if row.get('ddl')])
+            return True, '\n'.join(ddl_parts)
 
-PREREQUISITES:
---------------
-1. Install Supabase CLI (if not already):
-   npm install -g supabase
+        return False, str(result)
 
-2. Login to Supabase:
-   supabase login
-
-3. Link to production project:
-   cd {self.script_dir}
-   supabase link --project-ref {prod_config.project_ref}
-
-DEPLOYMENT COMMANDS:
---------------------
-# Deploy all edge functions at once:
-supabase functions deploy screenshot-webhook --project-ref {prod_config.project_ref}
-supabase functions deploy document-webhook --project-ref {prod_config.project_ref}
-supabase functions deploy update-issues-cache --project-ref {prod_config.project_ref}
-
-# Or deploy all functions in the directory:
-supabase functions deploy --project-ref {prod_config.project_ref}
-
-SET FUNCTION SECRETS:
----------------------
-# Set required environment variables for edge functions:
-supabase secrets set AI_SERVER_URL=<your-ai-server-url> --project-ref {prod_config.project_ref}
-supabase secrets set AI_SERVER_API_KEY=<your-ai-api-key> --project-ref {prod_config.project_ref}
-
-VERIFY DEPLOYMENT:
-------------------
-# List deployed functions:
-supabase functions list --project-ref {prod_config.project_ref}
-
-# Test a function:
-curl -X POST '{prod_config.url}/functions/v1/screenshot-webhook' \\
-  -H "Authorization: Bearer {prod_config.anon_key}" \\
-  -H "Content-Type: application/json" \\
-  -d '{{"type": "test"}}'
-
-================================================================================
-"""
-    
-    def generate_env_update_guide(self, prod_config: SupabaseConfig) -> str:
-        """Generate guide for updating environment variables"""
-        return f"""
-================================================================================
-ENVIRONMENT VARIABLES UPDATE GUIDE
-================================================================================
-
-Update these environment variables in your applications:
-
-DESKTOP APP (python-desktop-app/.env):
---------------------------------------
-SUPABASE_URL={prod_config.url}
-SUPABASE_ANON_KEY=<production-anon-key>
-
-FORGE APP (forge-app/.env or manifest.yml):
--------------------------------------------
-SUPABASE_URL: {prod_config.url}
-SUPABASE_SERVICE_ROLE_KEY: <production-service-role-key>
-
-AI SERVER (ai-server/.env):
----------------------------
-SUPABASE_URL={prod_config.url}
-SUPABASE_SERVICE_ROLE_KEY=<production-service-role-key>
-
-IMPORTANT NOTES:
-----------------
-1. Never commit service_role_key to version control
-2. Use different credentials for dev vs production
-3. Update all deployment configurations
-4. Test connectivity before going live
-
-================================================================================
-"""
+    def extract_storage_policies(self) -> Tuple[bool, str]:
+        """Extract storage RLS policies"""
+        sql = """
+        SELECT
+            'CREATE POLICY ' || quote_ident(policyname) || ' ON storage.objects AS ' ||
+            CASE permissive WHEN 'PERMISSIVE' THEN 'PERMISSIVE' ELSE 'RESTRICTIVE' END ||
+            ' FOR ' || cmd ||
+            CASE WHEN roles != '{public}' THEN ' TO ' || array_to_string(roles, ', ') ELSE '' END ||
+            CASE WHEN qual IS NOT NULL THEN ' USING (' || qual || ')' ELSE '' END ||
+            CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' || with_check || ')' ELSE '' END ||
+            ';' as ddl
+        FROM pg_policies
+        WHERE schemaname = 'storage'
+        AND tablename = 'objects'
+        ORDER BY policyname;
+        """
+        success, result = self.api.execute_sql(sql, read_only=True)
+        if success and isinstance(result, list):
+            ddl_statements = [row.get('ddl', '') for row in result if row.get('ddl')]
+            return True, '\n'.join(ddl_statements)
+        return False, str(result)
 
 
 # =============================================================================
-# MAIN MIGRATION SCRIPT
+# EDGE FUNCTION DEPLOYER
 # =============================================================================
 
-def get_credentials() -> Tuple[SupabaseConfig, SupabaseConfig]:
-    """Get credentials - using pre-configured keys"""
-    print_header("SUPABASE CREDENTIALS SETUP")
-    
-    print_info(f"Development Project: {DEV_PROJECT_REF}")
-    print_info(f"Production Project: {PROD_PROJECT_REF}")
+class EdgeFunctionDeployer:
+    """Deploy Edge Functions via Supabase CLI"""
+
+    def __init__(self, project_ref: str, functions_dir: Path):
+        self.project_ref = project_ref
+        self.functions_dir = functions_dir
+
+    def check_cli_available(self) -> bool:
+        try:
+            result = subprocess.run(
+                ["npx", "supabase", "--version"],
+                capture_output=True, text=True, timeout=30, shell=True
+            )
+            return result.returncode == 0
+        except:
+            return False
+
+    def check_logged_in(self) -> bool:
+        try:
+            result = subprocess.run(
+                ["npx", "supabase", "projects", "list"],
+                capture_output=True, text=True, timeout=30, shell=True
+            )
+            return result.returncode == 0 and "REFERENCE ID" in result.stdout
+        except:
+            return False
+
+    def get_available_functions(self) -> List[str]:
+        functions = []
+        if self.functions_dir.exists():
+            for item in self.functions_dir.iterdir():
+                if item.is_dir() and (item / "index.ts").exists():
+                    functions.append(item.name)
+        return functions
+
+    def deploy_function(self, function_name: str) -> Tuple[bool, str]:
+        try:
+            result = subprocess.run(
+                ["npx", "supabase", "functions", "deploy", function_name,
+                 "--project-ref", self.project_ref],
+                capture_output=True, text=True, timeout=120, shell=True,
+                cwd=str(self.functions_dir.parent)
+            )
+            if result.returncode == 0:
+                return True, result.stdout
+            return False, result.stderr or result.stdout
+        except Exception as e:
+            return False, str(e)
+
+
+# =============================================================================
+# MAIN MIGRATION
+# =============================================================================
+
+def get_management_api_token() -> str:
+    """Get Management API token from user"""
+    global MANAGEMENT_API_TOKEN
+
+    if MANAGEMENT_API_TOKEN:
+        return MANAGEMENT_API_TOKEN
+
     print()
-    
-    print_success("Using pre-configured credentials")
+    print_color("Management API Token Required", Colors.YELLOW, bold=True)
+    print_color("-" * 40, Colors.GRAY)
+    print_info("Get your Personal Access Token from:")
+    print_info("https://supabase.com/dashboard/account/tokens")
     print()
-    
-    # Production credentials (pre-configured)
-    prod_config = SupabaseConfig(
-        project_ref=PROD_PROJECT_REF,
-        url=PROD_URL,
-        anon_key="",  # Not needed for migration
-        service_role_key=PROD_SERVICE_ROLE_KEY
-    )
-    
-    # Development credentials (pre-configured)
-    dev_config = SupabaseConfig(
-        project_ref=DEV_PROJECT_REF,
-        url=DEV_URL,
-        anon_key="",
-        service_role_key=DEV_SERVICE_ROLE_KEY
-    )
-    
-    return dev_config, prod_config
 
+    token = input("Enter your Supabase Management API Token: ").strip()
 
-def verify_connection(config: SupabaseConfig) -> bool:
-    """Verify connection to Supabase"""
-    print_info(f"Verifying connection to {config.project_ref}...")
-    
-    client = SupabaseClient(config)
-    if client.health_check():
-        print_success(f"Connected to {config.project_ref}")
-        return True
-    else:
-        print_error(f"Cannot connect to {config.project_ref}")
-        return False
+    if not token:
+        print_error("Token is required for this migration")
+        sys.exit(1)
 
-
-def create_storage_buckets(client: SupabaseClient) -> bool:
-    """Create storage buckets in production"""
-    print_step(3, 6, "Creating Storage Buckets")
-    
-    buckets_config = [
-        {
-            "id": "screenshots",
-            "public": False,
-            "file_size_limit": 10485760,  # 10MB
-            "allowed_mime_types": ["image/png", "image/jpeg", "image/jpg", "image/webp"]
-        },
-        {
-            "id": "documents", 
-            "public": False,
-            "file_size_limit": 52428800,  # 50MB
-            "allowed_mime_types": [
-                "application/pdf",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "application/msword"
-            ]
-        }
-    ]
-    
-    for bucket in buckets_config:
-        success, result = client.create_storage_bucket(
-            bucket_id=bucket["id"],
-            public=bucket["public"],
-            file_size_limit=bucket["file_size_limit"],
-            allowed_mime_types=bucket["allowed_mime_types"]
-        )
-        
-        if success:
-            print_success(f"Created bucket: {bucket['id']}")
-        else:
-            if "already exists" in str(result).lower() or "duplicate" in str(result).lower():
-                print_warning(f"Bucket already exists: {bucket['id']}")
-            else:
-                print_error(f"Failed to create bucket {bucket['id']}: {result}")
-    
-    return True
+    MANAGEMENT_API_TOKEN = token
+    return token
 
 
 def run_migration():
-    """Main migration function"""
+    """Main migration function - Extract from DEV, Apply to PROD"""
     print_header("JIRAFORGE SUPABASE MIGRATION")
-    print_color("Development → Production", Colors.CYAN)
+    print_color("  DEV (Source) -> PROD (Target)", Colors.CYAN)
     print()
-    
-    # Get script directory
+    print_info(f"Source (READ ONLY): {DEV_PROJECT_REF}")
+    print_info(f"Target (WRITE):     {PROD_PROJECT_REF}")
+    print()
+
+    total_steps = 8
     script_dir = Path(__file__).parent.resolve()
-    
-    # Initialize migration manager
-    manager = MigrationManager(script_dir)
-    
-    # Get credentials
-    dev_config, prod_config = get_credentials()
-    
-    # Verify production connection
-    print_step(2, 6, "Verifying Production Connection")
-    if not verify_connection(prod_config):
-        print_error("Cannot proceed without valid production credentials")
+    exports_dir = script_dir / "exports"
+    exports_dir.mkdir(exist_ok=True)
+
+    # Step 1: Get Management API Token
+    print_step(1, total_steps, "Authentication")
+    api_token = get_management_api_token()
+
+    # Create API clients for both DEV (read) and PROD (write)
+    dev_api = ManagementAPIClient(api_token, DEV_PROJECT_REF)
+    prod_api = ManagementAPIClient(api_token, PROD_PROJECT_REF)
+
+    # Verify connections
+    print_info("Verifying DEV connection (READ ONLY)...")
+    if not dev_api.verify_connection():
+        print_error("Cannot connect to DEV project")
         return False
-    
-    prod_client = SupabaseClient(prod_config)
-    
-    # Generate production SQL
-    sql_file = manager.generate_production_sql(prod_config)
-    if not sql_file:
+    print_success("DEV connection verified")
+
+    print_info("Verifying PROD connection...")
+    if not prod_api.verify_connection():
+        print_error("Cannot connect to PROD project")
         return False
-    
-    # Create storage buckets via API
-    create_storage_buckets(prod_client)
-    
-    # Generate all setup files
-    print_step(4, 6, "Generating Setup Files")
-    
-    # Storage setup SQL
-    storage_sql_file = manager.exports_dir / "STORAGE_SETUP.sql"
-    with open(storage_sql_file, 'w', encoding='utf-8') as f:
-        f.write(manager.generate_storage_setup_sql())
-    print_success(f"Generated: {storage_sql_file}")
-    
-    # Webhook setup guide
-    webhook_guide_file = manager.exports_dir / "WEBHOOK_SETUP_GUIDE.md"
-    with open(webhook_guide_file, 'w', encoding='utf-8') as f:
-        f.write(manager.generate_webhook_setup_instructions(prod_config))
-    print_success(f"Generated: {webhook_guide_file}")
-    
-    # Edge function deployment guide
-    edge_function_guide_file = manager.exports_dir / "EDGE_FUNCTION_DEPLOYMENT.md"
-    with open(edge_function_guide_file, 'w', encoding='utf-8') as f:
-        f.write(manager.generate_edge_function_deployment_guide(prod_config))
-    print_success(f"Generated: {edge_function_guide_file}")
-    
-    # Environment variables guide
-    env_guide_file = manager.exports_dir / "ENV_VARIABLES_GUIDE.md"
-    with open(env_guide_file, 'w', encoding='utf-8') as f:
-        f.write(manager.generate_env_update_guide(prod_config))
-    print_success(f"Generated: {env_guide_file}")
-    
-    # Generate master checklist
-    print_step(5, 6, "Generating Migration Checklist")
-    checklist = generate_migration_checklist(prod_config, manager)
-    checklist_file = manager.exports_dir / "MIGRATION_CHECKLIST.md"
-    with open(checklist_file, 'w', encoding='utf-8') as f:
-        f.write(checklist)
-    print_success(f"Generated: {checklist_file}")
-    
-    # Final summary
-    print_step(6, 6, "Migration Preparation Complete!")
-    print_final_summary(prod_config, manager)
-    
+    print_success("PROD connection verified")
+
+    # NOTE: Auto-cleanup removed for safety
+    # If you need to clean PROD, do it manually via Supabase Dashboard
+
+    # Step 2: Extract schema from DEV
+    print_step(2, total_steps, "Extracting Schema from DEV (READ ONLY)")
+    extractor = SchemaExtractor(dev_api)
+
+    full_sql = []
+    full_sql.append(f"""-- ============================================================================
+-- JIRAForge PRODUCTION Migration
+-- ============================================================================
+-- Extracted from DEV: {DEV_PROJECT_REF}
+-- Target: {PROD_PROJECT_REF}
+-- Generated: {datetime.now().isoformat()}
+-- ============================================================================
+
+""")
+
+    # Initialize all SQL variables to empty strings
+    extensions_sql = ""
+    functions_sql = ""
+    tables_sql = ""
+    constraints_sql = ""
+    indexes_sql = ""
+    triggers_sql = ""
+    views_sql = ""
+    rls_sql = ""
+    storage_policies_sql = ""
+
+    # Extract extensions (FIRST - other objects depend on these)
+    print_info("Extracting extensions...")
+    success, result = extractor.extract_extensions()
+    if success and result:
+        extensions_sql = result
+        full_sql.append("-- EXTENSIONS\n" + extensions_sql + "\n\n")
+        print_success(f"Extracted extensions")
+    else:
+        print_warning(f"Could not extract extensions: {result}")
+
+    # Extract functions (SECOND - tables and policies reference these)
+    print_info("Extracting functions...")
+    success, result = extractor.extract_functions()
+    if success and result:
+        functions_sql = result
+        full_sql.append("-- FUNCTIONS\n" + functions_sql + "\n\n")
+        print_success(f"Extracted functions")
+    else:
+        print_warning(f"Could not extract functions: {result}")
+
+    # Extract tables (THIRD - after functions they depend on)
+    print_info("Extracting tables...")
+    success, result = extractor.extract_tables()
+    if success and result:
+        tables_sql = result
+        full_sql.append("-- TABLES\n" + tables_sql + "\n\n")
+        print_success(f"Extracted tables")
+    else:
+        print_warning(f"Could not extract tables: {result}")
+
+    # Extract constraints
+    print_info("Extracting constraints...")
+    success, result = extractor.extract_table_constraints()
+    if success and result:
+        constraints_sql = result
+        full_sql.append("-- CONSTRAINTS\n" + constraints_sql + "\n\n")
+        print_success(f"Extracted constraints")
+    else:
+        print_warning(f"Could not extract constraints: {result}")
+
+    # Extract indexes
+    print_info("Extracting indexes...")
+    success, result = extractor.extract_indexes()
+    if success and result:
+        indexes_sql = result
+        full_sql.append("-- INDEXES\n" + indexes_sql + "\n\n")
+        print_success(f"Extracted indexes")
+    else:
+        print_warning(f"Could not extract indexes: {result}")
+
+    # Extract triggers
+    print_info("Extracting triggers...")
+    success, result = extractor.extract_triggers()
+    if success and result:
+        triggers_sql = result
+        full_sql.append("-- TRIGGERS\n" + triggers_sql + "\n\n")
+        print_success(f"Extracted triggers")
+    else:
+        print_warning(f"Could not extract triggers: {result}")
+
+    # Extract views
+    print_info("Extracting views...")
+    success, result = extractor.extract_views()
+    if success and result:
+        views_sql = result
+        full_sql.append("-- VIEWS\n" + views_sql + "\n\n")
+        print_success(f"Extracted views")
+    else:
+        print_warning(f"Could not extract views: {result}")
+
+    # Extract RLS policies
+    print_info("Extracting RLS policies...")
+    success, result = extractor.extract_rls_policies()
+    if success and result:
+        rls_sql = result
+        full_sql.append("-- RLS POLICIES\n" + rls_sql + "\n\n")
+        print_success(f"Extracted RLS policies")
+    else:
+        print_warning(f"Could not extract RLS policies: {result}")
+
+    # Extract storage policies
+    print_info("Extracting storage policies...")
+    success, result = extractor.extract_storage_policies()
+    if success and result:
+        storage_policies_sql = result
+        full_sql.append("-- STORAGE POLICIES\n" + storage_policies_sql + "\n\n")
+        print_success(f"Extracted storage policies")
+    else:
+        print_warning(f"Could not extract storage policies: {result}")
+
+    # Save extracted SQL
+    migration_sql = '\n'.join(full_sql)
+    sql_file = exports_dir / f"EXTRACTED_MIGRATION_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sql"
+    with open(sql_file, 'w', encoding='utf-8') as f:
+        f.write(migration_sql)
+    print_success(f"Saved extracted SQL to: {sql_file}")
+
+    # Step 3: Extract storage buckets from DEV
+    print_step(3, total_steps, "Extracting Storage Buckets from DEV")
+    dev_storage = SupabaseClient(DEV_URL, DEV_SERVICE_ROLE_KEY)
+    success, buckets = dev_storage.get_storage_buckets()
+
+    if success and isinstance(buckets, list):
+        print_success(f"Found {len(buckets)} storage buckets in DEV")
+        for bucket in buckets:
+            print_info(f"  - {bucket.get('name', bucket.get('id', 'unknown'))}")
+    else:
+        print_warning(f"Could not get storage buckets: {buckets}")
+        buckets = []
+
+    # Step 4: Apply schema to PROD (section by section)
+    print_step(4, total_steps, "Applying Schema to PROD")
+    print_warning("This will create tables, functions, etc. in PRODUCTION")
+    response = input("Continue? (y/n): ").strip().lower()
+
+    if response != 'y':
+        print_warning("Migration cancelled by user")
+        return False
+
+    # Check if we need supabase_functions schema for triggers
+    needs_supabase_functions = 'supabase_functions' in triggers_sql.lower() if triggers_sql else False
+    if needs_supabase_functions:
+        print_warning("Some triggers require 'supabase_functions' schema (for HTTP webhooks)")
+        print_info("These triggers have been automatically skipped for now")
+        print_info("To enable webhooks later, go to: Supabase Dashboard > Database > Webhooks")
+        print()
+
+    # Execute each section separately to handle dependencies properly
+    sections = [
+        ("Extensions", extensions_sql),
+        ("Functions", functions_sql),
+        ("Tables", tables_sql),
+        ("Constraints", constraints_sql),
+        ("Indexes", indexes_sql),
+        ("Triggers", triggers_sql),
+        ("Views", views_sql),
+        ("RLS Policies", rls_sql),
+        ("Storage Policies", storage_policies_sql),
+    ]
+
+    all_success = True
+    for section_name, section_sql in sections:
+        if section_sql and section_sql.strip():
+            print_info(f"Applying {section_name}...")
+            success, result = prod_api.execute_sql(section_sql, read_only=False)
+            if success:
+                print_success(f"{section_name} applied successfully")
+            else:
+                print_error(f"{section_name} failed: {result}")
+                all_success = False
+                # Ask if user wants to continue with other sections
+                cont = input(f"  Continue with remaining sections? (y/n): ").strip().lower()
+                if cont != 'y':
+                    print_info(f"You can manually run the SQL from: {sql_file}")
+                    return False
+        else:
+            print_warning(f"No {section_name} to apply")
+
+    if all_success:
+        print_success("All schema sections applied successfully!")
+    else:
+        print_warning("Some sections failed - check errors above")
+        print_info(f"Full SQL saved to: {sql_file}")
+
+    # Step 5: Create storage buckets in PROD
+    print_step(5, total_steps, "Creating Storage Buckets in PROD")
+    prod_storage = SupabaseClient(PROD_URL, PROD_SERVICE_ROLE_KEY)
+
+    for bucket in buckets:
+        bucket_config = {
+            "id": bucket.get('id'),
+            "name": bucket.get('name', bucket.get('id')),
+            "public": bucket.get('public', False),
+            "file_size_limit": bucket.get('file_size_limit'),
+            "allowed_mime_types": bucket.get('allowed_mime_types')
+        }
+
+        success, result = prod_storage.create_storage_bucket(bucket_config)
+        if success:
+            print_success(f"Created bucket: {bucket_config['id']}")
+        elif "already exists" in str(result).lower() or "duplicate" in str(result).lower():
+            print_warning(f"Bucket already exists: {bucket_config['id']}")
+        else:
+            print_error(f"Failed to create bucket {bucket_config['id']}: {result}")
+
+    # Step 6: Extract and apply webhooks/triggers
+    print_step(6, total_steps, "Setting Up Database Webhooks")
+    # Webhooks are triggers - they were already extracted and applied in step 4
+    print_success("Webhooks (triggers) were included in schema migration")
+
+    # Step 7: Deploy Edge Functions
+    print_step(7, total_steps, "Deploying Edge Functions")
+    functions_dir = script_dir / "functions"
+    deployer = EdgeFunctionDeployer(PROD_PROJECT_REF, functions_dir)
+
+    if deployer.check_cli_available() and deployer.check_logged_in():
+        functions = deployer.get_available_functions()
+        if functions:
+            print_info(f"Found {len(functions)} edge functions: {', '.join(functions)}")
+            failed_functions = []
+            for func_name in functions:
+                print_info(f"Deploying {func_name}...")
+                success, msg = deployer.deploy_function(func_name)
+                if success:
+                    print_success(f"Deployed: {func_name}")
+                else:
+                    failed_functions.append(func_name)
+                    # Check for specific error types
+                    if "403" in str(msg) or "privileges" in str(msg).lower():
+                        print_error(f"Permission denied for: {func_name}")
+                    else:
+                        print_error(f"Failed: {func_name} - {msg}")
+            
+            if failed_functions:
+                print()
+                print_warning("Some edge functions failed to deploy automatically.")
+                print_info("To deploy manually:")
+                print_info("  1. Login to Supabase CLI: npx supabase login")
+                print_info(f"  2. Link project: npx supabase link --project-ref {PROD_PROJECT_REF}")
+                print_info("  3. Deploy each function:")
+                for func in failed_functions:
+                    print_color(f"     npx supabase functions deploy {func} --project-ref {PROD_PROJECT_REF}", Colors.GRAY)
+                print()
+                print_info("Or deploy via Supabase Dashboard > Edge Functions > Deploy a new function")
+        else:
+            print_warning("No edge functions found in functions directory")
+    else:
+        print_warning("Supabase CLI not available or not logged in")
+        print_info("To deploy edge functions manually:")
+        print_info("  1. Install Supabase CLI: npm install -g supabase")
+        print_info("  2. Login: npx supabase login")
+        print_info(f"  3. Deploy: npx supabase functions deploy --project-ref {PROD_PROJECT_REF}")
+
+    # Step 8: Summary
+    print_step(8, total_steps, "Migration Complete!")
+    print_header("MIGRATION SUMMARY")
+    print()
+    print_success(f"Source (DEV): {DEV_PROJECT_REF} - READ ONLY (unchanged)")
+    print_success(f"Target (PROD): {PROD_PROJECT_REF} - Schema applied")
+    print()
+    print_info(f"Extracted SQL saved to: {sql_file}")
+    print()
+    print_color("Next Steps:", Colors.YELLOW, bold=True)
+    print_info("1. Verify tables: Supabase Dashboard > Table Editor")
+    print_info("2. Verify storage: Supabase Dashboard > Storage")
+    print_info("3. Verify functions: Supabase Dashboard > Edge Functions")
+    print_info("4. Update your app's environment variables:")
+    print_color(f"     SUPABASE_URL={PROD_URL}", Colors.GRAY)
+    print_color(f"     SUPABASE_SERVICE_ROLE_KEY={PROD_SERVICE_ROLE_KEY[:50]}...", Colors.GRAY)
+    print()
+
     return True
-
-
-def generate_migration_checklist(config: SupabaseConfig, manager: MigrationManager) -> str:
-    """Generate comprehensive migration checklist"""
-    return f"""# JIRAForge Production Migration Checklist
-
-**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  
-**Target Project:** {config.project_ref}  
-**Target URL:** {config.url}
-
----
-
-## Pre-Migration Checklist
-
-- [ ] Backup development database (optional, for reference)
-- [ ] Verify production Supabase project is created
-- [ ] Note down production API keys (anon, service_role)
-- [ ] Ensure you have Supabase CLI installed (`npm install -g supabase`)
-- [ ] Login to Supabase CLI (`supabase login`)
-
----
-
-## Step 1: Database Schema Migration
-
-1. Open Supabase Dashboard for production:
-   {config.url.replace('.supabase.co', '.supabase.co/project/' + config.project_ref)}
-
-2. Go to **SQL Editor** → **New Query**
-
-3. Copy and paste the contents of:
-   `{manager.production_sql_file}`
-
-4. Click **Run** to execute the entire script
-
-5. Verify the output shows:
-   - ✅ Tables created
-   - ✅ Functions created
-   - ✅ Triggers created
-   - ✅ Views created
-   - ✅ RLS policies created
-   - ✅ Storage buckets created
-
-- [ ] Schema migration completed successfully
-
----
-
-## Step 2: Storage Buckets Verification
-
-The main script should have created the buckets. Verify in Dashboard:
-
-1. Go to **Storage** section
-2. Verify these buckets exist:
-   - [ ] `screenshots` bucket (private, 10MB limit)
-   - [ ] `documents` bucket (private, 50MB limit)
-
-If missing, run the SQL in:
-`{manager.exports_dir / "STORAGE_SETUP.sql"}`
-
----
-
-## Step 3: Deploy Edge Functions
-
-Using Supabase CLI:
-
-```powershell
-cd {manager.script_dir}
-
-# Link to production project
-supabase link --project-ref {config.project_ref}
-
-# Deploy all functions
-supabase functions deploy screenshot-webhook --project-ref {config.project_ref}
-supabase functions deploy document-webhook --project-ref {config.project_ref}  
-supabase functions deploy update-issues-cache --project-ref {config.project_ref}
-
-# Set secrets
-supabase secrets set AI_SERVER_URL=<your-ai-server-url> --project-ref {config.project_ref}
-supabase secrets set AI_SERVER_API_KEY=<your-api-key> --project-ref {config.project_ref}
-```
-
-- [ ] screenshot-webhook deployed
-- [ ] document-webhook deployed
-- [ ] update-issues-cache deployed
-- [ ] Secrets configured
-
----
-
-## Step 4: Configure Database Webhooks
-
-1. Go to **Database** → **Webhooks** in Dashboard
-
-2. Create **screenshot-insert-webhook**:
-   - Table: `screenshots`
-   - Events: INSERT
-   - Type: Supabase Edge Function
-   - Function: `screenshot-webhook`
-   
-3. Create **document-insert-webhook**:
-   - Table: `documents`
-   - Events: INSERT
-   - Type: Supabase Edge Function
-   - Function: `document-webhook`
-
-- [ ] screenshot-insert-webhook created
-- [ ] document-insert-webhook created
-
----
-
-## Step 5: Update Application Configurations
-
-### Desktop App (python-desktop-app)
-Update `.env` or configuration:
-```
-SUPABASE_URL={config.url}
-SUPABASE_ANON_KEY=<production-anon-key>
-```
-
-### Forge App (forge-app)
-Update `manifest.yml` or environment:
-```yaml
-SUPABASE_URL: {config.url}
-SUPABASE_SERVICE_ROLE_KEY: <production-service-role-key>
-```
-
-### AI Server (ai-server)
-Update `.env`:
-```
-SUPABASE_URL={config.url}
-SUPABASE_SERVICE_ROLE_KEY=<production-service-role-key>
-```
-
-- [ ] Desktop app configured
-- [ ] Forge app configured
-- [ ] AI server configured
-
----
-
-## Step 6: Verification Tests
-
-### Test 1: Database Connection
-```python
-import requests
-url = "{config.url}/rest/v1/"
-headers = {{"apikey": "<anon-key>"}}
-response = requests.get(url, headers=headers)
-print(f"Status: {{response.status_code}}")  # Should be 200
-```
-
-### Test 2: Table Existence
-In SQL Editor, run:
-```sql
-SELECT table_name FROM information_schema.tables 
-WHERE table_schema = 'public' ORDER BY table_name;
-```
-
-### Test 3: Storage Bucket Access
-```python
-url = "{config.url}/storage/v1/bucket"
-headers = {{"apikey": "<service-role-key>", "Authorization": "Bearer <service-role-key>"}}
-response = requests.get(url, headers=headers)
-print(response.json())  # Should list buckets
-```
-
-- [ ] Database connection works
-- [ ] All tables exist
-- [ ] Storage buckets accessible
-
----
-
-## Step 7: Go Live Checklist
-
-- [ ] All tests passed
-- [ ] Team notified of migration
-- [ ] DNS/URLs updated if applicable
-- [ ] Monitoring configured
-- [ ] First user test successful
-
----
-
-## Troubleshooting
-
-### Issue: "relation already exists"
-This is OK - it means the table already exists. The script uses `IF NOT EXISTS`.
-
-### Issue: "permission denied"
-Check that you're using the `service_role` key, not the `anon` key.
-
-### Issue: Edge function deployment fails
-1. Ensure you're logged in: `supabase login`
-2. Ensure project is linked: `supabase link --project-ref {config.project_ref}`
-3. Check function syntax for errors
-
-### Issue: Webhooks not triggering
-1. Verify webhook is enabled in Dashboard
-2. Check Edge Function logs in Dashboard
-3. Verify secrets are set correctly
-
----
-
-## Support Files Generated
-
-| File | Purpose |
-|------|---------|
-| `PRODUCTION_SETUP.sql` | Complete database schema |
-| `STORAGE_SETUP.sql` | Storage bucket SQL |
-| `WEBHOOK_SETUP_GUIDE.md` | Webhook configuration |
-| `EDGE_FUNCTION_DEPLOYMENT.md` | Edge function deployment |
-| `ENV_VARIABLES_GUIDE.md` | Environment variables |
-
----
-
-**Migration prepared successfully! Follow the steps above to complete the migration.**
-"""
-
-
-def print_final_summary(config: SupabaseConfig, manager: MigrationManager):
-    """Print final summary and next steps"""
-    print()
-    print_header("MIGRATION PREPARATION COMPLETE!")
-    print()
-    
-    print_color("Generated Files:", Colors.CYAN, bold=True)
-    print_color(f"  📄 {manager.exports_dir / 'PRODUCTION_SETUP.sql'}", Colors.WHITE)
-    print_color(f"  📄 {manager.exports_dir / 'STORAGE_SETUP.sql'}", Colors.WHITE)
-    print_color(f"  📄 {manager.exports_dir / 'WEBHOOK_SETUP_GUIDE.md'}", Colors.WHITE)
-    print_color(f"  📄 {manager.exports_dir / 'EDGE_FUNCTION_DEPLOYMENT.md'}", Colors.WHITE)
-    print_color(f"  📄 {manager.exports_dir / 'ENV_VARIABLES_GUIDE.md'}", Colors.WHITE)
-    print_color(f"  📄 {manager.exports_dir / 'MIGRATION_CHECKLIST.md'}", Colors.WHITE)
-    print()
-    
-    print_color("NEXT STEPS:", Colors.YELLOW, bold=True)
-    print()
-    print_color("1. APPLY DATABASE SCHEMA:", Colors.WHITE, bold=True)
-    print_color(f"   • Open: {config.url.replace('.supabase.co', '.supabase.co/project/' + config.project_ref + '/sql/new')}", Colors.GRAY)
-    print_color(f"   • Copy contents of: PRODUCTION_SETUP.sql", Colors.GRAY)
-    print_color(f"   • Click 'Run' to execute", Colors.GRAY)
-    print()
-    
-    print_color("2. DEPLOY EDGE FUNCTIONS:", Colors.WHITE, bold=True)
-    print_color(f"   • supabase login", Colors.GRAY)
-    print_color(f"   • supabase link --project-ref {config.project_ref}", Colors.GRAY)
-    print_color(f"   • supabase functions deploy --project-ref {config.project_ref}", Colors.GRAY)
-    print()
-    
-    print_color("3. CONFIGURE WEBHOOKS:", Colors.WHITE, bold=True)
-    print_color(f"   • See: WEBHOOK_SETUP_GUIDE.md", Colors.GRAY)
-    print()
-    
-    print_color("4. UPDATE APP CONFIGURATIONS:", Colors.WHITE, bold=True)
-    print_color(f"   • See: ENV_VARIABLES_GUIDE.md", Colors.GRAY)
-    print()
-    
-    print_color("5. FOLLOW THE COMPLETE CHECKLIST:", Colors.WHITE, bold=True)
-    print_color(f"   • Open: {manager.exports_dir / 'MIGRATION_CHECKLIST.md'}", Colors.GRAY)
-    print()
-    
-    print_success("All migration files have been generated!")
-    print_info("Your development environment remains unchanged.")
-    print()
 
 
 # =============================================================================

@@ -3,8 +3,10 @@ import { invoke } from '@forge/bridge';
 import './TimesheetSettings.css';
 
 // Common applications for quick selection
+// Includes both friendly names and common exe names for better matching
 const COMMON_WORK_APPS = [
-  { name: 'VS Code', value: 'vscode' },
+  { name: 'VS Code', value: 'code' },  // Matches Code.exe
+  { name: 'Cursor IDE', value: 'cursor' },  // Matches Cursor.exe
   { name: 'GitHub', value: 'github' },
   { name: 'GitLab', value: 'gitlab' },
   { name: 'JIRA', value: 'jira' },
@@ -12,12 +14,15 @@ const COMMON_WORK_APPS = [
   { name: 'Slack', value: 'slack' },
   { name: 'Microsoft Teams', value: 'teams' },
   { name: 'Zoom', value: 'zoom' },
-  { name: 'Chrome', value: 'chrome' },
+  { name: 'Chrome', value: 'chrome' },  // Matches chrome.exe
   { name: 'Firefox', value: 'firefox' },
+  { name: 'Edge', value: 'msedge' },  // Matches msedge.exe
   { name: 'IntelliJ IDEA', value: 'intellij' },
   { name: 'Postman', value: 'postman' },
   { name: 'Figma', value: 'figma' },
-  { name: 'Notion', value: 'notion' }
+  { name: 'Notion', value: 'notion' },
+  { name: 'Terminal', value: 'terminal' },
+  { name: 'PowerShell', value: 'powershell' }
 ];
 
 const COMMON_NON_WORK_APPS = [
@@ -70,7 +75,7 @@ function TimesheetSettings() {
 
     // Whitelist
     whitelistEnabled: true,
-    whitelistedApps: ['vscode', 'jira', 'zoom', 'chrome', 'postman', 'github'],
+    whitelistedApps: ['code', 'cursor', 'jira', 'zoom', 'chrome', 'postman', 'github', 'slack', 'teams'],
 
     // Blacklist
     blacklistEnabled: true,

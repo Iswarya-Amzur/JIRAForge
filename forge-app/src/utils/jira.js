@@ -40,7 +40,8 @@ export async function getUserAssignedIssues(statuses = JQL_ACTIVE_STATUSES, maxR
  * @returns {Promise<Object>} Jira search response
  */
 export async function getAllUserAssignedIssues(maxResults = MAX_JIRA_SEARCH_RESULTS) {
-  const jql = 'assignee = currentUser() AND Sprint in openSprints() ORDER BY dueDate ASC, rank ASC';
+  // Include all issues in open sprints (including Done) - time tracking should show for completed work
+  const jql = 'assignee = currentUser() AND Sprint in openSprints() ORDER BY status ASC, dueDate ASC, rank ASC';
 
   console.log('[JIRA API] Fetching issues with JQL:', jql);
   const response = await api.asUser().requestJira(

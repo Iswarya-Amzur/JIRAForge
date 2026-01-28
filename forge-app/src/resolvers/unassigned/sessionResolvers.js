@@ -421,10 +421,10 @@ export async function getGroupWorkSessions(req) {
       const durationSeconds = screenshot.duration_seconds || 0;
 
       // Calculate start and end time
+      // IMPORTANT: Always calculate startTime from endTime - durationSeconds for accurate display
+      // Don't rely on screenshot.start_time as it may equal timestamp (causing same start/end display)
       const endTime = new Date(screenshotTimestamp);
-      const startTime = screenshot.start_time
-        ? new Date(screenshot.start_time)
-        : new Date(endTime.getTime() - (durationSeconds * 1000));
+      const startTime = new Date(endTime.getTime() - (durationSeconds * 1000));
 
       // Check if this can be merged with the last session
       if (workSessions.length > 0) {

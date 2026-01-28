@@ -168,35 +168,60 @@ function DesktopAppStatusBanner({ downloadUrl = 'https://your-download-url.com' 
         alignItems: 'center',
         gap: '8px'
       }}>
-        <button
-          onClick={() => {
-            localStorage.setItem('desktopAppBannerLastShown', new Date().toDateString());
-            router.open(downloadUrl);
-          }}
-          style={{
+        {/* Show different button based on status */}
+        {status.status === 'not-setup' ? (
+          // User hasn't installed the app yet - show Download
+          <button
+            onClick={() => {
+              localStorage.setItem('desktopAppBannerLastShown', new Date().toDateString());
+              router.open(downloadUrl);
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 16px',
+              backgroundColor: '#0052CC',
+              color: 'white',
+              borderRadius: '4px',
+              border: 'none',
+              fontSize: '13px',
+              fontWeight: '500',
+              cursor: 'pointer',
+              transition: 'background-color 0.2s'
+            }}
+            onMouseOver={(e) => e.target.style.backgroundColor = '#0065FF'}
+            onMouseOut={(e) => e.target.style.backgroundColor = '#0052CC'}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            Download App
+          </button>
+        ) : (
+          // User has the app but it's inactive/logged-out - show "Open App" hint
+          <div style={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: '6px',
             padding: '8px 16px',
-            backgroundColor: '#0052CC',
-            color: 'white',
+            backgroundColor: '#F4F5F7',
+            color: '#172B4D',
             borderRadius: '4px',
-            border: 'none',
+            border: '1px solid #DFE1E6',
             fontSize: '13px',
-            fontWeight: '500',
-            cursor: 'pointer',
-            transition: 'background-color 0.2s'
-          }}
-          onMouseOver={(e) => e.target.style.backgroundColor = '#0065FF'}
-          onMouseOut={(e) => e.target.style.backgroundColor = '#0052CC'}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-            <polyline points="7 10 12 15 17 10"></polyline>
-            <line x1="12" y1="15" x2="12" y2="3"></line>
-          </svg>
-          Download App
-        </button>
+            fontWeight: '500'
+          }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+            Open from System Tray
+          </div>
+        )}
 
         {/* Dismiss button (only for inactive/logged-out, not for not-setup) */}
         {status.status !== 'not-setup' && (
