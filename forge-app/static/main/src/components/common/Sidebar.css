@@ -158,3 +158,180 @@
 .App-sidebar.collapsed .sidebar-label {
   display: none;
 }
+
+/* Sidebar Notification Popover Styles */
+.sidebar-header .notification-popover-container {
+  position: relative;
+  display: inline-block;
+  margin-left: auto;
+}
+
+.sidebar-header .notification-clock-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--ds-text-subtle);
+  transition: all 0.2s ease;
+}
+
+.sidebar-header .notification-clock-btn:hover {
+  background: var(--ds-background-neutral-subtle);
+  color: #6656fc;
+}
+
+.sidebar-header .notification-popover.sidebar-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: auto;
+  width: 260px;
+  background: #fff;
+  border: 1px solid var(--ds-border);
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 4px 16px rgba(9, 30, 66, 0.15);
+  z-index: 1000;
+  animation: popoverFadeIn 0.2s ease;
+}
+
+.sidebar-header .notification-popover.sidebar-popover::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 12px;
+  right: auto;
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border-left: 1px solid var(--ds-border);
+  border-top: 1px solid var(--ds-border);
+  transform: rotate(45deg);
+}
+
+.notification-popover-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.notification-popover-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ds-text);
+}
+
+.notification-popover-hint {
+  font-size: 12px;
+  color: var(--ds-text-subtle);
+  margin: 0 0 12px 0;
+  line-height: 1.4;
+}
+
+.notification-popover .notification-toggle-label {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.notification-popover .notification-settings-message {
+  display: block;
+  margin-top: 10px;
+  margin-left: 0;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.notification-popover .notification-settings-message.success {
+  background: #e3fcef;
+  color: #006644;
+}
+
+.notification-popover .notification-settings-message.error {
+  background: #ffebe6;
+  color: #de350b;
+}
+
+.notification-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6656fc;
+}
+
+/* Toggle Switch Styles for Sidebar */
+.notification-popover .toggle-switch-wrapper {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  min-width: 48px;
+  height: 24px;
+  min-height: 24px;
+  flex-shrink: 0;
+}
+
+.notification-popover .toggle-input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+  margin: 0;
+  padding: 0;
+}
+
+.notification-popover .toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  width: 48px;
+  height: 24px;
+  background-color: #c1c7d0;
+  transition: background-color 0.3s ease;
+  border-radius: 24px;
+  border: none;
+  box-sizing: border-box;
+}
+
+.notification-popover .toggle-slider::before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  top: 3px;
+  background-color: white;
+  transition: transform 0.3s ease;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.notification-popover .toggle-input:checked + .toggle-slider {
+  background-color: #6656fc;
+}
+
+.notification-popover .toggle-input:checked + .toggle-slider::before {
+  transform: translateX(24px);
+}
+
+.notification-popover .toggle-input:disabled + .toggle-slider {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@keyframes popoverFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

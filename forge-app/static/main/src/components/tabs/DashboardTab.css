@@ -86,7 +86,7 @@
 
 /* Issues Table */
 .issues-table-container {
-  overflow-x: auto;
+  overflow: visible;
   margin-top: var(--ds-space-200);
   border: 1px solid var(--ds-border);
   border-radius: 4px;
@@ -364,11 +364,10 @@
 }
 
 .date-group {
-      border-left: 3px solid var(--ds-background-brand-bold);
     padding: 16px;
     background: #fff;
-    border-top-left-radius: 8px;
-    border-bottom-left-radius: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--ds-border);
 }
 
 .date-header {
@@ -408,6 +407,7 @@
   border: 1px solid var(--ds-border);
   font-size: 13px;
   transition: all 0.2s;
+  gap: 6px;
 }
 
 .session-item:hover {
@@ -417,9 +417,8 @@
 
 .session-time {
   color: var(--ds-text);
-  
   font-size: 13px;
-  flex: 1;
+  flex-shrink: 0;
 }
 
 .session-duration {
@@ -428,6 +427,139 @@
   min-width: 24px;
   text-align: right;
   font-size: 14px;
+  flex-shrink: 0;
+}
+
+/* App Chips in Sessions */
+.session-apps {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 8px;
+
+}
+
+.session-app-chip {
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 12px;
+  white-space: nowrap;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: relative;
+  cursor: default;
+}
+
+.session-app-chip:hover .chip-tooltip {
+  visibility: visible;
+  opacity: 1;
+}
+
+.chip-tooltip {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #172B4D;
+  color: #FFFFFF;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  z-index: 9999;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+  pointer-events: none;
+}
+
+.chip-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #172B4D;
+}
+
+/* Right side container for clock and duration */
+.session-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.session-app-chip.productive {
+  background: #E3FCEF;
+  color: #006644;
+  border: 1px solid #ABF5D1;
+}
+
+.session-app-chip.non-productive {
+  background: #FFEBE6;
+  color: #BF2600;
+  border: 1px solid #FFBDAD;
+}
+
+.session-app-chip.neutral {
+  background: #F4F5F7;
+  color: #42526E;
+  border: 1px solid #DFE1E6;
+}
+.session-apps-more {
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  background: #F4F5F7;
+  color: #5E6C84;
+  border: 1px solid #DFE1E6;
+  border-radius: 12px;
+  cursor: default;
+  position: relative;
+}
+
+.session-apps-more:hover .session-apps-tooltip {
+  visibility: visible;
+  opacity: 1;
+}
+
+.session-apps-tooltip {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #172B4D;
+  color: #FFFFFF;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  z-index: 9999;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+  max-width: 200px;
+  white-space: normal;
+  text-align: left;
+}
+
+.session-apps-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #172B4D;
 }
 
 /* Session Actions Container */
@@ -435,7 +567,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-left: auto;
+  flex-shrink: 0;
 }
 
 /* Session Reassignment Styles */
@@ -448,6 +580,7 @@
   opacity: 0.6;
   transition: opacity 0.2s, transform 0.2s;
   border-radius: 4px;
+  color: var(--ds-text-brand);
 }
 
 .reassign-button:hover {
@@ -524,7 +657,7 @@
   border: 1px solid var(--ds-border);
   border-radius: 4px;
   box-shadow: 0 4px 12px rgba(9, 30, 66, 0.15);
-  z-index: 1000;
+  z-index: 9999;
   min-width: 160px;
   padding: 4px 0;
   animation: fadeIn 0.15s ease-in-out;

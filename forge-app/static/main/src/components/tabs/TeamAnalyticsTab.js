@@ -10,6 +10,7 @@ function TeamAnalyticsTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [teamAnalytics, setTeamAnalytics] = useState(null);
+  const [issueViewMode, setIssueViewMode] = useState('list'); // 'list' or 'grid'
 
   const getInitials = (name) => {
     if (!name) return '?';
@@ -228,43 +229,9 @@ function TeamAnalyticsTab() {
                   <thead>
                     <tr>
                       <th>Member</th>
-                      <th>
-                        Today
-                        <span className="info-icon-wrapper">
-                          <span className="info-icon">ℹ</span>
-                          <span className="info-tooltip">
-                            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
-                          </span>
-                        </span>
-                      </th>
-                      <th>
-                        This Week
-                        <span className="info-icon-wrapper">
-                          <span className="info-icon">ℹ</span>
-                          <span className="info-tooltip">
-                            {(() => {
-                              const now = new Date();
-                              const dayOfWeek = now.getDay();
-                              const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-                              const monday = new Date(now);
-                              monday.setDate(now.getDate() - daysToMonday);
-                              const sunday = new Date(monday);
-                              sunday.setDate(monday.getDate() + 6);
-                              const formatDate = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                              return `${formatDate(monday)} - ${formatDate(sunday)}`;
-                            })()}
-                          </span>
-                        </span>
-                      </th>
-                      <th>
-                        This Month
-                        <span className="info-icon-wrapper">
-                          <span className="info-icon">ℹ</span>
-                          <span className="info-tooltip">
-                            {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-                          </span>
-                        </span>
-                      </th>
+                      <th>Today</th>
+                      <th>This Week</th>
+                      <th>This Month</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -308,48 +275,183 @@ function TeamAnalyticsTab() {
                     Top issues by time tracked. Shows total hours and number of team members who contributed to each issue.
                   </span>
                 </div>
+                <div className="view-toggle-buttons">
+                  <button
+                    className={`view-toggle-btn ${issueViewMode === 'list' ? 'active' : ''}`}
+                    onClick={() => setIssueViewMode('list')}
+                    title="List View"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M8 6H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M8 12H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M8 18H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M3 6H3.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M3 12H3.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M3 18H3.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </button>
+                  <button
+                    className={`view-toggle-btn ${issueViewMode === 'grid' ? 'active' : ''}`}
+                    onClick={() => setIssueViewMode('grid')}
+                    title="Grid View"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <rect x="3" y="3" width="7" height="7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <rect x="14" y="3" width="7" height="7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <rect x="3" y="14" width="7" height="7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      <rect x="14" y="14" width="7" height="7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
               </div>
-              <span className="section-subtitle">Team effort distribution across issues</span>
+              {/* <span className="section-subtitle">Team effort distribution across issues</span> */}
             </div>
-            <div className="issue-bars-container">
+            <div className="issue-list-container">
               {teamAnalytics?.teamTimeByIssue?.length > 0 ? (
-                (() => {
-                  const maxSeconds = Math.max(...teamAnalytics.teamTimeByIssue.map(i => i.totalSeconds), 1);
-                  return teamAnalytics.teamTimeByIssue.slice(0, 10).map((issue, idx) => {
-                    const percentage = Math.round((issue.totalSeconds / maxSeconds) * 100);
-                    return (
-                      <div key={idx} className="issue-bar-item">
-                        <a
-                          href={`/browse/${issue.issueKey}`}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            navigateToIssue(issue.issueKey);
-                          }}
-                          className="issue-key-link"
-                        >
-                          {issue.issueKey}
-                        </a>
-                        <div className="issue-stats-row">
-                          <span className="issue-hours">{formatTime(issue.totalSeconds)}</span>
-                          <span className="issue-percentage">- {percentage}%</span>
-                        </div>
-                        <div className="issue-bar-track">
-                          <div
-                            className="issue-bar-fill"
-                            style={{ width: `${percentage}%` }}
-                          ></div>
-                        </div>
-                        <div className="issue-contributors">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M20 21V19C20 17.9391 19.5786 16.9217 18.8284 16.1716C18.0783 15.4214 18.0609 15 17 15H7C5.93913 15 4.92172 15.4214 4.17157 16.1716C3.42143 16.9217 3 17.9391 3 19V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                            <path d="M12 11C14.2091 11 16 9.20914 16 7C16 4.79086 14.2091 3 12 3C9.79086 3 8 4.79086 8 7C8 9.20914 9.79086 11 12 11Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                          <span>{issue.contributors} {issue.contributors === 1 ? 'Member' : 'Members'}</span>
-                        </div>
-                      </div>
-                    );
-                  });
-                })()
+                issueViewMode === 'list' ? (
+                  <table className="issue-list-table">
+                    <thead>
+                      <tr>
+                        <th className="issue-rank-header">#</th>
+                        <th className="issue-key-header">Issue</th>
+                        <th className="issue-time-header">Time Spent</th>
+                        <th className="issue-progress-header">Distribution</th>
+                        <th className="issue-members-header">Contributors</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(() => {
+                        const maxSeconds = Math.max(...teamAnalytics.teamTimeByIssue.map(i => i.totalSeconds), 1);
+                        return teamAnalytics.teamTimeByIssue.slice(0, 10).map((issue, idx) => {
+                          const percentage = Math.round((issue.totalSeconds / maxSeconds) * 100);
+                          const visibleContributors = (issue.contributorDetails || []).slice(0, 3);
+                          const remainingCount = (issue.contributorDetails || []).length - 3;
+                          return (
+                            <tr key={idx} className="issue-list-row">
+                              <td className="issue-rank-cell">
+                                <span className={`rank-badge rank-${idx + 1}`}>{idx + 1}</span>
+                              </td>
+                              <td className="issue-key-cell">
+                                <a
+                                  href={`/browse/${issue.issueKey}`}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    navigateToIssue(issue.issueKey);
+                                  }}
+                                  className="issue-key-link"
+                                >
+                                  {issue.issueKey}
+                                </a>
+                              </td>
+                              <td className="issue-time-cell">
+                                <span className="time-value">{formatTime(issue.totalSeconds)}</span>
+                              </td>
+                              <td className="issue-progress-cell">
+                                <div className="progress-wrapper">
+                                  <div className="issue-bar-track">
+                                    <div
+                                      className={`issue-bar-fill rank-fill-${Math.min(idx + 1, 6)}`}
+                                      style={{ width: `${percentage}%` }}
+                                    ></div>
+                                  </div>
+                                  <span className="progress-percentage">{percentage}%</span>
+                                </div>
+                              </td>
+                              <td className="issue-members-cell">
+                                <div className="contributors-avatars">
+                                  {visibleContributors.map((contributor, cIdx) => (
+                                    <div
+                                      key={cIdx}
+                                      className="contributor-avatar"
+                                      style={{ backgroundColor: getAvatarColor(contributor.displayName) }}
+                                      title={contributor.displayName}
+                                    >
+                                      {getInitials(contributor.displayName)}
+                                      <span className="contributor-tooltip">{contributor.displayName}</span>
+                                    </div>
+                                  ))}
+                                  {remainingCount > 0 && (
+                                    <div className="contributor-avatar contributor-more" title={`${remainingCount} more contributor${remainingCount > 1 ? 's' : ''}`}>
+                                      +{remainingCount}
+                                      <span className="contributor-tooltip">
+                                        {(issue.contributorDetails || []).slice(3).map(c => c.displayName).join(', ')}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        });
+                      })()}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div className="issue-grid">
+                    {(() => {
+                      const maxSeconds = Math.max(...teamAnalytics.teamTimeByIssue.map(i => i.totalSeconds), 1);
+                      return teamAnalytics.teamTimeByIssue.slice(0, 10).map((issue, idx) => {
+                        const percentage = Math.round((issue.totalSeconds / maxSeconds) * 100);
+                        const visibleContributors = (issue.contributorDetails || []).slice(0, 3);
+                        const remainingCount = (issue.contributorDetails || []).length - 3;
+                        return (
+                          <div key={idx} className="issue-card">
+                            <div className="issue-card-header">
+                              <span className={`rank-badge rank-${idx + 1}`}>{idx + 1}</span>
+                              <a
+                                href={`/browse/${issue.issueKey}`}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  navigateToIssue(issue.issueKey);
+                                }}
+                                className="issue-key-link"
+                              >
+                                {issue.issueKey}
+                              </a>
+                            </div>
+                            <div className="issue-card-time">
+                              <span className="time-label">Time Spent</span>
+                              <span className="time-value">{formatTime(issue.totalSeconds)}</span>
+                            </div>
+                            <div className="issue-card-progress">
+                              <div className="issue-bar-track">
+                                <div
+                                  className={`issue-bar-fill rank-fill-${Math.min(idx + 1, 6)}`}
+                                  style={{ width: `${percentage}%` }}
+                                ></div>
+                              </div>
+                              <span className="progress-percentage">{percentage}%</span>
+                            </div>
+                            <div className="issue-card-contributors">
+                              <span className="contributors-label">Contributors</span>
+                              <div className="contributors-avatars">
+                                {visibleContributors.map((contributor, cIdx) => (
+                                  <div
+                                    key={cIdx}
+                                    className="contributor-avatar"
+                                    style={{ backgroundColor: getAvatarColor(contributor.displayName) }}
+                                    title={contributor.displayName}
+                                  >
+                                    {getInitials(contributor.displayName)}
+                                    <span className="contributor-tooltip">{contributor.displayName}</span>
+                                  </div>
+                                ))}
+                                {remainingCount > 0 && (
+                                  <div className="contributor-avatar contributor-more" title={`${remainingCount} more contributor${remainingCount > 1 ? 's' : ''}`}>
+                                    +{remainingCount}
+                                    <span className="contributor-tooltip">
+                                      {(issue.contributorDetails || []).slice(3).map(c => c.displayName).join(', ')}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                )
               ) : (
                 <p className="empty-state">No issue data available yet</p>
               )}

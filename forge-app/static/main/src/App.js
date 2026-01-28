@@ -143,7 +143,7 @@ function AppContent() {
             <button
               className={`sidebar-item ${activeTab === 'dashboard' ? 'active' : ''}`}
               onClick={() => setActiveTab('dashboard')}
-              title="Dashboard"
+              title="My Focus"
             >
               <span className="sidebar-icon">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -153,7 +153,7 @@ function AppContent() {
                   <rect x="3" y="14" width="7" height="7"></rect>
                 </svg>
               </span>
-              {sidebarOpen && <span className="sidebar-label">Dashboard</span>}
+              {sidebarOpen && <span className="sidebar-label">My Focus</span>}
             </button>
             <button
               className={`sidebar-item ${activeTab === 'time-analytics' ? 'active' : ''}`}
@@ -199,7 +199,7 @@ function AppContent() {
                 {sidebarOpen && <span className="sidebar-label">Team Analytics</span>}
               </button>
             )}
-            {userPermissions.isJiraAdmin && (
+            {/* {userPermissions.isJiraAdmin && (
               <button
                 className={`sidebar-item ${activeTab === 'org-analytics' ? 'active' : ''}`}
                 onClick={() => setActiveTab('org-analytics')}
@@ -222,7 +222,7 @@ function AppContent() {
                 </span>
                 {sidebarOpen && <span className="sidebar-label">Organization Analytics</span>}
               </button>
-            )}
+            )} */}
             {userPermissions.isJiraAdmin && (
               <button
                 className={`sidebar-item ${activeTab === 'timesheet-settings' ? 'active' : ''}`}

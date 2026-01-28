@@ -28,7 +28,6 @@ function UnassignedWork() {
   // Notification settings state
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [savingNotificationSettings, setSavingNotificationSettings] = useState(false);
-  const [notificationSettingsMessage, setNotificationSettingsMessage] = useState(null);
 
   useEffect(() => {
     loadUnassignedWork();
@@ -52,7 +51,6 @@ function UnassignedWork() {
   const handleToggleNotifications = async () => {
     const newValue = !notificationsEnabled;
     setSavingNotificationSettings(true);
-    setNotificationSettingsMessage(null);
 
     try {
       const result = await invoke('saveUnassignedNotificationSettings', {
@@ -63,23 +61,9 @@ function UnassignedWork() {
 
       if (result.success) {
         setNotificationsEnabled(newValue);
-        setNotificationSettingsMessage({
-          type: 'success',
-          text: newValue ? 'Desktop notifications enabled' : 'Desktop notifications disabled'
-        });
-        setTimeout(() => setNotificationSettingsMessage(null), 3000);
-      } else {
-        setNotificationSettingsMessage({
-          type: 'error',
-          text: result.error || 'Failed to save notification settings'
-        });
       }
     } catch (err) {
       console.error('[UnassignedWork] Error saving notification settings:', err);
-      setNotificationSettingsMessage({
-        type: 'error',
-        text: err.message || 'Failed to save notification settings'
-      });
     } finally {
       setSavingNotificationSettings(false);
     }
@@ -234,44 +218,15 @@ function UnassignedWork() {
             <strong>{formatTime(getTotalTime())}</strong> total time
           </span>
         </div>
-
-        {/* Desktop Notification Toggle */}
-        <div className="notification-settings-row">
-          <div className="notification-toggle-container">
-            <label className="notification-toggle-label">
-              <div className="notification-label-content">
-                <span className="notification-icon">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-                    <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-                  </svg>
-                </span>
-                <span className="notification-text">Desktop Notifications</span>
-              </div>
-              <div className="toggle-switch-wrapper">
-                <input
-                  type="checkbox"
-                  checked={notificationsEnabled}
-                  onChange={handleToggleNotifications}
-                  disabled={savingNotificationSettings}
-                  className="toggle-input"
-                />
-                <span className="toggle-slider"></span>
-              </div>
-            </label>
-            <span className="notification-hint">
-              {notificationsEnabled ? 'You will receive reminders to assign pending work' : 'Reminders are disabled'}
-            </span>
-          </div>
-          {notificationSettingsMessage && (
-            <span className={`notification-settings-message ${notificationSettingsMessage.type}`}>
-              {notificationSettingsMessage.type === 'success' ? '✓' : '✕'} {notificationSettingsMessage.text}
-            </span>
-          )}
-        </div>
       </div>
 
-      {groups.length > 0 && <AiDisclaimer />}
+      {groups.length > 0 && (
+        <AiDisclaimer 
+          notificationsEnabled={notificationsEnabled}
+          onToggleNotifications={handleToggleNotifications}
+          savingNotificationSettings={savingNotificationSettings}
+        />
+      )}
 
       {groups.length === 0 && sessions.length > 0 && (
         <div className="no-groups-message">

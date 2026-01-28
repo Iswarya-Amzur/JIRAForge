@@ -174,18 +174,24 @@
 }
 
 .confidence-badge.confidence-high {
-  background: #E8F7F0;
-  color: #00A885;
+    background: #00a885;
+    color: #ffffff;
+    margin-right: 1rem;
+    font-weight: 800;
 }
 
 .confidence-badge.confidence-medium {
-  background: #FFF5E6;
-  color: #fd8a20;
+  background: #fd8a20;
+  color: #fff;
+  margin-right: 1rem;
+    font-weight: 800;
 }
 
 .confidence-badge.confidence-low {
-  background: #ffebe6;
-  color: #DE350B;
+  background: #DE350B;
+  color: #fff;
+  margin-right: 1rem;
+    font-weight: 800;
 }
 
 .group-description {
@@ -198,7 +204,7 @@
 .group-recommendation {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   padding: 12px;
   border-radius: 4px;
   margin-bottom: 16px;
