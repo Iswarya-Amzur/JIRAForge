@@ -217,6 +217,24 @@ def set_runtime_supabase_config(url, anon_key, service_role_key):
     RUNTIME_SUPABASE_CONFIG['SUPABASE_SERVICE_ROLE_KEY'] = service_role_key
     print(f"[OK] Supabase config loaded from AI server")
 
+def get_local_timezone_name():
+    """
+    Auto-detect user's IANA timezone name (e.g., 'Asia/Kolkata', 'America/New_York').
+    This is used to correctly compute work_date for sessions that cross midnight.
+    """
+    try:
+        import tzlocal
+        local_tz = tzlocal.get_localzone()
+        return str(local_tz)
+    except ImportError:
+        # Fallback to UTC offset format if tzlocal not available
+        # Etc/GMT format works with PostgreSQL's AT TIME ZONE
+        offset_seconds = -time.timezone if time.daylight == 0 else -time.altzone
+        hours = abs(offset_seconds) // 3600
+        sign = '+' if offset_seconds >= 0 else '-'
+        # Note: Etc/GMT signs are inverted (Etc/GMT-5 is UTC+5)
+        return f"Etc/GMT{'-' if sign == '+' else '+'}{hours}"
+
 def get_app_data_dir():
     """Get the application data directory in LocalAppData"""
     if sys.platform == 'win32':
@@ -4558,6 +4576,9 @@ class TimeTracker:
                 'duration_seconds': duration_seconds,
                 'project_key': project_key,  # Project from user's assigned issues
                 'user_assigned_issues': self.user_issues,
+                # Timezone support for correct date grouping
+                'user_timezone': get_local_timezone_name(),  # e.g., 'Asia/Kolkata'
+                'work_date': timestamp.date().isoformat(),   # Local date: 'YYYY-MM-DD'
                 'metadata': {
                     'work_type': work_type,
                     'is_blacklisted': is_blacklisted,
@@ -4786,12 +4807,22 @@ class TimeTracker:
             heartbeat_counter = 0
             heartbeat_interval = 480  # Send heartbeat every 480 iterations (4 hours at 30s interval)
 
+            # Send initial heartbeat immediately on thread start
+            if self.current_user_id and not self.current_user_id.startswith('anonymous_'):
+                try:
+                    self._send_heartbeat()
+                except Exception as e:
+                    print(f"[WARN] Initial heartbeat failed: {e}")
+
             while self.running:
                 try:
+                    # Sync offline data only when tracking is active
                     if self.tracking_active and self.current_user_id:
                         self.sync_offline_data()
 
-                        # Send heartbeat every 4 hours (480 iterations * 30 seconds)
+                    # Heartbeat should always be sent when user is logged in,
+                    # regardless of tracking state (app is still running even if paused)
+                    if self.current_user_id and not self.current_user_id.startswith('anonymous_'):
                         heartbeat_counter += 1
                         if heartbeat_counter >= heartbeat_interval:
                             self._send_heartbeat()
@@ -5586,16 +5617,17 @@ class TimeTracker:
             if not self.current_user:
                 webbrowser.open(f'http://localhost:{self.web_port}/login')
 
-        def do_pause():
-            # Show selection popup first - user must select duration before pausing
-            self.show_pause_selection_popup()
+        # NOTE: Pause feature is disabled (not a confirmed feature yet)
+        # def do_pause():
+        #     # Show selection popup first - user must select duration before pausing
+        #     self.show_pause_selection_popup()
 
-        def do_resume():
-            self.resume_tracking()
-            self.add_admin_log('INFO', 'Tracking resumed from tray menu')
+        # def do_resume():
+        #     self.resume_tracking()
+        #     self.add_admin_log('INFO', 'Tracking resumed from tray menu')
 
-        def open_settings():
-            webbrowser.open(f'http://localhost:{self.web_port}/settings')
+        # def open_settings():
+        #     webbrowser.open(f'http://localhost:{self.web_port}/settings')
 
         # Build menu items list dynamically based on current state
         menu_items = [
@@ -5605,17 +5637,18 @@ class TimeTracker:
             )
         ]
 
-        # Add Pause option when tracking is active
-        if self.tracking_active:
-            menu_items.append(item('Pause Tracking', do_pause))
+        # NOTE: Pause feature is disabled (not a confirmed feature yet)
+        # # Add Pause option when tracking is active
+        # if self.tracking_active:
+        #     menu_items.append(item('Pause Tracking', do_pause))
 
-        # Add Resume option when paused
-        if self.pause_start_time is not None and self.running:
-            menu_items.append(item('Resume Tracking', do_resume))
+        # # Add Resume option when paused
+        # if self.pause_start_time is not None and self.running:
+        #     menu_items.append(item('Resume Tracking', do_resume))
 
-        # Always show Settings option
-        menu_items.append(pystray.Menu.SEPARATOR)
-        menu_items.append(item('Settings', open_settings))
+        # NOTE: Settings page only had pause options, disabled until new settings are added
+        # menu_items.append(pystray.Menu.SEPARATOR)
+        # menu_items.append(item('Settings', open_settings))
 
         return pystray.Menu(*menu_items)
 
@@ -6746,7 +6779,7 @@ class TimeTracker:
                 <p>Configure your Time Tracker preferences</p>
             </div>
             <div class="card-body">
-                <!-- Timed Pause Section -->
+                <!-- NOTE: Pause feature is disabled (not a confirmed feature yet)
                 <div class="setting-section">
                     <h3>&#9208; Pause Options</h3>
 
@@ -6789,7 +6822,6 @@ class TimeTracker:
                     </div>
                 </div>
 
-                <!-- Notifications Section -->
                 <div class="setting-section">
                     <h3>&#128276; Notifications</h3>
 
@@ -6824,6 +6856,7 @@ class TimeTracker:
                         <span>minutes</span>
                     </div>
                 </div>
+                -->
 
                 <div id="status-message" class="status-message"></div>
             </div>
@@ -7250,12 +7283,14 @@ class TimeTracker:
                     <button id="btn-stop" class="control-btn danger" onclick="controlAction('stop_tracking')">
                         &#9632; Stop Tracking
                     </button>
+                    <!-- NOTE: Pause feature is disabled (not a confirmed feature yet)
                     <button id="btn-pause" class="control-btn warning" onclick="controlAction('pause_tracking')">
                         &#9208; Pause Tracking
                     </button>
                     <button id="btn-resume" class="control-btn success" onclick="controlAction('resume_tracking')">
                         &#9654; Resume Tracking
                     </button>
+                    -->
                     <button class="control-btn secondary" onclick="controlAction('force_sync')">
                         &#128259; Force Sync
                     </button>
@@ -7445,13 +7480,14 @@ class TimeTracker:
                 .then(data => {
                     // Tracking status
                     const trackingEl = document.getElementById('tracking-status');
-                    if (data.is_paused) {
-                        // Format pause duration
-                        const pauseMins = Math.floor(data.pause_duration_seconds / 60);
-                        const pauseText = pauseMins > 0 ? ` (${pauseMins}m)` : '';
-                        trackingEl.textContent = 'Paused' + pauseText;
-                        trackingEl.className = 'status-value warning';
-                    } else if (data.is_idle) {
+                    // NOTE: Pause feature is disabled (not a confirmed feature yet)
+                    // if (data.is_paused) {
+                    //     const pauseMins = Math.floor(data.pause_duration_seconds / 60);
+                    //     const pauseText = pauseMins > 0 ? ` (${pauseMins}m)` : '';
+                    //     trackingEl.textContent = 'Paused' + pauseText;
+                    //     trackingEl.className = 'status-value warning';
+                    // } else
+                    if (data.is_idle) {
                         trackingEl.textContent = 'Idle';
                         trackingEl.className = 'status-value warning';
                     } else if (data.tracking_active) {
@@ -7504,13 +7540,13 @@ class TimeTracker:
                     document.getElementById('btn-start').disabled = data.running;
                     document.getElementById('btn-stop').disabled = !data.running;
 
-                    // Show pause when tracking is active, show resume when paused
-                    const btnPause = document.getElementById('btn-pause');
-                    const btnResume = document.getElementById('btn-resume');
-                    if (btnPause && btnResume) {
-                        btnPause.style.display = data.tracking_active ? 'inline-block' : 'none';
-                        btnResume.style.display = (data.is_paused && data.running) ? 'inline-block' : 'none';
-                    }
+                    // NOTE: Pause feature is disabled (not a confirmed feature yet)
+                    // const btnPause = document.getElementById('btn-pause');
+                    // const btnResume = document.getElementById('btn-resume');
+                    // if (btnPause && btnResume) {
+                    //     btnPause.style.display = data.tracking_active ? 'inline-block' : 'none';
+                    //     btnResume.style.display = (data.is_paused && data.running) ? 'inline-block' : 'none';
+                    // }
                 })
                 .catch(err => console.error('Error loading status:', err));
         }

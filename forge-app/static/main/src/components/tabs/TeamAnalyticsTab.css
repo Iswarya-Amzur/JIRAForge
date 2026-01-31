@@ -527,6 +527,98 @@
   color: var(--ds-text-subtle);
 }
 
+/* Clickable Trend Bars */
+.team-activity-trend .trend-bar-wrapper.clickable {
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.team-activity-trend .trend-bar-wrapper.clickable:hover {
+  transform: translateY(-2px);
+}
+
+.team-activity-trend .trend-bar-wrapper.clickable:hover .trend-bar {
+  background: #4a3feb;
+  box-shadow: 0 4px 12px rgba(102, 86, 252, 0.3);
+}
+
+.team-activity-trend .trend-bar-wrapper.clickable:hover .trend-bar.weekend {
+  background: #c5cad1;
+}
+
+.team-activity-trend .trend-bar-wrapper.selected {
+  transform: translateY(-2px);
+}
+
+.team-activity-trend .trend-bar-wrapper.selected .trend-bar {
+  background: #00875A;
+  box-shadow: 0 4px 12px rgba(0, 135, 90, 0.4);
+}
+
+.team-activity-trend .trend-bar-wrapper.selected .trend-bar.weekend {
+  background: #36B37E;
+}
+
+.team-activity-trend .trend-bar-wrapper.selected .trend-bar-day,
+.team-activity-trend .trend-bar-wrapper.selected .trend-bar-date {
+  color: #00875A;
+  font-weight: 700;
+}
+
+.team-activity-trend .trend-bar-wrapper.selected .trend-bar-value {
+  color: #00875A;
+}
+
+/* Clear Selection Button */
+.clear-selection-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid #DFE1E6;
+  border-radius: 4px;
+  background: #fff;
+  color: #6B778C;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-left: auto;
+}
+
+.clear-selection-btn:hover {
+  background: #F4F5F7;
+  border-color: #B3BAC5;
+  color: #172B4D;
+}
+
+.clear-selection-btn svg {
+  flex-shrink: 0;
+}
+
+/* Selected Day View in Team Member Table */
+.team-member-table.selected-day-view th:last-child,
+.team-member-table.selected-day-view td.hours-cell.single-day {
+  width: auto;
+  min-width: 180px;
+}
+
+.team-member-table.selected-day-view td.hours-cell.single-day {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.team-member-table.selected-day-view tr.no-activity td {
+  opacity: 0.6;
+}
+
+.team-member-table.selected-day-view .no-activity-label {
+  font-size: 11px;
+  color: #97A0AF;
+  font-weight: 400;
+}
+
 /* Time by Issue Section */
 .team-time-by-issue {
   margin-top: 0;
@@ -1024,3 +1116,4 @@
   height: 26px;
   font-size: 9px;
 }
+

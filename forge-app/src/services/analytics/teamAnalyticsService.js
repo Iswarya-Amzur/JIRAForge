@@ -6,6 +6,7 @@
 import { getSupabaseConfig, getOrCreateOrganization, supabaseRequest } from '../../utils/supabase.js';
 import { checkUserPermissions, isJiraAdmin } from '../../utils/jira.js';
 import { MAX_DAILY_SUMMARY_DAYS, MAX_ISSUES_IN_ANALYTICS } from '../../config/constants.js';
+import { isValidProjectKey } from '../../utils/validators.js';
 
 /**
  * Fetch project analytics data (Project Manager only)
@@ -15,6 +16,11 @@ import { MAX_DAILY_SUMMARY_DAYS, MAX_ISSUES_IN_ANALYTICS } from '../../config/co
  * @returns {Promise<Object>} Project analytics data
  */
 export async function fetchProjectAnalytics(accountId, cloudId, projectKey) {
+  // Validate project key format
+  if (!isValidProjectKey(projectKey)) {
+    throw new Error('Invalid project key format');
+  }
+
   // 1. Check Project Admin Permission or Jira Admin
   const isAdmin = await isJiraAdmin();
   const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS'], projectKey);
@@ -65,6 +71,11 @@ export async function fetchProjectAnalytics(accountId, cloudId, projectKey) {
  * @returns {Promise<Object>} Team analytics data for the project
  */
 export async function fetchProjectTeamAnalytics(accountId, cloudId, projectKey) {
+  // Validate project key format
+  if (!isValidProjectKey(projectKey)) {
+    throw new Error('Invalid project key format');
+  }
+
   // 1. Check Project Admin Permission or Jira Admin
   const isAdmin = await isJiraAdmin();
   const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS'], projectKey);
@@ -273,5 +284,234 @@ export async function fetchProjectTeamAnalytics(accountId, cloudId, projectKey) 
     scope: 'TEAM',
     projectKey,
     organizationId: organization.id
+  };
+}
+
+/**
+ * Fetch team day timeline data for visualization
+ * Returns screenshot timestamps grouped by user for a specific date
+ * Uses the optimized idx_screenshots_org_user_work_date index
+ * @param {string} accountId - Atlassian account ID
+ * @param {string} cloudId - Jira Cloud ID for organization filtering
+ * @param {string} projectKey - Jira Project Key (optional, filters by project if provided)
+ * @param {string} date - Date string in YYYY-MM-DD format
+ * @returns {Promise<Object>} Timeline data with users and their activity sessions
+ */
+export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date) {
+  // Validate date format
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error('Invalid date format. Expected YYYY-MM-DD');
+  }
+
+  // Validate project key if provided
+  if (projectKey && !isValidProjectKey(projectKey)) {
+    throw new Error('Invalid project key format');
+  }
+
+  // Check Project Admin Permission or Jira Admin
+  const isAdmin = await isJiraAdmin();
+  let hasPermission = isAdmin;
+  
+  if (!isAdmin && projectKey) {
+    const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS'], projectKey);
+    hasPermission = permissions.permissions?.ADMINISTER_PROJECTS?.havePermission;
+  }
+
+  if (!hasPermission) {
+    throw new Error('Access denied: You do not have permission to view team timeline');
+  }
+
+  const supabaseConfig = await getSupabaseConfig(accountId);
+  if (!supabaseConfig) {
+    throw new Error('Supabase not configured');
+  }
+
+  // Get organization
+  const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+  if (!organization) {
+    throw new Error('Unable to get organization information');
+  }
+
+  // Build query for screenshots on the specified date
+  // Uses idx_screenshots_org_user_work_date index for optimal performance
+  let query = `screenshots?organization_id=eq.${organization.id}&work_date=eq.${date}&deleted_at=is.null&select=user_id,timestamp,duration_seconds&order=user_id,timestamp.asc&limit=5000`;
+
+  const screenshots = await supabaseRequest(supabaseConfig, query);
+
+  // Fetch all users for display names
+  const allUsers = await supabaseRequest(
+    supabaseConfig,
+    `users?organization_id=eq.${organization.id}&select=id,display_name,email,desktop_logged_in,desktop_last_heartbeat`
+  );
+
+  // Group screenshots by user
+  const userTimelineMap = {};
+  
+  (screenshots || []).forEach(screenshot => {
+    const userId = screenshot.user_id;
+    
+    if (!userTimelineMap[userId]) {
+      const userInfo = (allUsers || []).find(u => u.id === userId);
+      userTimelineMap[userId] = {
+        userId,
+        displayName: userInfo?.display_name || userInfo?.email || 'Unknown User',
+        desktopLoggedIn: userInfo?.desktop_logged_in || false,
+        lastHeartbeat: userInfo?.desktop_last_heartbeat,
+        sessions: []
+      };
+    }
+    
+    // Add session with timestamp and duration
+    const timestamp = new Date(screenshot.timestamp);
+    userTimelineMap[userId].sessions.push({
+      timestamp: screenshot.timestamp,
+      hour: timestamp.getHours(),
+      minute: timestamp.getMinutes(),
+      durationSeconds: screenshot.duration_seconds || 300 // Default 5 min if not set
+    });
+  });
+
+  // Convert to array and calculate stats
+  const userTimelines = Object.values(userTimelineMap).map(user => {
+    // Calculate total tracked time for the day
+    const totalSeconds = user.sessions.reduce((sum, s) => sum + s.durationSeconds, 0);
+    const totalHours = Math.round(totalSeconds / 3600 * 10) / 10;
+    
+    // Find first and last activity
+    const firstSession = user.sessions[0];
+    const lastSession = user.sessions[user.sessions.length - 1];
+    
+    return {
+      ...user,
+      totalHours,
+      totalSessions: user.sessions.length,
+      firstActivity: firstSession?.timestamp,
+      lastActivity: lastSession?.timestamp
+    };
+  });
+
+  // Sort by total hours (most active first)
+  userTimelines.sort((a, b) => b.totalHours - a.totalHours);
+
+  // Also include users who haven't tracked time but are in the organization
+  const usersWithActivity = new Set(userTimelines.map(u => u.userId));
+  const inactiveUsers = (allUsers || [])
+    .filter(u => !usersWithActivity.has(u.id))
+    .map(u => ({
+      userId: u.id,
+      displayName: u.display_name || u.email || 'Unknown User',
+      desktopLoggedIn: u.desktop_logged_in || false,
+      lastHeartbeat: u.desktop_last_heartbeat,
+      sessions: [],
+      totalHours: 0,
+      totalSessions: 0,
+      firstActivity: null,
+      lastActivity: null
+    }));
+
+  return {
+    date,
+    projectKey: projectKey || null,
+    organizationId: organization.id,
+    usersWithActivity: userTimelines,
+    usersWithoutActivity: inactiveUsers,
+    totalUsers: userTimelines.length + inactiveUsers.length,
+    activeUsers: userTimelines.length
+  };
+}
+
+/**
+ * Fetch current user's own day timeline data for visualization
+ * Available to ALL users - shows only their own data
+ * Uses the optimized idx_screenshots_org_user_work_date index
+ * @param {string} accountId - Atlassian account ID
+ * @param {string} cloudId - Jira Cloud ID for organization filtering
+ * @param {string} date - Date string in YYYY-MM-DD format
+ * @returns {Promise<Object>} Timeline data for the current user
+ */
+export async function fetchMyDayTimeline(accountId, cloudId, date) {
+  // Validate date format
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error('Invalid date format. Expected YYYY-MM-DD');
+  }
+
+  const supabaseConfig = await getSupabaseConfig(accountId);
+  if (!supabaseConfig) {
+    throw new Error('Supabase not configured');
+  }
+
+  // Get organization
+  const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+  if (!organization) {
+    throw new Error('Unable to get organization information');
+  }
+
+  // Get current user's ID from their Supabase record
+  const currentUser = await supabaseRequest(
+    supabaseConfig,
+    `users?organization_id=eq.${organization.id}&atlassian_account_id=eq.${accountId}&select=id,display_name,email&limit=1`
+  );
+
+  if (!currentUser || currentUser.length === 0) {
+    // User not found, return empty timeline
+    return {
+      date,
+      userId: null,
+      displayName: 'Unknown User',
+      sessions: [],
+      totalHours: 0,
+      totalSessions: 0,
+      firstActivity: null,
+      lastActivity: null
+    };
+  }
+
+  const userId = currentUser[0].id;
+  const displayName = currentUser[0].display_name || currentUser[0].email || 'User';
+
+  // Fetch screenshots for current user on the specified date
+  // Uses idx_screenshots_org_user_work_date index for optimal performance
+  const screenshots = await supabaseRequest(
+    supabaseConfig,
+    `screenshots?organization_id=eq.${organization.id}&user_id=eq.${userId}&work_date=eq.${date}&deleted_at=is.null&select=timestamp,duration_seconds&order=timestamp.asc&limit=500`
+  );
+
+  if (!screenshots || screenshots.length === 0) {
+    return {
+      date,
+      userId,
+      displayName,
+      sessions: [],
+      totalHours: 0,
+      totalSessions: 0,
+      firstActivity: null,
+      lastActivity: null
+    };
+  }
+
+  // Build sessions array
+  const sessions = screenshots.map(screenshot => {
+    const timestamp = new Date(screenshot.timestamp);
+    return {
+      timestamp: screenshot.timestamp,
+      hour: timestamp.getHours(),
+      minute: timestamp.getMinutes(),
+      durationSeconds: screenshot.duration_seconds || 300
+    };
+  });
+
+  // Calculate stats
+  const totalSeconds = sessions.reduce((sum, s) => sum + s.durationSeconds, 0);
+  const totalHours = Math.round(totalSeconds / 3600 * 10) / 10;
+
+  return {
+    date,
+    userId,
+    displayName,
+    sessions,
+    totalHours,
+    totalSessions: sessions.length,
+    firstActivity: sessions[0]?.timestamp || null,
+    lastActivity: sessions[sessions.length - 1]?.timestamp || null
   };
 }

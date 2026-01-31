@@ -4,6 +4,7 @@
  */
 
 import { getAssignedIssues, updateAssignedIssuesCache, getActiveIssuesWithTime, getAvailableTransitions, updateIssueStatus, reassignSession, getSessionScreenshots } from '../services/issueService.js';
+import { isValidIssueKey, isValidInteger } from '../utils/validators.js';
 
 /**
  * Register issue resolvers
@@ -96,10 +97,10 @@ export function registerIssueResolvers(resolver) {
     const { payload } = req;
     const { issueKey } = payload;
 
-    if (!issueKey) {
+    if (!issueKey || !isValidIssueKey(issueKey)) {
       return {
         success: false,
-        error: 'Issue key is required',
+        error: 'Valid issue key is required (e.g., PROJ-123)',
         transitions: []
       };
     }
@@ -129,10 +130,17 @@ export function registerIssueResolvers(resolver) {
     const { payload } = req;
     const { issueKey, transitionId } = payload;
 
-    if (!issueKey || !transitionId) {
+    if (!issueKey || !isValidIssueKey(issueKey)) {
       return {
         success: false,
-        error: 'Issue key and transition ID are required'
+        error: 'Valid issue key is required (e.g., PROJ-123)'
+      };
+    }
+
+    if (!transitionId || !isValidInteger(transitionId, 1, 99999)) {
+      return {
+        success: false,
+        error: 'Valid transition ID is required'
       };
     }
 

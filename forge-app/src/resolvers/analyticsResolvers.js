@@ -3,7 +3,7 @@
  * Resolver definitions for time analytics endpoints
  */
 
-import { fetchTimeAnalytics, fetchTimeAnalyticsBatch, fetchAllAnalytics, fetchProjectAnalytics, fetchProjectTeamAnalytics } from '../services/analyticsService.js';
+import { fetchTimeAnalytics, fetchTimeAnalyticsBatch, fetchAllAnalytics, fetchProjectAnalytics, fetchProjectTeamAnalytics, fetchTeamDayTimeline, fetchMyDayTimeline } from '../services/analyticsService.js';
 
 // Feature flag for using batch API (set to true for production)
 const USE_BATCH_API = true;
@@ -105,6 +105,58 @@ export function registerAnalyticsResolvers(resolver) {
       };
     } catch (error) {
       console.error('Error fetching team analytics:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  });
+
+  /**
+   * Resolver for fetching team day timeline (Project Admin only)
+   * Returns screenshot timestamps for timeline visualization
+   * Cost-efficient: uses indexed work_date column, minimal data transfer
+   */
+  resolver.define('getTeamDayTimeline', async (req) => {
+    const { payload, context } = req;
+    const { projectKey, date } = payload;
+    const accountId = context.accountId;
+    const cloudId = context.cloudId;
+
+    try {
+      const data = await fetchTeamDayTimeline(accountId, cloudId, projectKey, date);
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      console.error('Error fetching team day timeline:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  });
+
+  /**
+   * Resolver for fetching current user's own day timeline (Available to ALL users)
+   * Returns the current user's screenshot timestamps for timeline visualization
+   * Cost-efficient: uses indexed work_date column, minimal data transfer
+   */
+  resolver.define('getMyDayTimeline', async (req) => {
+    const { payload, context } = req;
+    const { date } = payload;
+    const accountId = context.accountId;
+    const cloudId = context.cloudId;
+
+    try {
+      const data = await fetchMyDayTimeline(accountId, cloudId, date);
+      return {
+        success: true,
+        data
+      };
+    } catch (error) {
+      console.error('Error fetching my day timeline:', error);
       return {
         success: false,
         error: error.message

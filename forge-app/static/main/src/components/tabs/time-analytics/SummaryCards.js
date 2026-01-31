@@ -5,8 +5,9 @@ import { normalizeDate, formatLocalDate, getMonthStr } from './dateUtils';
 /**
  * Summary Cards Component
  * Displays Today's, Week's, and Month's total time
+ * Cards are clickable to switch between Day/Week/Month views
  */
-function SummaryCards({ loading, timeData }) {
+function SummaryCards({ loading, timeData, activeView, onViewChange }) {
   const calculateTodayTotal = () => {
     const today = new Date();
     const todayStr = formatLocalDate(today);
@@ -53,7 +54,13 @@ function SummaryCards({ loading, timeData }) {
 
   return (
     <div className="analytics-summary-cards">
-      <div className="analytics-card cumulative-card">
+      <div 
+        className={`analytics-card cumulative-card clickable ${activeView === 'day' ? 'active' : ''}`}
+        onClick={() => onViewChange && onViewChange('day')}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === 'Enter' && onViewChange && onViewChange('day')}
+      >
         <div className="card-icon" style={{ background: '#667eea' }}>
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="10"></circle>
@@ -72,7 +79,13 @@ function SummaryCards({ loading, timeData }) {
         </div>
       </div>
 
-      <div className="analytics-card cumulative-card">
+      <div 
+        className={`analytics-card cumulative-card clickable ${activeView === 'week' ? 'active' : ''}`}
+        onClick={() => onViewChange && onViewChange('week')}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === 'Enter' && onViewChange && onViewChange('week')}
+      >
         <div className="card-icon" style={{ background: '#f5576c' }}>
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
@@ -93,7 +106,13 @@ function SummaryCards({ loading, timeData }) {
         </div>
       </div>
 
-      <div className="analytics-card cumulative-card">
+      <div 
+        className={`analytics-card cumulative-card clickable ${activeView === 'month' ? 'active' : ''}`}
+        onClick={() => onViewChange && onViewChange('month')}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === 'Enter' && onViewChange && onViewChange('month')}
+      >
         <div className="card-icon" style={{ background: '#4facfe' }}>
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>

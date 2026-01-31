@@ -72,29 +72,12 @@ function TimeAnalyticsTab() {
         </div>
       </div>
 
-      <SummaryCards loading={loading} timeData={timeData} />
-
-      {/* Timesheet View Tabs */}
-      <div className="timesheet-tabs">
-        <button
-          className={`timesheet-tab ${timesheetView === 'day' ? 'active' : ''}`}
-          onClick={() => setTimesheetView('day')}
-        >
-          Day
-        </button>
-        <button
-          className={`timesheet-tab ${timesheetView === 'week' ? 'active' : ''}`}
-          onClick={() => setTimesheetView('week')}
-        >
-          Week
-        </button>
-        <button
-          className={`timesheet-tab ${timesheetView === 'month' ? 'active' : ''}`}
-          onClick={() => setTimesheetView('month')}
-        >
-          Month
-        </button>
-      </div>
+      <SummaryCards 
+        loading={loading} 
+        timeData={timeData} 
+        activeView={timesheetView}
+        onViewChange={setTimesheetView}
+      />
 
       {/* Timesheet Content */}
       <div className="timesheet-content">

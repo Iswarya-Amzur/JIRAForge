@@ -68,7 +68,7 @@ export async function getActiveIssuesWithTime(accountId, cloudId) {
   // Fetch time tracking data for all issues
   const timeTrackingData = await supabaseRequest(
     supabaseConfig,
-    `analysis_results?user_id=eq.${userId}&organization_id=eq.${organization.id}&work_type=eq.office&active_task_key=not.is.null&select=id,screenshot_id,active_task_key,created_at,screenshots(id,timestamp,duration_seconds,storage_path,window_title,application_name)&order=created_at.desc&limit=1000`
+    `analysis_results?user_id=eq.${userId}&organization_id=eq.${organization.id}&work_type=eq.office&active_task_key=not.is.null&select=id,screenshot_id,active_task_key,created_at,screenshots(id,timestamp,duration_seconds,storage_path,window_title,application_name,work_date)&order=created_at.desc&limit=1000`
   );
 
   // Aggregate time by issue key and build work sessions
@@ -148,7 +148,7 @@ export async function getActiveIssuesWithTime(accountId, cloudId) {
           startTime: startTime.toISOString(),
           endTime: endTime.toISOString(),
           duration: timeSpent,
-          date: startTime.toISOString().split('T')[0],
+          date: entry.screenshots?.work_date || startTime.toISOString().split('T')[0],
           analysisResultIds: [entry.id],
           screenshots: []
         };
