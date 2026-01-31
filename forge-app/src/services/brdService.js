@@ -6,6 +6,7 @@
 import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, supabaseRequest, uploadToSupabaseStorage } from '../utils/supabase.js';
 import { createJiraIssue } from '../utils/jira.js';
 import { ALLOWED_BRD_FILE_TYPES } from '../config/constants.js';
+import { isValidUUID, isValidProjectKey } from '../utils/validators.js';
 
 /**
  * Upload BRD document to Supabase
@@ -88,6 +89,14 @@ export async function uploadBRDDocument(accountId, cloudId, fileName, fileType, 
  * @returns {Promise<Object>} Created issues metadata
  */
 export async function createIssuesFromBRD(accountId, documentId, projectKey) {
+  // Validate inputs
+  if (!isValidUUID(documentId)) {
+    throw new Error('Invalid document ID format');
+  }
+  if (!isValidProjectKey(projectKey)) {
+    throw new Error('Invalid project key format');
+  }
+
   const supabaseConfig = await getSupabaseConfig(accountId);
   if (!supabaseConfig) {
     throw new Error('Supabase not configured. Please configure in Settings.');
@@ -226,6 +235,11 @@ export async function createIssuesFromBRD(accountId, documentId, projectKey) {
  * @returns {Promise<Object>} Document data
  */
 export async function getBRDStatus(accountId, cloudId, documentId) {
+  // Validate documentId format
+  if (!isValidUUID(documentId)) {
+    throw new Error('Invalid document ID format');
+  }
+
   const supabaseConfig = await getSupabaseConfig(accountId);
   if (!supabaseConfig) {
     throw new Error('Supabase not configured. Please configure in Settings.');

@@ -5,6 +5,7 @@
 
 import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, supabaseRequest, generateSignedUrl } from '../../utils/supabase.js';
 import { formatDuration } from '../../utils/formatters.js';
+import { isValidUUID, isValidDate, sanitizeUUIDArray, toSafeInteger } from '../../utils/validators.js';
 
 /**
  * Get unassigned work sessions for current user
@@ -12,7 +13,11 @@ import { formatDuration } from '../../utils/formatters.js';
 export async function getUnassignedWork(req) {
   try {
     const { accountId, cloudId } = req.context;
-    const { limit, offset, dateFrom, dateTo } = req.payload || {};
+    const { limit: rawLimit, offset: rawOffset, dateFrom, dateTo } = req.payload || {};
+
+    // Validate pagination parameters
+    const limit = toSafeInteger(rawLimit, 50, 1, 500);
+    const offset = toSafeInteger(rawOffset, 0, 0, 100000);
 
     const supabaseConfig = await getSupabaseConfig(accountId);
     if (!supabaseConfig) {
@@ -30,10 +35,9 @@ export async function getUnassignedWork(req) {
     // Build query string - filter by organization_id for multi-tenancy
     let query = `analysis_results?select=*,screenshots(id,window_title,application_name,timestamp,thumbnail_url,storage_path)&user_id=eq.${userId}&organization_id=eq.${organization.id}&active_task_key=is.null&order=created_at.desc`;
 
-    if (limit) query += `&limit=${limit}`;
-    if (offset) query += `&offset=${offset}`;
-    if (dateFrom) query += `&created_at=gte.${dateFrom}`;
-    if (dateTo) query += `&created_at=lte.${dateTo}`;
+    query += `&limit=${limit}&offset=${offset}`;
+    if (dateFrom && isValidDate(dateFrom)) query += `&created_at=gte.${dateFrom}`;
+    if (dateTo && isValidDate(dateTo)) query += `&created_at=lte.${dateTo}`;
 
     const results = await supabaseRequest(supabaseConfig, query);
 
@@ -68,7 +72,11 @@ export async function getUnassignedWork(req) {
 export async function getUnassignedGroups(req) {
   try {
     const { accountId, cloudId } = req.context;
-    const { limit = 10, offset = 0 } = req.payload || {};
+    const { limit: rawLimit = 10, offset: rawOffset = 0 } = req.payload || {};
+
+    // Validate pagination parameters
+    const limit = toSafeInteger(rawLimit, 10, 1, 100);
+    const offset = toSafeInteger(rawOffset, 0, 0, 100000);
 
     const supabaseConfig = await getSupabaseConfig(accountId);
     if (!supabaseConfig) {
@@ -158,8 +166,8 @@ export async function getGroupDetails(req) {
     const { accountId, cloudId } = req.context;
     const { groupId } = req.payload;
 
-    if (!groupId) {
-      return { success: false, error: 'Group ID required' };
+    if (!groupId || !isValidUUID(groupId)) {
+      return { success: false, error: 'Valid Group ID required' };
     }
 
     const supabaseConfig = await getSupabaseConfig(accountId);
@@ -229,10 +237,12 @@ export async function getGroupScreenshots(req) {
     const { accountId, cloudId } = req.context;
     const { sessionIds } = req.payload;
 
-    console.log(`[getGroupScreenshots] Received ${sessionIds?.length || 0} session IDs`);
+    // Validate sessionIds as UUID array
+    const validSessionIds = sanitizeUUIDArray(sessionIds);
+    console.log(`[getGroupScreenshots] Received ${sessionIds?.length || 0} session IDs, ${validSessionIds.length} valid`);
 
-    if (!sessionIds || !Array.isArray(sessionIds) || sessionIds.length === 0) {
-      return { success: false, error: 'No session IDs provided' };
+    if (validSessionIds.length === 0) {
+      return { success: false, error: 'No valid session IDs provided' };
     }
 
     const supabaseConfig = await getSupabaseConfig(accountId);
@@ -250,8 +260,8 @@ export async function getGroupScreenshots(req) {
 
     // Get unassigned_activity records with their screenshot information
     // IMPORTANT: Use screenshots.duration_seconds (source of truth) instead of time_spent_seconds (stale)
-    const sessionIdsParam = sessionIds.join(',');
-    console.log(`[getGroupScreenshots] Querying unassigned_activity with ${sessionIds.length} IDs`);
+    const sessionIdsParam = validSessionIds.join(',');
+    console.log(`[getGroupScreenshots] Querying unassigned_activity with ${validSessionIds.length} IDs`);
     const activities = await supabaseRequest(
       supabaseConfig,
       `unassigned_activity?id=in.(${sessionIdsParam})&user_id=eq.${userId}&select=id,analysis_result_id,window_title,application_name,timestamp,screenshot_id,screenshots(duration_seconds)`
@@ -266,7 +276,7 @@ export async function getGroupScreenshots(req) {
 
     // Get analysis_result_ids to fetch screenshot details
     const activitiesArray = Array.isArray(activities) ? activities : [activities];
-    const analysisResultIds = activitiesArray.map(a => a.analysis_result_id).filter(Boolean);
+    const analysisResultIds = sanitizeUUIDArray(activitiesArray.map(a => a.analysis_result_id));
 
     console.log(`[getGroupScreenshots] Found ${analysisResultIds.length} analysis_result_ids`);
 
@@ -370,10 +380,12 @@ export async function getGroupWorkSessions(req) {
     const { accountId, cloudId } = req.context;
     const { sessionIds } = req.payload;
 
-    console.log(`[getGroupWorkSessions] Received ${sessionIds?.length || 0} session IDs`);
+    // Validate sessionIds as UUID array
+    const validSessionIds = sanitizeUUIDArray(sessionIds);
+    console.log(`[getGroupWorkSessions] Received ${sessionIds?.length || 0} session IDs, ${validSessionIds.length} valid`);
 
-    if (!sessionIds || !Array.isArray(sessionIds) || sessionIds.length === 0) {
-      return { success: false, error: 'No session IDs provided' };
+    if (validSessionIds.length === 0) {
+      return { success: false, error: 'No valid session IDs provided' };
     }
 
     const supabaseConfig = await getSupabaseConfig(accountId);
@@ -390,10 +402,10 @@ export async function getGroupWorkSessions(req) {
     const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
 
     // Get unassigned_activity records with screenshot timing data
-    const sessionIdsParam = sessionIds.join(',');
+    const sessionIdsParam = validSessionIds.join(',');
     const activities = await supabaseRequest(
       supabaseConfig,
-      `unassigned_activity?id=in.(${sessionIdsParam})&user_id=eq.${userId}&select=id,analysis_result_id,window_title,application_name,timestamp,screenshot_id,screenshots(id,timestamp,start_time,end_time,duration_seconds,storage_path)&order=timestamp.asc`
+      `unassigned_activity?id=in.(${sessionIdsParam})&user_id=eq.${userId}&select=id,analysis_result_id,window_title,application_name,timestamp,screenshot_id,screenshots(id,timestamp,start_time,end_time,duration_seconds,storage_path,work_date)&order=timestamp.asc`
     );
 
     if (!activities || activities.length === 0) {
@@ -446,7 +458,7 @@ export async function getGroupWorkSessions(req) {
       workSessions.push({
         startTime: startTime.toISOString(),
         endTime: endTime.toISOString(),
-        date: startTime.toISOString().split('T')[0],
+        date: screenshot.work_date || startTime.toISOString().split('T')[0],
         activityIds: [activity.id],
         screenshotIds: [screenshot.id],
         // Track actual duration from screenshot (not time span)

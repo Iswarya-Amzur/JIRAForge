@@ -4,6 +4,7 @@
  */
 
 import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, supabaseRequest, generateSignedUrl } from '../../utils/supabase.js';
+import { isValidUUID, isValidIssueKey, sanitizeUUIDArray } from '../../utils/validators.js';
 
 /**
  * Reassign a work session from one issue to another
@@ -17,6 +18,20 @@ import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, supabaseRe
  * @returns {Promise<Object>} Reassignment result
  */
 export async function reassignSession(accountId, cloudId, analysisResultIds, fromIssueKey, toIssueKey, totalSeconds) {
+  // Validate inputs
+  const validResultIds = sanitizeUUIDArray(analysisResultIds);
+  if (validResultIds.length === 0) {
+    throw new Error('No valid analysis result IDs to reassign');
+  }
+
+  if (!isValidIssueKey(fromIssueKey)) {
+    throw new Error('Invalid fromIssueKey format');
+  }
+
+  if (!isValidIssueKey(toIssueKey)) {
+    throw new Error('Invalid toIssueKey format');
+  }
+
   const supabaseConfig = await getSupabaseConfig(accountId);
   if (!supabaseConfig) {
     throw new Error('Supabase not configured. Please configure in Settings.');
@@ -34,12 +49,7 @@ export async function reassignSession(accountId, cloudId, analysisResultIds, fro
     throw new Error('Unable to get user information');
   }
 
-  // Validate that analysisResultIds is a non-empty array
-  if (!analysisResultIds || !Array.isArray(analysisResultIds) || analysisResultIds.length === 0) {
-    throw new Error('No analysis results to reassign');
-  }
-
-  console.log(`[Reassign] Reassigning ${analysisResultIds.length} records (${totalSeconds}s) from ${fromIssueKey} to ${toIssueKey}`);
+  console.log(`[Reassign] Reassigning ${validResultIds.length} records (${totalSeconds}s) from ${fromIssueKey} to ${toIssueKey}`);
 
   // Extract project key from toIssueKey (e.g., SCRUM-5 -> SCRUM)
   const toProjectKey = toIssueKey.split('-')[0];
@@ -48,7 +58,7 @@ export async function reassignSession(accountId, cloudId, analysisResultIds, fro
   let successCount = 0;
   let errorCount = 0;
 
-  for (const resultId of analysisResultIds) {
+  for (const resultId of validResultIds) {
     try {
       await supabaseRequest(
         supabaseConfig,
@@ -112,15 +122,16 @@ export async function getSessionScreenshots(accountId, cloudId, analysisResultId
     throw new Error('Unable to get user information');
   }
 
-  // Validate analysisResultIds
-  if (!analysisResultIds || !Array.isArray(analysisResultIds) || analysisResultIds.length === 0) {
-    throw new Error('No analysis results provided');
+  // Validate analysisResultIds as UUIDs
+  const validIds = sanitizeUUIDArray(analysisResultIds);
+  if (validIds.length === 0) {
+    throw new Error('No valid analysis result IDs provided');
   }
 
-  console.log(`[getSessionScreenshots] Fetching screenshots for ${analysisResultIds.length} analysis results`);
+  console.log(`[getSessionScreenshots] Fetching screenshots for ${validIds.length} analysis results`);
 
   // Fetch analysis_results with screenshot data
-  const analysisIdsParam = analysisResultIds.join(',');
+  const analysisIdsParam = validIds.join(',');
   const analysisResults = await supabaseRequest(
     supabaseConfig,
     `analysis_results?id=in.(${analysisIdsParam})&user_id=eq.${userId}&organization_id=eq.${organization.id}&select=id,screenshot_id,screenshots(id,timestamp,storage_path,thumbnail_url,window_title,application_name)`

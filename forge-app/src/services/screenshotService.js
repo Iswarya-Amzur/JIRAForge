@@ -6,6 +6,7 @@
 import { fetch } from '@forge/api';
 import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, supabaseRequest, generateSignedUrl } from '../utils/supabase.js';
 import { DEFAULT_PAGINATION_LIMIT, DEFAULT_PAGINATION_OFFSET } from '../config/constants.js';
+import { isValidUUID, toSafeInteger } from '../utils/validators.js';
 
 /**
  * Fetch screenshots for a user with pagination
@@ -15,7 +16,11 @@ import { DEFAULT_PAGINATION_LIMIT, DEFAULT_PAGINATION_OFFSET } from '../config/c
  * @param {number} offset - Pagination offset
  * @returns {Promise<Object>} Screenshots data with pagination info
  */
-export async function fetchScreenshots(accountId, cloudId, limit = DEFAULT_PAGINATION_LIMIT, offset = DEFAULT_PAGINATION_OFFSET) {
+export async function fetchScreenshots(accountId, cloudId, rawLimit = DEFAULT_PAGINATION_LIMIT, rawOffset = DEFAULT_PAGINATION_OFFSET) {
+  // Validate pagination parameters
+  const limit = toSafeInteger(rawLimit, DEFAULT_PAGINATION_LIMIT, 1, 200);
+  const offset = toSafeInteger(rawOffset, DEFAULT_PAGINATION_OFFSET, 0, 100000);
+
   const supabaseConfig = await getSupabaseConfig(accountId);
   if (!supabaseConfig) {
     throw new Error('Supabase not configured. Please configure in Settings.');
@@ -129,6 +134,11 @@ export async function fetchScreenshots(accountId, cloudId, limit = DEFAULT_PAGIN
  * @returns {Promise<void>}
  */
 export async function deleteScreenshot(accountId, cloudId, screenshotId) {
+  // Validate screenshotId format
+  if (!isValidUUID(screenshotId)) {
+    throw new Error('Invalid screenshot ID format');
+  }
+
   const supabaseConfig = await getSupabaseConfig(accountId);
   if (!supabaseConfig) {
     throw new Error('Supabase not configured. Please configure in Settings.');

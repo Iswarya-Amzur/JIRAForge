@@ -101,7 +101,11 @@ function AssignmentModal({
       });
 
       if (result.success) {
-        alert(`Successfully assigned ${result.assigned_count} session(s) to ${result.issue_key}`);
+        let message = `Successfully assigned ${result.assigned_count} session(s) to ${result.issue_key}`;
+        if (result.worklog_skipped) {
+          message += `\n\nNote: Worklog was not created because ${result.worklog_skipped_reason}. The work session has been linked to the issue but no time was logged in Jira.`;
+        }
+        alert(message);
         onClose();
         onAssignmentComplete();
       } else {
@@ -146,7 +150,11 @@ function AssignmentModal({
       });
 
       if (result.success) {
-        alert(`Successfully created issue ${result.issue_key} and assigned ${result.assigned_count} session(s)`);
+        let message = `Successfully created issue ${result.issue_key} and assigned ${result.assigned_count} session(s)`;
+        if (result.worklog_skipped) {
+          message += `\n\nNote: Worklog was not created because ${result.worklog_skipped_reason}. The issue was created but no time was logged.`;
+        }
+        alert(message);
         onClose();
         onAssignmentComplete();
       } else {
@@ -213,6 +221,12 @@ function AssignmentModal({
               </label>
               <div className="time-preview">
                 Time to log: <strong>{selectedGroup.total_time_formatted}</strong>
+                {selectedGroup.total_seconds < 60 && (
+                  <div className="time-warning">
+                    Note: Time is under 1 minute. Jira requires at least 60 seconds to log a worklog.
+                    The work will be linked to the issue but no time will be logged.
+                  </div>
+                )}
               </div>
               <button
                 className="submit-button"
@@ -309,6 +323,12 @@ function AssignmentModal({
 
               <div className="time-preview">
                 Time to log: <strong>{selectedGroup.total_time_formatted}</strong>
+                {selectedGroup.total_seconds < 60 && (
+                  <div className="time-warning">
+                    Note: Time is under 1 minute. Jira requires at least 60 seconds to log a worklog.
+                    The issue will be created but no time will be logged.
+                  </div>
+                )}
               </div>
 
               <button

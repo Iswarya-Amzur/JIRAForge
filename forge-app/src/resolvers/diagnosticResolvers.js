@@ -4,6 +4,7 @@
  */
 
 import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, supabaseRequest } from '../utils/supabase.js';
+import { isValidDate } from '../utils/validators.js';
 
 /**
  * Register diagnostic resolvers
@@ -19,6 +20,14 @@ export function registerDiagnosticResolvers(resolver) {
     const { targetDate } = payload; // Expected format: 'YYYY-MM-DD'
     const accountId = context.accountId;
     const cloudId = context.cloudId;  // Multi-tenancy: Get Jira Cloud ID from context
+
+    // Validate date format
+    if (!targetDate || !isValidDate(targetDate)) {
+      return {
+        success: false,
+        error: 'Valid target date required (YYYY-MM-DD format)'
+      };
+    }
 
     try {
       const supabaseConfig = await getSupabaseConfig(accountId);

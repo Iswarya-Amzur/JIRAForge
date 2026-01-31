@@ -11,6 +11,7 @@ function TeamAnalyticsTab() {
   const [error, setError] = useState(null);
   const [teamAnalytics, setTeamAnalytics] = useState(null);
   const [issueViewMode, setIssueViewMode] = useState('list'); // 'list' or 'grid'
+  const [selectedTrendDay, setSelectedTrendDay] = useState(null); // Selected day from Activity Trend
 
   const getInitials = (name) => {
     if (!name) return '?';
@@ -44,6 +45,7 @@ function TeamAnalyticsTab() {
     if (!selectedProjectKey) return;
     setLoading(true);
     setError(null);
+    setSelectedTrendDay(null); // Reset selected day when loading new data
     try {
       const result = await invoke('getProjectTeamAnalytics', { projectKey: selectedProjectKey });
       if (result.success) {
@@ -56,6 +58,70 @@ function TeamAnalyticsTab() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Handle clicking on a trend bar - show that day's member breakdown
+  const handleTrendBarClick = (day) => {
+    if (selectedTrendDay?.date === day.date) {
+      // Clicking same day again clears selection
+      setSelectedTrendDay(null);
+    } else {
+      setSelectedTrendDay(day);
+    }
+  };
+
+  // Get member activity for a specific selected day
+  const getSelectedDayMemberActivity = () => {
+    if (!selectedTrendDay || !teamAnalytics?.teamDailySummary) {
+      return null;
+    }
+
+    const selectedDate = selectedTrendDay.date;
+    const allUsers = new Set();
+
+    // Get all users from the regular member activity
+    (teamAnalytics.teamMemberActivity || []).forEach(m => {
+      allUsers.add(m.userId);
+    });
+
+    // Filter daily summary for the selected date
+    const dayData = teamAnalytics.teamDailySummary.filter(d => {
+      const workDate = typeof d.work_date === 'string' ? d.work_date.split('T')[0] : String(d.work_date);
+      return workDate === selectedDate;
+    });
+
+    // Add any users from the day data
+    dayData.forEach(d => allUsers.add(d.user_id));
+
+    // Calculate hours per user for this specific day
+    const memberData = Array.from(allUsers).map(userId => {
+      const memberInfo = (teamAnalytics.teamMemberActivity || []).find(m => m.userId === userId);
+      const displayName = memberInfo?.displayName || 'Unknown User';
+
+      const userDayData = dayData.filter(d => d.user_id === userId);
+      const totalSeconds = userDayData.reduce((sum, d) => sum + (d.total_seconds || 0), 0);
+      const hours = Math.round(totalSeconds / 3600 * 10) / 10;
+
+      return {
+        userId,
+        displayName,
+        hours
+      };
+    });
+
+    // Sort by hours (descending)
+    return memberData.sort((a, b) => b.hours - a.hours);
+  };
+
+  // Format selected day for display
+  const formatSelectedDay = () => {
+    if (!selectedTrendDay) return '';
+    const date = new Date(selectedTrendDay.date + 'T00:00:00');
+    return date.toLocaleDateString('en-US', { 
+      weekday: 'long', 
+      month: 'short', 
+      day: 'numeric' 
+    });
   };
 
   return (
@@ -186,13 +252,21 @@ function TeamAnalyticsTab() {
                           ? Math.max(8, Math.round((day.totalHours / maxHours) * maxBarHeight))
                           : 0;
                         const isWeekend = day.dayOfWeek === 'Sat' || day.dayOfWeek === 'Sun';
+                        const isSelected = selectedTrendDay?.date === day.date;
                         return (
-                          <div key={idx} className="trend-bar-wrapper">
+                          <div 
+                            key={idx} 
+                            className={`trend-bar-wrapper clickable ${isSelected ? 'selected' : ''}`}
+                            onClick={() => handleTrendBarClick(day)}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => e.key === 'Enter' && handleTrendBarClick(day)}
+                          >
                             <span className="trend-bar-value">{day.totalHours > 0 ? `${day.totalHours}h` : '\u00A0'}</span>
                             <div
-                              className={`trend-bar ${day.totalHours === 0 ? 'empty-bar' : ''} ${isWeekend ? 'weekend' : ''}`}
+                              className={`trend-bar ${day.totalHours === 0 ? 'empty-bar' : ''} ${isWeekend ? 'weekend' : ''} ${isSelected ? 'selected' : ''}`}
                               style={{ height: `${barHeight}px` }}
-                              title={`${day.date}: ${day.totalHours}h`}
+                              title={`${day.date}: ${day.totalHours}h - Click to see member breakdown`}
                             >
                             </div>
                             <div className="trend-bar-labels">
@@ -218,48 +292,111 @@ function TeamAnalyticsTab() {
                   <div className="section-info-wrapper">
                     <span className="section-info-icon">i</span>
                     <span className="section-info-tooltip">
-                      Breakdown of hours tracked by each team member for today, this week (Mon-Sun), and this month.
+                      {selectedTrendDay 
+                        ? `Hours tracked by each team member on ${formatSelectedDay()}`
+                        : 'Breakdown of hours tracked by each team member for today, this week (Mon-Sun), and this month.'
+                      }
                     </span>
                   </div>
+                  {selectedTrendDay && (
+                    <button 
+                      className="clear-selection-btn"
+                      onClick={() => setSelectedTrendDay(null)}
+                      title="Clear selection"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                      Clear
+                    </button>
+                  )}
                 </div>
-                <span className="section-subtitle">Hours tracked by each team member</span>
+                <span className="section-subtitle">
+                  {selectedTrendDay 
+                    ? `Showing activity for ${formatSelectedDay()} (${selectedTrendDay.totalHours}h total)`
+                    : 'Hours tracked by each team member'
+                  }
+                </span>
               </div>
               <div className="team-member-table-container">
-                <table className="team-member-table">
-                  <thead>
-                    <tr>
-                      <th>Member</th>
-                      <th>Today</th>
-                      <th>This Week</th>
-                      <th>This Month</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {teamAnalytics?.teamMemberActivity?.length > 0 ? (
-                      teamAnalytics.teamMemberActivity.map((member, idx) => (
-                        <tr key={idx}>
-                          <td className="member-name-cell">
-                            <div 
-                              className="member-avatar"
-                              style={{ backgroundColor: getAvatarColor(member.displayName) }}
-                              title={member.displayName}
-                            >
-                              {getInitials(member.displayName)}
-                            </div>
-                            <span className="member-name">{member.displayName}</span>
-                          </td>
-                          <td className="hours-cell"><strong>{member.todayHours}h</strong></td>
-                          <td className="hours-cell"><strong>{member.weekHours}h</strong></td>
-                          <td className="hours-cell"><strong>{member.monthHours}h</strong></td>
-                        </tr>
-                      ))
-                    ) : (
+                {selectedTrendDay ? (
+                  // Show selected day's breakdown
+                  <table className="team-member-table selected-day-view">
+                    <thead>
                       <tr>
-                        <td colSpan="4" className="empty-state">No team member activity yet</td>
+                        <th>Member</th>
+                        <th>Hours on {selectedTrendDay.dayOfWeek} {selectedTrendDay.dayOfMonth}</th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {(() => {
+                        const dayMembers = getSelectedDayMemberActivity();
+                        if (!dayMembers || dayMembers.length === 0) {
+                          return (
+                            <tr>
+                              <td colSpan="2" className="empty-state">No activity on this day</td>
+                            </tr>
+                          );
+                        }
+                        return dayMembers.map((member, idx) => (
+                          <tr key={idx} className={member.hours === 0 ? 'no-activity' : ''}>
+                            <td className="member-name-cell">
+                              <div 
+                                className="member-avatar"
+                                style={{ backgroundColor: getAvatarColor(member.displayName) }}
+                                title={member.displayName}
+                              >
+                                {getInitials(member.displayName)}
+                              </div>
+                              <span className="member-name">{member.displayName}</span>
+                            </td>
+                            <td className="hours-cell single-day">
+                              <strong>{member.hours}h</strong>
+                              {member.hours === 0 && <span className="no-activity-label">No activity</span>}
+                            </td>
+                          </tr>
+                        ));
+                      })()}
+                    </tbody>
+                  </table>
+                ) : (
+                  // Show default Today/Week/Month view
+                  <table className="team-member-table">
+                    <thead>
+                      <tr>
+                        <th>Member</th>
+                        <th>Today</th>
+                        <th>This Week</th>
+                        <th>This Month</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {teamAnalytics?.teamMemberActivity?.length > 0 ? (
+                        teamAnalytics.teamMemberActivity.map((member, idx) => (
+                          <tr key={idx}>
+                            <td className="member-name-cell">
+                              <div 
+                                className="member-avatar"
+                                style={{ backgroundColor: getAvatarColor(member.displayName) }}
+                                title={member.displayName}
+                              >
+                                {getInitials(member.displayName)}
+                              </div>
+                              <span className="member-name">{member.displayName}</span>
+                            </td>
+                            <td className="hours-cell"><strong>{member.todayHours}h</strong></td>
+                            <td className="hours-cell"><strong>{member.weekHours}h</strong></td>
+                            <td className="hours-cell"><strong>{member.monthHours}h</strong></td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="4" className="empty-state">No team member activity yet</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </div>
           </div>
@@ -272,7 +409,7 @@ function TeamAnalyticsTab() {
                 <div className="section-info-wrapper">
                   <span className="section-info-icon">i</span>
                   <span className="section-info-tooltip">
-                    Top issues by time tracked. Shows total hours and number of team members who contributed to each issue.
+                    Top issues by time tracked. Distribution shows what percentage of total team time was spent on each issue.
                   </span>
                 </div>
                 <div className="view-toggle-buttons">
@@ -321,9 +458,10 @@ function TeamAnalyticsTab() {
                     </thead>
                     <tbody>
                       {(() => {
-                        const maxSeconds = Math.max(...teamAnalytics.teamTimeByIssue.map(i => i.totalSeconds), 1);
+                        // Calculate total time across ALL issues for true distribution percentage
+                        const totalSeconds = teamAnalytics.teamTimeByIssue.reduce((sum, i) => sum + i.totalSeconds, 0);
                         return teamAnalytics.teamTimeByIssue.slice(0, 10).map((issue, idx) => {
-                          const percentage = Math.round((issue.totalSeconds / maxSeconds) * 100);
+                          const percentage = totalSeconds > 0 ? Math.round((issue.totalSeconds / totalSeconds) * 100) : 0;
                           const visibleContributors = (issue.contributorDetails || []).slice(0, 3);
                           const remainingCount = (issue.contributorDetails || []).length - 3;
                           return (
@@ -389,9 +527,10 @@ function TeamAnalyticsTab() {
                 ) : (
                   <div className="issue-grid">
                     {(() => {
-                      const maxSeconds = Math.max(...teamAnalytics.teamTimeByIssue.map(i => i.totalSeconds), 1);
+                      // Calculate total time across ALL issues for true distribution percentage
+                      const totalSeconds = teamAnalytics.teamTimeByIssue.reduce((sum, i) => sum + i.totalSeconds, 0);
                       return teamAnalytics.teamTimeByIssue.slice(0, 10).map((issue, idx) => {
-                        const percentage = Math.round((issue.totalSeconds / maxSeconds) * 100);
+                        const percentage = totalSeconds > 0 ? Math.round((issue.totalSeconds / totalSeconds) * 100) : 0;
                         const visibleContributors = (issue.contributorDetails || []).slice(0, 3);
                         const remainingCount = (issue.contributorDetails || []).length - 3;
                         return (
