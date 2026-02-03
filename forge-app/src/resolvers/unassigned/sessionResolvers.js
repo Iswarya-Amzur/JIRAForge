@@ -466,6 +466,14 @@ export async function getGroupWorkSessions(req) {
       });
     }
 
+    // Recalculate startTime for merged sessions so displayed time range matches duration
+    // Without this, merged sessions show a wide wall-clock span (e.g., 20 min)
+    // but a shorter actual duration (e.g., 5m 32s), which looks like a bug
+    workSessions.forEach(session => {
+      const end = new Date(session.endTime);
+      session.startTime = new Date(end.getTime() - (session.durationSeconds * 1000)).toISOString();
+    });
+
     // Group sessions by date
     const sessionsByDate = {};
     workSessions.forEach(session => {

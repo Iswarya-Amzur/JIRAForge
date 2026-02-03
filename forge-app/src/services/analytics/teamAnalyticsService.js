@@ -334,7 +334,9 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
 
   // Build query for screenshots on the specified date
   // Uses idx_screenshots_org_user_work_date index for optimal performance
-  let query = `screenshots?organization_id=eq.${organization.id}&work_date=eq.${date}&deleted_at=is.null&select=user_id,timestamp,duration_seconds&order=user_id,timestamp.asc&limit=5000`;
+  // Include start_time and end_time for accurate timeline visualization
+  // Note: Idle time creates GAPS in the data (no screenshots during idle)
+  let query = `screenshots?organization_id=eq.${organization.id}&work_date=eq.${date}&deleted_at=is.null&select=user_id,timestamp,start_time,end_time,duration_seconds&order=user_id,timestamp.asc&limit=5000`;
 
   const screenshots = await supabaseRequest(supabaseConfig, query);
 
@@ -361,12 +363,11 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
       };
     }
     
-    // Add session with timestamp and duration
-    const timestamp = new Date(screenshot.timestamp);
+    // Add session with start_time, end_time for accurate timeline rendering
     userTimelineMap[userId].sessions.push({
       timestamp: screenshot.timestamp,
-      hour: timestamp.getHours(),
-      minute: timestamp.getMinutes(),
+      startTime: screenshot.start_time,
+      endTime: screenshot.end_time,
       durationSeconds: screenshot.duration_seconds || 300 // Default 5 min if not set
     });
   });
@@ -376,11 +377,11 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
     // Calculate total tracked time for the day
     const totalSeconds = user.sessions.reduce((sum, s) => sum + s.durationSeconds, 0);
     const totalHours = Math.round(totalSeconds / 3600 * 10) / 10;
-    
+
     // Find first and last activity
     const firstSession = user.sessions[0];
     const lastSession = user.sessions[user.sessions.length - 1];
-    
+
     return {
       ...user,
       totalHours,
@@ -471,9 +472,11 @@ export async function fetchMyDayTimeline(accountId, cloudId, date) {
 
   // Fetch screenshots for current user on the specified date
   // Uses idx_screenshots_org_user_work_date index for optimal performance
+  // Include start_time and end_time for accurate timeline visualization
+  // Note: Idle time creates GAPS in the data (no screenshots during idle)
   const screenshots = await supabaseRequest(
     supabaseConfig,
-    `screenshots?organization_id=eq.${organization.id}&user_id=eq.${userId}&work_date=eq.${date}&deleted_at=is.null&select=timestamp,duration_seconds&order=timestamp.asc&limit=500`
+    `screenshots?organization_id=eq.${organization.id}&user_id=eq.${userId}&work_date=eq.${date}&deleted_at=is.null&select=timestamp,start_time,end_time,duration_seconds&order=timestamp.asc&limit=500`
   );
 
   if (!screenshots || screenshots.length === 0) {
@@ -489,13 +492,12 @@ export async function fetchMyDayTimeline(accountId, cloudId, date) {
     };
   }
 
-  // Build sessions array
+  // Build sessions array with start_time, end_time for accurate timeline rendering
   const sessions = screenshots.map(screenshot => {
-    const timestamp = new Date(screenshot.timestamp);
     return {
       timestamp: screenshot.timestamp,
-      hour: timestamp.getHours(),
-      minute: timestamp.getMinutes(),
+      startTime: screenshot.start_time,
+      endTime: screenshot.end_time,
       durationSeconds: screenshot.duration_seconds || 300
     };
   });
