@@ -95,5 +95,9 @@ supabase/.branches/
 credentials.json
 secrets.json
 
+# Production configuration with secrets
+docs/PRODUCTION_SUPABASE_FEB2026.md
+docs/*PRODUCTION*.md
+
 # Local database files
 *.sqlite3

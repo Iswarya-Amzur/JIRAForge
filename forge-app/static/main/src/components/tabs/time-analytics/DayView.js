@@ -217,7 +217,7 @@ function DayView({ loading, timeData }) {
     return null;
   };
 
-  // Get tooltip text for a time block (show time range and duration)
+  // Get tooltip text for a time block (show time range only)
   const getBlockTooltip = (block) => {
     const formatTimeDisplay = (date) => date.toLocaleTimeString('en-US', {
       hour: 'numeric',
@@ -225,8 +225,7 @@ function DayView({ loading, timeData }) {
       hour12: true
     });
 
-    const durationMins = Math.round(block.durationSeconds / 60);
-    return `${formatTimeDisplay(block.startTime)} - ${formatTimeDisplay(block.endTime)} (${durationMins}m)`;
+    return `${formatTimeDisplay(block.startTime)} - ${formatTimeDisplay(block.endTime)}`;
   };
 
   // Check if timeline is available (for admins or regular user)
