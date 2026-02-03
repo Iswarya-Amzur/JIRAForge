@@ -858,6 +858,103 @@ exports.getDashboardData = async (req, res) => {
 };
 
 /**
+ * Get latest app version for Forge app
+ * Returns the latest desktop app version info for update notifications
+ */
+exports.getLatestAppVersion = async (req, res) => {
+  try {
+    const { platform = 'windows', currentVersion } = req.body;
+    const { cloudId } = req.forgeContext;
+
+    const supabase = getClient();
+    if (!supabase) {
+      return res.status(500).json({
+        success: false,
+        error: 'Database not configured'
+      });
+    }
+
+    logger.info('[ForgeProxy] Getting latest app version', { platform, currentVersion, cloudId });
+
+    // Get the latest release for the platform
+    const { data: release, error } = await supabase
+      .from('app_releases')
+      .select('version, download_url, release_notes, is_mandatory, min_supported_version, file_size_bytes, published_at')
+      .eq('platform', platform.toLowerCase())
+      .eq('is_latest', true)
+      .eq('is_active', true)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      throw error;
+    }
+
+    // If no release found, return default
+    if (!release) {
+      return res.json({
+        success: true,
+        data: {
+          latestVersion: '1.0.0',
+          downloadUrl: null,
+          releaseNotes: null,
+          updateAvailable: false,
+          isMandatory: false
+        }
+      });
+    }
+
+    // Compare versions if current version provided
+    let updateAvailable = false;
+    if (currentVersion) {
+      updateAvailable = isNewerVersion(release.version, currentVersion);
+    }
+
+    res.json({
+      success: true,
+      data: {
+        latestVersion: release.version,
+        downloadUrl: release.download_url,
+        releaseNotes: release.release_notes,
+        isMandatory: release.is_mandatory,
+        minSupportedVersion: release.min_supported_version,
+        fileSizeBytes: release.file_size_bytes,
+        publishedAt: release.published_at,
+        updateAvailable,
+        currentVersion: currentVersion || null
+      }
+    });
+
+  } catch (error) {
+    logger.error('[ForgeProxy] Get latest app version error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Compare two semantic versions
+ * @param {string} v1 - Version to compare
+ * @param {string} v2 - Version to compare against
+ * @returns {boolean} True if v1 is newer than v2
+ */
+function isNewerVersion(v1, v2) {
+  const parts1 = v1.split('.').map(Number);
+  const parts2 = v2.split('.').map(Number);
+
+  for (let i = 0; i < 3; i++) {
+    const p1 = parts1[i] || 0;
+    const p2 = parts2[i] || 0;
+    
+    if (p1 > p2) return true;
+    if (p1 < p2) return false;
+  }
+  
+  return false; // Versions are equal
+}
+
+/**
  * Helper function to aggregate time by issue
  * @param {Array} results - Analysis results with screenshots
  * @param {number} limit - Maximum issues to return

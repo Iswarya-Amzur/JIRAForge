@@ -9,6 +9,7 @@ const screenshotController = require('./controllers/screenshot-controller');
 const brdController = require('./controllers/brd-controller');
 const authController = require('./controllers/auth-controller');
 const forgeProxyController = require('./controllers/forge-proxy-controller');
+const appVersionController = require('./controllers/app-version-controller');
 const authMiddleware = require('./middleware/auth');
 const forgeAuthMiddleware = require('./middleware/forge-auth');
 const logger = require('./utils/logger');
@@ -123,6 +124,38 @@ app.post('/api/auth/verify', authLimiter, authController.verifyToken);
 app.post('/api/auth/supabase-config', authLimiter, authController.getSupabaseConfig);
 
 // =============================================================================
+// APP VERSION ROUTES (Public - for desktop app update checking)
+// These endpoints allow the desktop app to check for updates
+// =============================================================================
+
+// Rate limiter for version check endpoints (generous limits)
+const versionCheckLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 60, // 60 requests per 15 minutes per IP (4 per minute)
+  message: 'Too many version check requests, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
+  }
+});
+
+// Get latest version for a platform (public - used by desktop app)
+app.get('/api/app-version/latest', versionCheckLimiter, appVersionController.getLatestVersion);
+
+// Check if update is available (public - used by desktop app)
+app.get('/api/app-version/check', versionCheckLimiter, appVersionController.checkForUpdate);
+
+// Get all releases for a platform (protected - admin view)
+app.get('/api/app-version/releases', authMiddleware, appVersionController.getAllReleases);
+
+// Create a new release (protected - admin only)
+app.post('/api/app-version/releases', authMiddleware, appVersionController.createRelease);
+
+// Compute SHA256 checksum for a file URL (protected - admin utility)
+app.post('/api/app-version/compute-checksum', authMiddleware, appVersionController.computeChecksum);
+
+// =============================================================================
 // FORGE REMOTE ROUTES (require Forge Invocation Token authentication)
 // These endpoints are called by the Forge app via Forge Remote
 // =============================================================================
@@ -157,6 +190,9 @@ app.post('/api/forge/user', forgeLimiter, forgeAuthMiddleware, forgeProxyControl
 app.post('/api/forge/storage/upload', forgeLimiter, forgeAuthMiddleware, forgeProxyController.storageUpload);
 app.post('/api/forge/storage/signed-url', forgeLimiter, forgeAuthMiddleware, forgeProxyController.storageSignedUrl);
 app.post('/api/forge/storage/delete', forgeLimiter, forgeAuthMiddleware, forgeProxyController.storageDelete);
+
+// App version (for update notifications in Forge UI)
+app.post('/api/forge/app-version/latest', forgeLimiter, forgeAuthMiddleware, forgeProxyController.getLatestAppVersion);
 
 // =============================================================================
 // PROTECTED ROUTES (require authMiddleware)

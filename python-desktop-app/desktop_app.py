@@ -175,6 +175,10 @@ load_dotenv()
 # CONFIGURATION
 # ============================================================================
 
+# Application version - IMPORTANT: Update this when releasing new versions
+# This is used for update checking and notifications
+APP_VERSION = "1.0.0"
+
 # Embedded credentials (for production builds - no .env file needed)
 # SECURITY: All sensitive keys moved to AI Server - fetched at runtime after authentication
 EMBEDDED_CONFIG = {
@@ -216,6 +220,191 @@ def set_runtime_supabase_config(url, anon_key, service_role_key):
     RUNTIME_SUPABASE_CONFIG['SUPABASE_ANON_KEY'] = anon_key
     RUNTIME_SUPABASE_CONFIG['SUPABASE_SERVICE_ROLE_KEY'] = service_role_key
     print(f"[OK] Supabase config loaded from AI server")
+
+# ============================================================================
+# VERSION CHECKING UTILITIES
+# ============================================================================
+
+def is_version_newer(latest_version, current_version):
+    """
+    Compare two semantic version strings (e.g., "1.2.3").
+    Returns True if latest_version is newer than current_version.
+    """
+    try:
+        latest_parts = [int(x) for x in latest_version.split('.')]
+        current_parts = [int(x) for x in current_version.split('.')]
+        
+        # Pad with zeros if needed
+        while len(latest_parts) < 3:
+            latest_parts.append(0)
+        while len(current_parts) < 3:
+            current_parts.append(0)
+        
+        for i in range(3):
+            if latest_parts[i] > current_parts[i]:
+                return True
+            if latest_parts[i] < current_parts[i]:
+                return False
+        
+        return False  # Versions are equal
+    except (ValueError, AttributeError):
+        return False
+
+def check_for_updates(ai_server_url=None):
+    """
+    Check the AI server for available updates.
+    Returns a dict with update info if available, None otherwise.
+    
+    Response format:
+    {
+        'update_available': bool,
+        'latest_version': str,
+        'download_url': str,
+        'release_notes': str,
+        'is_mandatory': bool,
+        'checksum': str (SHA256 hash for integrity verification)
+    }
+    """
+    try:
+        server_url = ai_server_url or get_env_var('AI_SERVER_URL')
+        if not server_url:
+            print("[WARN] AI Server URL not configured, skipping update check")
+            return None
+        
+        url = f"{server_url}/api/app-version/check?platform=windows&current={APP_VERSION}"
+        
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code != 200:
+            print(f"[WARN] Update check failed: HTTP {response.status_code}")
+            return None
+        
+        data = response.json()
+        
+        if not data.get('success'):
+            print(f"[WARN] Update check failed: {data.get('error', 'Unknown error')}")
+            return None
+        
+        result = data.get('data', {})
+        
+        return {
+            'update_available': result.get('updateAvailable', False),
+            'latest_version': result.get('latestVersion'),
+            'current_version': result.get('currentVersion', APP_VERSION),
+            'download_url': result.get('downloadUrl'),
+            'release_notes': result.get('releaseNotes'),
+            'is_mandatory': result.get('isMandatory', False),
+            'can_update': result.get('canUpdate', True),
+            'checksum': result.get('checksum'),  # SHA256 for integrity verification
+            'file_size_bytes': result.get('fileSizeBytes')
+        }
+    
+    except requests.exceptions.Timeout:
+        print("[WARN] Update check timed out")
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"[WARN] Update check failed: {e}")
+        return None
+    except Exception as e:
+        print(f"[WARN] Unexpected error during update check: {e}")
+        return None
+
+def compute_file_checksum(file_path):
+    """
+    Compute SHA256 checksum of a local file.
+    
+    Args:
+        file_path: Path to the file to hash
+        
+    Returns:
+        str: SHA256 hash as lowercase hex string, or None on error
+    """
+    import hashlib
+    
+    try:
+        sha256_hash = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            # Read in chunks to handle large files
+            for chunk in iter(lambda: f.read(8192), b""):
+                sha256_hash.update(chunk)
+        return sha256_hash.hexdigest()
+    except Exception as e:
+        print(f"[WARN] Failed to compute checksum for {file_path}: {e}")
+        return None
+
+def verify_download_checksum(file_path, expected_checksum):
+    """
+    Verify that a downloaded file matches the expected checksum.
+    
+    Args:
+        file_path: Path to the downloaded file
+        expected_checksum: Expected SHA256 hash (from API)
+        
+    Returns:
+        bool: True if checksum matches, False otherwise
+    """
+    if not expected_checksum:
+        print("[INFO] No checksum provided, skipping verification")
+        return True  # No checksum to verify against
+    
+    actual_checksum = compute_file_checksum(file_path)
+    
+    if actual_checksum is None:
+        print("[WARN] Could not compute checksum of downloaded file")
+        return False
+    
+    # Compare checksums (case-insensitive)
+    if actual_checksum.lower() == expected_checksum.lower():
+        print(f"[OK] Checksum verified: {actual_checksum[:16]}...")
+        return True
+    else:
+        print(f"[ERROR] Checksum mismatch!")
+        print(f"  Expected: {expected_checksum}")
+        print(f"  Actual:   {actual_checksum}")
+        return False
+
+def show_update_notification(update_info, callback=None):
+    """
+    Show a Windows toast notification about available update.
+    
+    Args:
+        update_info: Dict with update information from check_for_updates()
+        callback: Optional callback function to call when notification is clicked
+    """
+    if not WINOTIFY_AVAILABLE:
+        print(f"[INFO] Update available: v{update_info.get('latest_version')} (notifications not available)")
+        return
+    
+    try:
+        latest_version = update_info.get('latest_version', 'unknown')
+        release_notes = update_info.get('release_notes', 'A new version is available.')
+        is_mandatory = update_info.get('is_mandatory', False)
+        
+        # Truncate release notes if too long
+        if len(release_notes) > 200:
+            release_notes = release_notes[:197] + "..."
+        
+        title = "Update Required" if is_mandatory else "Update Available"
+        
+        notification = Notification(
+            app_id="Time Tracker",
+            title=f"{title}: v{latest_version}",
+            msg=release_notes,
+            duration="long" if is_mandatory else "short"
+        )
+        
+        # Add download URL as launch action
+        download_url = update_info.get('download_url')
+        if download_url:
+            notification.set_audio(audio.Default, loop=False)
+            notification.add_actions(label="Download Update", launch=download_url)
+        
+        notification.show()
+        
+        print(f"[OK] Update notification shown: v{latest_version}")
+        
+    except Exception as e:
+        print(f"[WARN] Could not show update notification: {e}")
 
 def get_local_timezone_name():
     """
@@ -2573,11 +2762,77 @@ class TimeTracker:
         self.admin_logs = []  # In-memory log storage
         self.max_log_entries = 500  # Maximum log entries to keep
 
+        # ============================================================================
+        # VERSION CHECKING / UPDATE NOTIFICATIONS
+        # ============================================================================
+        self.app_version = APP_VERSION  # Use global constant
+        self.latest_version_info = None  # Cached latest version info
+        self.last_version_check_time = 0  # Last time we checked for updates
+        self.version_check_interval = 4 * 60 * 60  # Check every 4 hours (in seconds)
+        self.update_available = False  # Flag for UI to show update badge
+        self.update_notification_shown = False  # Track if we've shown notification for this version
+
         # Setup routes
         self.setup_routes()
 
         print("[OK] Application initialized")
-        self.add_admin_log('INFO', 'Application started')
+        self.add_admin_log('INFO', f'Application started (v{self.app_version})')
+
+    def check_for_app_updates(self, show_notification=True, force=False):
+        """
+        Check for available updates from the AI server.
+        
+        Args:
+            show_notification: Whether to show a desktop notification if update is available
+            force: Force check even if recently checked
+        
+        Returns:
+            dict with update info or None if no update/error
+        """
+        try:
+            current_time = time.time()
+            
+            # Skip if checked recently (unless forced)
+            if not force and (current_time - self.last_version_check_time) < self.version_check_interval:
+                # Return cached info
+                return self.latest_version_info
+            
+            print(f"[INFO] Checking for updates (current version: v{self.app_version})")
+            
+            # Call the global check function
+            update_info = check_for_updates()
+            
+            self.last_version_check_time = current_time
+            
+            if update_info is None:
+                print("[INFO] Could not check for updates")
+                return None
+            
+            self.latest_version_info = update_info
+            self.update_available = update_info.get('update_available', False)
+            
+            if self.update_available:
+                latest_version = update_info.get('latest_version', 'unknown')
+                print(f"[INFO] Update available: v{latest_version}")
+                self.add_admin_log('INFO', f'Update available: v{latest_version}')
+                
+                # Show notification if enabled and not already shown for this version
+                if show_notification and not self.update_notification_shown:
+                    show_update_notification(update_info)
+                    self.update_notification_shown = True
+                    
+                    # If mandatory, log a warning
+                    if update_info.get('is_mandatory', False):
+                        self.add_admin_log('WARNING', f'Mandatory update required: v{latest_version}')
+            else:
+                print(f"[INFO] App is up to date (v{self.app_version})")
+            
+            return update_info
+            
+        except Exception as e:
+            print(f"[WARN] Error checking for updates: {e}")
+            self.add_admin_log('WARNING', f'Update check failed: {str(e)}')
+            return None
 
     def initialize_supabase(self):
         """Initialize Supabase clients after fetching config from AI server.
@@ -2940,6 +3195,9 @@ class TimeTracker:
             if self.admin_logs:
                 session_start = self.admin_logs[0].get('timestamp')
 
+            # Get version info
+            version_info = self.latest_version_info or {}
+            
             return jsonify({
                 'tracking_active': self.tracking_active,
                 'is_idle': self.is_idle,
@@ -2953,7 +3211,16 @@ class TimeTracker:
                 'tracking_settings': self.tracking_settings,
                 'total_logs': len(self.admin_logs),
                 'screenshots_today': screenshots_today,
-                'session_start': session_start
+                'session_start': session_start,
+                # Version info
+                'app_version': self.app_version,
+                'update_available': self.update_available,
+                'latest_version': version_info.get('latest_version'),
+                'download_url': version_info.get('download_url'),
+                'release_notes': version_info.get('release_notes'),
+                'is_mandatory_update': version_info.get('is_mandatory', False),
+                'checksum': version_info.get('checksum'),  # SHA256 for integrity verification
+                'file_size_bytes': version_info.get('file_size_bytes')
             })
 
         @self.app.route('/api/admin/control', methods=['POST'])
@@ -3384,7 +3651,7 @@ class TimeTracker:
 
             # Add app version if logging in
             if logged_in:
-                update_data['desktop_app_version'] = getattr(self, 'APP_VERSION', '1.0.0')
+                update_data['desktop_app_version'] = self.app_version
 
             client.table('users').update(update_data).eq('id', self.current_user_id).execute()
 
@@ -4911,6 +5178,11 @@ class TimeTracker:
                     self.fetch_tracking_settings()
                     last_settings_refresh = time.time()
 
+                # Periodically check for app updates (every 4 hours by default)
+                # This runs in the background and shows notification if update available
+                if time.time() - self.last_version_check_time > self.version_check_interval:
+                    self.check_for_app_updates(show_notification=True)
+
                 # Periodically check for unassigned work and send notifications
                 if time.time() - last_notification_check > notification_check_interval:
                     self.check_and_notify_unassigned_work()
@@ -5524,11 +5796,12 @@ class TimeTracker:
         except Exception as e:
             print(f"[WARN] Failed to show resume notification: {e}")
     
-    def create_tray_icon(self, state='blue'):
+    def create_tray_icon(self, state='blue', show_update_badge=False):
         """
         Create a system tray icon image with color based on state
         Args:
             state: 'red' (not logged in), 'blue' (logged in, not tracking), 'green' (logged in, tracking)
+            show_update_badge: If True, adds a small notification dot indicating an update is available
         """
         # Create a 16x16 icon with a clock symbol
         size = 16
@@ -5572,6 +5845,27 @@ class TimeTracker:
             width=1
         )
         
+        # Draw update badge (small dot in top-right corner) if update is available
+        if show_update_badge:
+            badge_color = (33, 150, 243, 255)  # Blue badge color (#2196F3)
+            badge_outline = (255, 255, 255, 255)  # White outline for visibility
+            badge_radius = 3
+            badge_x = size - badge_radius - 1  # Top-right corner
+            badge_y = badge_radius + 1
+            
+            # Draw white outline first (slightly larger)
+            draw.ellipse(
+                [badge_x - badge_radius - 1, badge_y - badge_radius - 1, 
+                 badge_x + badge_radius + 1, badge_y + badge_radius + 1],
+                fill=badge_outline
+            )
+            # Draw the badge dot
+            draw.ellipse(
+                [badge_x - badge_radius, badge_y - badge_radius, 
+                 badge_x + badge_radius, badge_y + badge_radius],
+                fill=badge_color
+            )
+        
         return icon
     
     def get_tray_icon_state(self):
@@ -5597,7 +5891,9 @@ class TimeTracker:
         if self.tray:
             try:
                 state = self.get_tray_icon_state()
-                new_icon = self.create_tray_icon(state)
+                # Show update badge if an update is available
+                show_badge = getattr(self, 'update_available', False)
+                new_icon = self.create_tray_icon(state, show_update_badge=show_badge)
                 self.tray.icon = new_icon
             except Exception as e:
                 print(f"[WARN] Failed to update tray icon: {e}")
@@ -5650,6 +5946,41 @@ class TimeTracker:
         # menu_items.append(pystray.Menu.SEPARATOR)
         # menu_items.append(item('Settings', open_settings))
 
+        # Add separator and update-related menu items
+        menu_items.append(pystray.Menu.SEPARATOR)
+        
+        # Check for Updates / Download Update menu item
+        def check_updates_action():
+            """Check for updates and open download URL if available"""
+            update_info = self.check_for_app_updates(show_notification=True, force=True)
+            if update_info and update_info.get('update_available'):
+                download_url = update_info.get('download_url')
+                if download_url:
+                    webbrowser.open(download_url)
+            else:
+                # Show a notification that app is up to date
+                if WINOTIFY_AVAILABLE:
+                    try:
+                        from winotify import Notification
+                        notification = Notification(
+                            app_id="Time Tracker",
+                            title="No Updates Available",
+                            msg=f"You're running the latest version (v{self.app_version})",
+                            duration="short"
+                        )
+                        notification.show()
+                    except Exception:
+                        pass
+        
+        # Dynamic label based on update status
+        def get_update_label():
+            if getattr(self, 'update_available', False):
+                latest = self.latest_version_info.get('latest_version', '') if self.latest_version_info else ''
+                return f"⬇ Download Update (v{latest})" if latest else "⬇ Download Update"
+            return f"Check for Updates (v{self.app_version})"
+        
+        menu_items.append(item(lambda text: get_update_label(), check_updates_action))
+
         return pystray.Menu(*menu_items)
 
     def _exit_app(self):
@@ -5673,7 +6004,8 @@ class TimeTracker:
         try:
             # Create initial icon based on current state
             initial_state = self.get_tray_icon_state()
-            icon_image = self.create_tray_icon(initial_state)
+            show_badge = getattr(self, 'update_available', False)
+            icon_image = self.create_tray_icon(initial_state, show_update_badge=show_badge)
 
             # Create menu using helper method
             menu = self._build_tray_menu()
@@ -5811,6 +6143,11 @@ class TimeTracker:
         web_thread = threading.Thread(target=self.run_web_server, daemon=True)
         web_thread.start()
         time.sleep(2)
+        
+        # Check for updates on startup (only if online)
+        if is_online:
+            print("[INFO] Checking for app updates...")
+            self.check_for_app_updates(show_notification=True, force=True)
         
         # Determine if we should start tracking
         should_track = self.current_user is not None or self.current_user_id is not None
@@ -7052,6 +7389,31 @@ class TimeTracker:
         .status-value.active { color: #4ade80; }
         .status-value.inactive { color: #f87171; }
         .status-value.warning { color: #fbbf24; }
+        /* Update badge styles */
+        .update-badge {
+            display: inline-block;
+            margin-left: 10px;
+            padding: 3px 8px;
+            background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 500;
+            animation: pulse-badge 2s infinite;
+        }
+        .update-badge a {
+            color: white;
+            text-decoration: none;
+        }
+        .update-badge a:hover {
+            text-decoration: underline;
+        }
+        .update-badge.mandatory {
+            background: linear-gradient(135deg, #FF5722 0%, #E64A19 100%);
+        }
+        @keyframes pulse-badge {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
         .control-btn {
             width: 100%;
             padding: 12px 16px;
@@ -7315,7 +7677,12 @@ class TimeTracker:
                     <div class="status-grid">
                         <div class="status-item">
                             <div class="status-label">App Version</div>
-                            <div id="version-status" class="status-value">1.0.0</div>
+                            <div id="version-status" class="status-value">
+                                <span id="current-version">Loading...</span>
+                                <span id="update-badge" class="update-badge" style="display: none;">
+                                    <a href="#" id="update-link" target="_blank">Update Available</a>
+                                </span>
+                            </div>
                         </div>
                         <div class="status-item">
                             <div class="status-label">Screenshot Interval</div>
@@ -7534,6 +7901,31 @@ class TimeTracker:
                     if (screenshotsTodayEl) {
                         screenshotsTodayEl.textContent = data.screenshots_today || '0';
                         screenshotsTodayEl.className = 'status-value active';
+                    }
+
+                    // Version info
+                    const currentVersionEl = document.getElementById('current-version');
+                    if (currentVersionEl) {
+                        currentVersionEl.textContent = 'v' + (data.app_version || '1.0.0');
+                    }
+                    
+                    // Update available badge
+                    const updateBadgeEl = document.getElementById('update-badge');
+                    const updateLinkEl = document.getElementById('update-link');
+                    if (updateBadgeEl && updateLinkEl) {
+                        if (data.update_available && data.latest_version) {
+                            updateBadgeEl.style.display = 'inline-block';
+                            updateLinkEl.textContent = data.is_mandatory_update ? 'Required: v' + data.latest_version : 'v' + data.latest_version + ' Available';
+                            updateLinkEl.href = data.download_url || '#';
+                            updateLinkEl.title = data.release_notes || 'Click to download update';
+                            if (data.is_mandatory_update) {
+                                updateBadgeEl.classList.add('mandatory');
+                            } else {
+                                updateBadgeEl.classList.remove('mandatory');
+                            }
+                        } else {
+                            updateBadgeEl.style.display = 'none';
+                        }
                     }
 
                     // Update buttons visibility and state
