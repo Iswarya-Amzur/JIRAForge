@@ -11,6 +11,10 @@ import { DesktopAppStatusBanner } from './components/common';
 import { AppProvider, useApp } from './context';
 import { getInitialTab } from './utils';
 
+// Fallback download URL - used only if API doesn't return a URL
+// The primary URL comes from the app_releases table via getDesktopAppStatus
+const FALLBACK_DOWNLOAD_URL = 'https://jvijitdewbypqbatfboi.supabase.co/storage/v1/object/public/desktop%20app/TimeTracker.exe';
+
 function AppContent() {
   const { userPermissions, activeIssues, loadActiveIssues } = useApp();
 
@@ -242,7 +246,7 @@ function AppContent() {
         </aside>
 
         <main className="App-content">
-          <DesktopAppStatusBanner downloadUrl="https://jvijitdewbypqbatfboi.supabase.co/storage/v1/object/public/desktop%20app/TimeTracker.exe" />
+          <DesktopAppStatusBanner downloadUrl={FALLBACK_DOWNLOAD_URL} />
           {activeTab === 'dashboard' && (
             <DashboardTab
               onOpenScreenshotPreview={openScreenshotPreview}

@@ -283,5 +283,66 @@ export async function fetchDashboardData(options = {}) {
   return result;
 }
 
+/**
+ * Get the latest desktop app version information
+ * Used for update notifications in the Forge UI
+ * 
+ * @param {Object} options - Version check options
+ * @param {string} options.platform - Platform to check (default: 'windows')
+ * @param {string} options.currentVersion - User's current app version (optional)
+ * @returns {Promise<Object>} Latest version info
+ */
+export async function getLatestAppVersion(options = {}) {
+  const cacheKey = `app-version:${options.platform || 'windows'}`;
+  
+  // Cache version info for 5 minutes - doesn't change frequently
+  const cached = getFromCache(cacheKey);
+  if (cached) {
+    // If we have a cached result and currentVersion changed, recalculate updateAvailable
+    if (options.currentVersion && cached.latestVersion) {
+      cached.updateAvailable = isNewerVersion(cached.latestVersion, options.currentVersion);
+      cached.currentVersion = options.currentVersion;
+    }
+    return cached;
+  }
+
+  console.log('[Remote] Fetching latest app version');
+  
+  const result = await remoteRequest('/api/forge/app-version/latest', {
+    body: {
+      platform: options.platform || 'windows',
+      currentVersion: options.currentVersion
+    }
+  });
+
+  // Cache for 5 minutes
+  setInCache(cacheKey, result, 5 * 60 * 1000);
+
+  return result;
+}
+
+/**
+ * Compare two semantic versions
+ * @param {string} v1 - Version to compare (latest)
+ * @param {string} v2 - Version to compare against (current)
+ * @returns {boolean} True if v1 is newer than v2
+ */
+function isNewerVersion(v1, v2) {
+  if (!v1 || !v2) return false;
+  
+  const parts1 = v1.split('.').map(Number);
+  const parts2 = v2.split('.').map(Number);
+
+  for (let i = 0; i < 3; i++) {
+    const p1 = parts1[i] || 0;
+    const p2 = parts2[i] || 0;
+    
+    if (p1 > p2) return true;
+    if (p1 < p2) return false;
+  }
+  
+  return false; // Versions are equal
+}
+
 // Export the remote request function for custom calls
 export { remoteRequest };

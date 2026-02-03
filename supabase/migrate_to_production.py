@@ -44,7 +44,7 @@ except ImportError:
 
 # Project References
 DEV_PROJECT_REF = "jvijitdewbypqbatfboi"
-PROD_PROJECT_REF = "bsxpdoqwrugbhzqqxvlw"  # NEW PROD PROJECT
+PROD_PROJECT_REF = "iwbfxptbprbzoyqdqhez"  # NEW PROD PROJECT (Feb 2026)
 
 # URLs
 DEV_URL = f"https://{DEV_PROJECT_REF}.supabase.co"
@@ -55,7 +55,10 @@ MANAGEMENT_API_URL = "https://api.supabase.com"
 
 # Service Role Keys
 DEV_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2aWppdGRld2J5cHFiYXRmYm9pIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2Mjc1NTU5MCwiZXhwIjoyMDc4MzMxNTkwfQ.2Pbdo2DHHfCIpUVPP390P2Y3rF7_hdsYM-38g26XTUY"
-PROD_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJzeHBkb3F3cnVnYmh6cXF4dmx3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTUxMTc0NiwiZXhwIjoyMDg1MDg3NzQ2fQ.Z_0Ouag5jCA36Lj38AjVu1wtPl-WDr2Q4HztQtJXTto"
+PROD_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3YmZ4cHRicHJiem95cWRxaGV6Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTYwMzc3OSwiZXhwIjoyMDg1MTc5Nzc5fQ.26vymNQD8paLRJoqEq-SDiO9wlBWhYp3HYten2V6m7g"
+
+# Anon Key (for reference - use this in client apps)
+PROD_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3YmZ4cHRicHJiem95cWRxaGV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk2MDM3NzksImV4cCI6MjA4NTE3OTc3OX0.O9KwZ9H9tLOPygDlgAL_vAJ4I-IEGnnoJNSaKFXn04s"
 
 # Management API Token (will be prompted)
 MANAGEMENT_API_TOKEN = ""
@@ -432,17 +435,42 @@ END $$;"""
         return False, str(result)
 
     def extract_rls_policies(self) -> Tuple[bool, str]:
-        """Extract RLS policies"""
-        # First enable RLS on tables
+        """Extract RLS policies - respects original RLS enabled/disabled state"""
+        
+        # Get tables with RLS ENABLED (relrowsecurity = true in pg_class)
+        # This ensures we only enable RLS on tables that actually have it enabled in source
         enable_rls_sql = """
-        SELECT 'ALTER TABLE public.' || quote_ident(tablename) || ' ENABLE ROW LEVEL SECURITY;' as ddl
-        FROM pg_tables
-        WHERE schemaname = 'public'
-        AND tablename NOT LIKE 'pg_%'
-        ORDER BY tablename;
+        SELECT 'ALTER TABLE public.' || quote_ident(c.relname) || ' ENABLE ROW LEVEL SECURITY;' as ddl,
+               c.relname as table_name,
+               CASE 
+                   WHEN EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = c.relname)
+                   THEN 'RESTRICTED'
+                   ELSE 'UNRESTRICTED'
+               END as rls_status
+        FROM pg_class c
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        WHERE n.nspname = 'public'
+        AND c.relkind = 'r'  -- regular tables only
+        AND c.relrowsecurity = true  -- RLS is ENABLED
+        AND c.relname NOT LIKE 'pg_%'
+        AND c.relname NOT LIKE '_realtime%'
+        ORDER BY c.relname;
+        """
+        
+        # Get tables with RLS DISABLED (for documentation)
+        disabled_rls_sql = """
+        SELECT c.relname as table_name
+        FROM pg_class c
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        WHERE n.nspname = 'public'
+        AND c.relkind = 'r'  -- regular tables only
+        AND c.relrowsecurity = false  -- RLS is DISABLED
+        AND c.relname NOT LIKE 'pg_%'
+        AND c.relname NOT LIKE '_realtime%'
+        ORDER BY c.relname;
         """
 
-        # Then get policy definitions
+        # Get policy definitions (PERMISSIVE or RESTRICTIVE)
         policies_sql = """
         SELECT
             'CREATE POLICY ' || quote_ident(policyname) || ' ON public.' ||
@@ -452,7 +480,10 @@ END $$;"""
             CASE WHEN roles != '{public}' THEN ' TO ' || array_to_string(roles, ', ') ELSE '' END ||
             CASE WHEN qual IS NOT NULL THEN ' USING (' || qual || ')' ELSE '' END ||
             CASE WHEN with_check IS NOT NULL THEN ' WITH CHECK (' || with_check || ')' ELSE '' END ||
-            ';' as ddl
+            ';' as ddl,
+            tablename,
+            policyname,
+            permissive
         FROM pg_policies
         WHERE schemaname = 'public'
         AND tablename NOT LIKE 'pg_%'
@@ -460,18 +491,56 @@ END $$;"""
         """
 
         ddl_parts = []
+        rls_enabled_tables = []
+        rls_disabled_tables = []
+        unrestricted_tables = []
 
-        # Get enable RLS statements
+        # Get tables with RLS enabled
         success, result = self.api.execute_sql(enable_rls_sql, read_only=True)
         if success and isinstance(result, list):
-            ddl_parts.extend([row.get('ddl', '') for row in result if row.get('ddl')])
+            for row in result:
+                ddl = row.get('ddl', '')
+                table_name = row.get('table_name', '')
+                rls_status = row.get('rls_status', '')
+                if ddl:
+                    ddl_parts.append(ddl)
+                    rls_enabled_tables.append(table_name)
+                    if rls_status == 'UNRESTRICTED':
+                        unrestricted_tables.append(table_name)
+
+        # Get tables with RLS disabled (for documentation)
+        success, result = self.api.execute_sql(disabled_rls_sql, read_only=True)
+        if success and isinstance(result, list):
+            rls_disabled_tables = [row.get('table_name', '') for row in result if row.get('table_name')]
+
+        # Add summary comment
+        if rls_enabled_tables or rls_disabled_tables:
+            header = "-- RLS STATUS SUMMARY:\n"
+            if rls_enabled_tables:
+                header += f"-- Tables with RLS ENABLED ({len(rls_enabled_tables)}): {', '.join(rls_enabled_tables)}\n"
+            if unrestricted_tables:
+                header += f"-- Tables UNRESTRICTED (RLS enabled, no policies) ({len(unrestricted_tables)}): {', '.join(unrestricted_tables)}\n"
+            if rls_disabled_tables:
+                header += f"-- Tables with RLS DISABLED ({len(rls_disabled_tables)}): {', '.join(rls_disabled_tables)}\n"
+                header += "-- Note: RLS disabled tables will NOT have RLS enabled in target (preserving original state)\n"
+            header += "\n"
+            ddl_parts.insert(0, header)
 
         ddl_parts.append('')  # Empty line separator
 
         # Get policy definitions
         success, result = self.api.execute_sql(policies_sql, read_only=True)
         if success and isinstance(result, list):
-            ddl_parts.extend([row.get('ddl', '') for row in result if row.get('ddl')])
+            policy_count = 0
+            for row in result:
+                ddl = row.get('ddl', '')
+                if ddl:
+                    ddl_parts.append(ddl)
+                    policy_count += 1
+            
+            if policy_count > 0:
+                print_info(f"  Found {policy_count} RLS policies")
+            
             return True, '\n'.join(ddl_parts)
 
         return False, str(result)
@@ -511,23 +580,39 @@ class EdgeFunctionDeployer:
         self.functions_dir = functions_dir
 
     def check_cli_available(self) -> bool:
+        """Check if Supabase CLI is available - with short timeout to avoid hanging"""
         try:
+            # Use a very short timeout - if CLI isn't immediately available, skip
+            # Using 'supabase' directly instead of 'npx supabase' to avoid npx download delays
             result = subprocess.run(
-                ["npx", "supabase", "--version"],
-                capture_output=True, text=True, timeout=30, shell=True
+                "supabase --version",
+                capture_output=True, text=True, timeout=5, shell=True
+            )
+            if result.returncode == 0:
+                return True
+            
+            # Fallback: try npx with short timeout
+            result = subprocess.run(
+                "npx --no-install supabase --version",
+                capture_output=True, text=True, timeout=5, shell=True
             )
             return result.returncode == 0
-        except:
+        except subprocess.TimeoutExpired:
+            return False
+        except Exception:
             return False
 
     def check_logged_in(self) -> bool:
+        """Check if logged in to Supabase CLI"""
         try:
             result = subprocess.run(
-                ["npx", "supabase", "projects", "list"],
-                capture_output=True, text=True, timeout=30, shell=True
+                "supabase projects list",
+                capture_output=True, text=True, timeout=10, shell=True
             )
             return result.returncode == 0 and "REFERENCE ID" in result.stdout
-        except:
+        except subprocess.TimeoutExpired:
+            return False
+        except Exception:
             return False
 
     def get_available_functions(self) -> List[str]:
@@ -541,14 +626,15 @@ class EdgeFunctionDeployer:
     def deploy_function(self, function_name: str) -> Tuple[bool, str]:
         try:
             result = subprocess.run(
-                ["npx", "supabase", "functions", "deploy", function_name,
-                 "--project-ref", self.project_ref],
+                f"supabase functions deploy {function_name} --project-ref {self.project_ref}",
                 capture_output=True, text=True, timeout=120, shell=True,
                 cwd=str(self.functions_dir.parent)
             )
             if result.returncode == 0:
                 return True, result.stdout
             return False, result.stderr or result.stdout
+        except subprocess.TimeoutExpired:
+            return False, "Deployment timed out"
         except Exception as e:
             return False, str(e)
 
@@ -840,43 +926,57 @@ def run_migration():
     functions_dir = script_dir / "functions"
     deployer = EdgeFunctionDeployer(PROD_PROJECT_REF, functions_dir)
 
-    if deployer.check_cli_available() and deployer.check_logged_in():
-        functions = deployer.get_available_functions()
-        if functions:
-            print_info(f"Found {len(functions)} edge functions: {', '.join(functions)}")
-            failed_functions = []
-            for func_name in functions:
-                print_info(f"Deploying {func_name}...")
-                success, msg = deployer.deploy_function(func_name)
-                if success:
-                    print_success(f"Deployed: {func_name}")
-                else:
-                    failed_functions.append(func_name)
-                    # Check for specific error types
-                    if "403" in str(msg) or "privileges" in str(msg).lower():
-                        print_error(f"Permission denied for: {func_name}")
-                    else:
-                        print_error(f"Failed: {func_name} - {msg}")
-            
-            if failed_functions:
-                print()
-                print_warning("Some edge functions failed to deploy automatically.")
-                print_info("To deploy manually:")
-                print_info("  1. Login to Supabase CLI: npx supabase login")
-                print_info(f"  2. Link project: npx supabase link --project-ref {PROD_PROJECT_REF}")
-                print_info("  3. Deploy each function:")
-                for func in failed_functions:
-                    print_color(f"     npx supabase functions deploy {func} --project-ref {PROD_PROJECT_REF}", Colors.GRAY)
-                print()
-                print_info("Or deploy via Supabase Dashboard > Edge Functions > Deploy a new function")
-        else:
-            print_warning("No edge functions found in functions directory")
+    # Check for edge functions first
+    functions = deployer.get_available_functions()
+    if not functions:
+        print_warning("No edge functions found in functions directory")
+        print_info("Skipping edge function deployment")
     else:
-        print_warning("Supabase CLI not available or not logged in")
-        print_info("To deploy edge functions manually:")
-        print_info("  1. Install Supabase CLI: npm install -g supabase")
-        print_info("  2. Login: npx supabase login")
-        print_info(f"  3. Deploy: npx supabase functions deploy --project-ref {PROD_PROJECT_REF}")
+        print_info(f"Found {len(functions)} edge functions: {', '.join(functions)}")
+        print_info("Checking for Supabase CLI...")
+        
+        cli_available = deployer.check_cli_available()
+        if cli_available:
+            print_success("Supabase CLI found")
+            print_info("Checking login status...")
+            logged_in = deployer.check_logged_in()
+            
+            if logged_in:
+                print_success("Logged in to Supabase")
+                failed_functions = []
+                for func_name in functions:
+                    print_info(f"Deploying {func_name}...")
+                    success, msg = deployer.deploy_function(func_name)
+                    if success:
+                        print_success(f"Deployed: {func_name}")
+                    else:
+                        failed_functions.append(func_name)
+                        if "403" in str(msg) or "privileges" in str(msg).lower():
+                            print_error(f"Permission denied for: {func_name}")
+                        else:
+                            print_error(f"Failed: {func_name} - {msg}")
+                
+                if failed_functions:
+                    print()
+                    print_warning("Some edge functions failed to deploy automatically.")
+                    print_info("To deploy manually:")
+                    print_info("  1. Login to Supabase CLI: supabase login")
+                    print_info(f"  2. Link project: supabase link --project-ref {PROD_PROJECT_REF}")
+                    print_info("  3. Deploy each function:")
+                    for func in failed_functions:
+                        print_color(f"     supabase functions deploy {func} --project-ref {PROD_PROJECT_REF}", Colors.GRAY)
+            else:
+                print_warning("Supabase CLI not logged in - skipping edge function deployment")
+                print_info("To deploy edge functions manually:")
+                print_info("  1. Login: supabase login")
+                print_info(f"  2. Deploy: supabase functions deploy --project-ref {PROD_PROJECT_REF}")
+        else:
+            print_warning("Supabase CLI not available - skipping edge function deployment")
+            print_info("Edge functions can be deployed later via:")
+            print_info("  1. Install Supabase CLI: npm install -g supabase")
+            print_info("  2. Login: supabase login")
+            print_info(f"  3. Deploy: supabase functions deploy --project-ref {PROD_PROJECT_REF}")
+            print_info("Or deploy via Supabase Dashboard > Edge Functions")
 
     # Step 8: Summary
     print_step(8, total_steps, "Migration Complete!")
