@@ -4,13 +4,24 @@ import { formatTime } from '../../../utils';
 import { normalizeDate, formatLocalDate } from './dateUtils';
 
 /**
+ * Parse timestamp as local time.
+ * Desktop app stores local time via datetime.now() without timezone,
+ * but the timestamptz column adds +00:00 treating it as UTC.
+ * Strip timezone suffix so JS interprets it as the local time it actually is.
+ */
+const parseAsLocalTime = (isoString) => {
+  if (!isoString) return null;
+  const stripped = isoString.replace(/([+-]\d{2}(:\d{2})?|Z)$/, '');
+  return new Date(stripped);
+};
+
+/**
  * Day View Component
  * Displays today's timesheet with team member cards and activity timeline
  */
 function DayView({ loading, timeData }) {
   const [timelineData, setTimelineData] = useState(null);
   const [myTimelineData, setMyTimelineData] = useState(null);
-  const [timelineLoading, setTimelineLoading] = useState(false);
   // Helper function to get user initials
   const getInitials = (name) => {
     if (!name) return '?';
@@ -45,7 +56,6 @@ function DayView({ loading, timeData }) {
   // Fetch timeline data for today
   useEffect(() => {
     const fetchTimeline = async () => {
-      setTimelineLoading(true);
       try {
         if (timeData?.canViewAllUsers) {
           // Admin: fetch all users' timeline
@@ -67,8 +77,6 @@ function DayView({ loading, timeData }) {
         }
       } catch (err) {
         console.error('Failed to load timeline:', err);
-      } finally {
-        setTimelineLoading(false);
       }
     };
 
@@ -77,43 +85,120 @@ function DayView({ loading, timeData }) {
     }
   }, [timeData, loading, todayStr]);
 
-  // Timeline hours to display (6am to 8pm)
-  const timelineHours = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
+  // Compute dynamic timeline range from actual activity data
+  const getTimelineRange = () => {
+    let allSessions = [];
 
-  // Build hourly activity slots from timeline data for a specific user
-  const getUserTimelineSlots = (userId) => {
+    if (timeData?.canViewAllUsers && timelineData) {
+      timelineData.usersWithActivity?.forEach(user => {
+        if (user.sessions) {
+          allSessions = allSessions.concat(user.sessions);
+        }
+      });
+    } else if (myTimelineData?.sessions) {
+      allSessions = myTimelineData.sessions;
+    }
+
+    if (allSessions.length === 0) {
+      return { startHour: 8, endHour: 18 };
+    }
+
+    const todayMidnight = new Date(today);
+    todayMidnight.setHours(0, 0, 0, 0);
+
+    let minHours = Infinity;
+    let maxHours = -Infinity;
+
+    allSessions.forEach(session => {
+      const start = parseAsLocalTime(session.startTime || session.timestamp);
+      const end = parseAsLocalTime(session.endTime || session.timestamp);
+      if (!start || !end) return;
+
+      // Hours from midnight (can exceed 24 for next-day activity)
+      const startH = (start - todayMidnight) / (1000 * 60 * 60);
+      const endH = (end - todayMidnight) / (1000 * 60 * 60);
+
+      minHours = Math.min(minHours, startH);
+      maxHours = Math.max(maxHours, endH);
+    });
+
+    // Round down start, round up end, add 1-hour padding
+    let startHour = Math.max(0, Math.floor(minHours) - 1);
+    let endHour = Math.min(30, Math.ceil(maxHours) + 1);
+
+    // Ensure minimum 4-hour range for readability
+    if (endHour - startHour < 4) {
+      const mid = (startHour + endHour) / 2;
+      startHour = Math.max(0, Math.floor(mid - 2));
+      endHour = Math.min(30, Math.ceil(mid + 2));
+    }
+
+    return { startHour, endHour };
+  };
+
+  const timelineRange = getTimelineRange();
+  const TIMELINE_START_HOUR = timelineRange.startHour;
+  const TIMELINE_END_HOUR = timelineRange.endHour;
+  const TIMELINE_TOTAL_MINUTES = (TIMELINE_END_HOUR - TIMELINE_START_HOUR) * 60;
+
+  // Generate hour labels dynamically based on range
+  const hourStep = (TIMELINE_END_HOUR - TIMELINE_START_HOUR) > 16 ? 2 : 1;
+  const timelineHours = [];
+  for (let h = TIMELINE_START_HOUR; h < TIMELINE_END_HOUR; h += hourStep) {
+    timelineHours.push(h);
+  }
+
+  // Format hour label (handles hours > 24 for cross-midnight display)
+  const formatHourLabel = (hour) => {
+    const h = hour % 24;
+    if (h === 0) return '12am';
+    if (h === 12) return '12pm';
+    if (h > 12) return `${h - 12}pm`;
+    return `${h}am`;
+  };
+
+  // Convert time to percentage position on timeline
+  const timeToPercent = (date) => {
+    const todayMidnight = new Date(today);
+    todayMidnight.setHours(0, 0, 0, 0);
+    const hoursFromMidnight = (date - todayMidnight) / (1000 * 60 * 60);
+    const minutesFromStart = (hoursFromMidnight - TIMELINE_START_HOUR) * 60;
+    return Math.max(0, Math.min(100, (minutesFromStart / TIMELINE_TOTAL_MINUTES) * 100));
+  };
+
+  // Get user's sessions as time blocks for timeline rendering
+  const getUserTimeBlocks = (userId) => {
+    let sessions = [];
+
     // For admins, use team timeline data
     if (timeData?.canViewAllUsers && timelineData) {
       const userTimeline = timelineData.usersWithActivity?.find(u => u.userId === userId);
-      if (!userTimeline || !userTimeline.sessions || userTimeline.sessions.length === 0) {
-        return null;
-      }
-
-      // Create slots for each half-hour
-      const slots = Array(48).fill(false);
-      userTimeline.sessions.forEach(session => {
-        const slotIndex = session.hour * 2 + (session.minute >= 30 ? 1 : 0);
-        if (slotIndex >= 0 && slotIndex < 48) {
-          slots[slotIndex] = true;
-        }
-      });
-
-      return slots;
+      sessions = userTimeline?.sessions || [];
+    } else if (myTimelineData && myTimelineData.sessions) {
+      // For regular users, use their own timeline data
+      sessions = myTimelineData.sessions;
     }
-    
-    // For regular users, use their own timeline data
-    if (myTimelineData && myTimelineData.sessions && myTimelineData.sessions.length > 0) {
-      const slots = Array(48).fill(false);
-      myTimelineData.sessions.forEach(session => {
-        const slotIndex = session.hour * 2 + (session.minute >= 30 ? 1 : 0);
-        if (slotIndex >= 0 && slotIndex < 48) {
-          slots[slotIndex] = true;
-        }
-      });
-      return slots;
-    }
-    
-    return null;
+
+    if (!sessions || sessions.length === 0) return [];
+
+    // Convert sessions to time blocks with position and width
+    return sessions.map(session => {
+      const startTime = parseAsLocalTime(session.startTime || session.timestamp);
+      const endTime = parseAsLocalTime(session.endTime || session.timestamp);
+      if (!startTime || !endTime) return null;
+
+      const leftPercent = timeToPercent(startTime);
+      const rightPercent = timeToPercent(endTime);
+      const widthPercent = Math.max(0.5, rightPercent - leftPercent); // Min 0.5% width for visibility
+
+      return {
+        left: leftPercent,
+        width: widthPercent,
+        startTime: startTime,
+        endTime: endTime,
+        durationSeconds: session.durationSeconds || 0
+      };
+    }).filter(block => block && block.left < 100 && (block.left + block.width) > 0); // Filter out nulls and blocks outside visible range
   };
 
   // Get last activity info for a user
@@ -123,13 +208,25 @@ function DayView({ loading, timeData }) {
       const userTimeline = timelineData.usersWithActivity?.find(u => u.userId === userId);
       return userTimeline?.lastActivity || null;
     }
-    
+
     // For regular users, use their own timeline data
     if (myTimelineData) {
       return myTimelineData.lastActivity || null;
     }
-    
+
     return null;
+  };
+
+  // Get tooltip text for a time block (show time range and duration)
+  const getBlockTooltip = (block) => {
+    const formatTimeDisplay = (date) => date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+
+    const durationMins = Math.round(block.durationSeconds / 60);
+    return `${formatTimeDisplay(block.startTime)} - ${formatTimeDisplay(block.endTime)} (${durationMins}m)`;
   };
 
   // Check if timeline is available (for admins or regular user)
@@ -140,18 +237,12 @@ function DayView({ loading, timeData }) {
     return myTimelineData !== null;
   };
 
-  // Format time of day (e.g., "2:30 PM")
-  const formatTimeOfDay = (timestamp) => {
-    if (!timestamp) return '';
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-  };
-
   // Calculate time ago
   const getTimeAgo = (timestamp) => {
     if (!timestamp) return null;
     const now = new Date();
-    const then = new Date(timestamp);
+    const then = parseAsLocalTime(timestamp);
+    if (!then) return null;
     const diffMs = now - then;
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMins / 60);
@@ -236,7 +327,7 @@ function DayView({ loading, timeData }) {
                     <div className="timeline-header-hours">
                       {timelineHours.map(hour => (
                         <span key={hour} className="timeline-hour-label">
-                          {hour === 12 ? '12pm' : hour > 12 ? `${hour-12}pm` : `${hour}am`}
+                          {formatHourLabel(hour)}
                         </span>
                       ))}
                     </div>
@@ -245,7 +336,7 @@ function DayView({ loading, timeData }) {
                 )}
 
                 {users.map((user, idx) => {
-                  const slots = getUserTimelineSlots(user.userId);
+                  const timeBlocks = getUserTimeBlocks(user.userId);
                   const lastActivity = getUserLastActivity(user.userId);
                   const timeAgo = lastActivity ? getTimeAgo(lastActivity) : null;
                   const hasActivity = user.totalSeconds > 0;
@@ -256,7 +347,7 @@ function DayView({ loading, timeData }) {
                       <div className="member-header">
                         {/* Avatar with status indicator */}
                         <div className="member-avatar-wrapper">
-                          <div 
+                          <div
                             className="member-avatar"
                             style={{ backgroundColor: getAvatarColor(user.displayName) }}
                             title={user.displayName}
@@ -282,32 +373,31 @@ function DayView({ loading, timeData }) {
                           )}
                         </div>
 
-                        {/* Timeline visualization - for both admins and regular users */}
+                        {/* Timeline visualization - shows actual work periods */}
                         {showTimeline && (
                           <div className="member-timeline">
-                            {slots ? (
-                              <div className="timeline-bars">
-                                {timelineHours.map(hour => {
-                                  const slot1 = slots[hour * 2];
-                                  const slot2 = slots[hour * 2 + 1];
-                                  return (
-                                    <div key={hour} className="timeline-hour-cell">
-                                      <div className={`timeline-slot ${slot1 ? 'active' : ''}`}></div>
-                                      <div className={`timeline-slot ${slot2 ? 'active' : ''}`}></div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            ) : (
-                              <div className="timeline-bars empty">
+                            <div className="timeline-container">
+                              {/* Hour grid lines for visual reference */}
+                              <div className="timeline-grid">
                                 {timelineHours.map(hour => (
-                                  <div key={hour} className="timeline-hour-cell">
-                                    <div className="timeline-slot"></div>
-                                    <div className="timeline-slot"></div>
-                                  </div>
+                                  <div key={hour} className="timeline-grid-cell"></div>
                                 ))}
                               </div>
-                            )}
+                              {/* Actual time blocks positioned based on start_time and end_time */}
+                              <div className="timeline-blocks">
+                                {timeBlocks.map((block, blockIdx) => (
+                                  <div
+                                    key={blockIdx}
+                                    className="timeline-block active"
+                                    style={{
+                                      left: `${block.left}%`,
+                                      width: `${block.width}%`
+                                    }}
+                                    title={getBlockTooltip(block)}
+                                  ></div>
+                                ))}
+                              </div>
+                            </div>
                           </div>
                         )}
 
