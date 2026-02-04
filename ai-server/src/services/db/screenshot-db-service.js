@@ -148,6 +148,34 @@ async function getPendingScreenshots(limit = 10) {
 }
 
 /**
+ * Clear storage URLs after files have been deleted
+ * This prevents broken image links in the UI
+ * @param {string} screenshotId - Screenshot ID
+ * @returns {Promise<void>}
+ */
+async function clearStorageUrls(screenshotId) {
+  try {
+    const supabase = getClient();
+    const { error } = await supabase
+      .from('screenshots')
+      .update({
+        storage_url: null,
+        thumbnail_url: null,
+        storage_path: null,
+        updated_at: getLocalISOString()
+      })
+      .eq('id', screenshotId);
+
+    if (error) {
+      throw error;
+    }
+  } catch (error) {
+    logger.error('Error clearing storage URLs:', error);
+    throw new Error(`Failed to clear storage URLs: ${error.message}`);
+  }
+}
+
+/**
  * Get screenshot by ID
  * @param {string} screenshotId - Screenshot ID
  * @returns {Promise<Object|null>} Screenshot data or null if not found
@@ -179,5 +207,6 @@ module.exports = {
   updateScreenshotStatus,
   updateScreenshotDuration,
   getPendingScreenshots,
-  getScreenshotById
+  getScreenshotById,
+  clearStorageUrls
 };

@@ -28,6 +28,7 @@ module.exports = {
   updateScreenshotDuration: screenshotDbService.updateScreenshotDuration,
   getPendingScreenshots: screenshotDbService.getPendingScreenshots,
   getScreenshotById: screenshotDbService.getScreenshotById,
+  clearStorageUrls: screenshotDbService.clearStorageUrls,
 
   // Analysis DB Service
   saveAnalysisResult: analysisDbService.saveAnalysisResult,

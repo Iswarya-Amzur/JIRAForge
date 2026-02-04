@@ -5,7 +5,7 @@ import './components/common/Sidebar.css';
 import './components/modals/Modals.css';
 import UnassignedWork from './components/UnassignedWork';
 import TimesheetSettings from './shared/components/TimesheetSettings';
-import { DashboardTab, TimeAnalyticsTab, TeamAnalyticsTab, OrgAnalyticsTab, ScreenshotsTab, BRDUploadTab } from './components/tabs';
+import { DashboardTab, TimeAnalyticsTab, TeamAnalyticsTab, OrgAnalyticsTab, ScreenshotsTab, BRDUploadTab, ProjectSettingsTab } from './components/tabs';
 import { SessionReassignModal, ScreenshotPreviewModal, FullscreenViewer } from './components/modals';
 import { DesktopAppStatusBanner } from './components/common';
 import { AppProvider, useApp } from './context';
@@ -227,6 +227,22 @@ function AppContent() {
                 {sidebarOpen && <span className="sidebar-label">Organization Analytics</span>}
               </button>
             )} */}
+            {userPermissions.projectAdminProjects?.length > 0 && (
+              <button
+                className={`sidebar-item ${activeTab === 'project-settings' ? 'active' : ''}`}
+                onClick={() => setActiveTab('project-settings')}
+                title="Project Settings"
+              >
+                <span className="sidebar-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 2L2 7L12 12L22 7L12 2Z"></path>
+                    <path d="M2 17L12 22L22 17"></path>
+                    <path d="M2 12L12 17L22 12"></path>
+                  </svg>
+                </span>
+                {sidebarOpen && <span className="sidebar-label">Project Settings</span>}
+              </button>
+            )}
             {userPermissions.isJiraAdmin && (
               <button
                 className={`sidebar-item ${activeTab === 'timesheet-settings' ? 'active' : ''}`}
@@ -259,6 +275,9 @@ function AppContent() {
           {activeTab === 'org-analytics' && <OrgAnalyticsTab />}
           {activeTab === 'brd-upload' && <BRDUploadTab />}
           {activeTab === 'unassigned-work' && <UnassignedWork />}
+          {activeTab === 'project-settings' && userPermissions.projectAdminProjects?.length > 0 && (
+            <ProjectSettingsTab />
+          )}
           {activeTab === 'timesheet-settings' && userPermissions.isJiraAdmin && (
             <TimesheetSettings />
           )}
