@@ -511,12 +511,13 @@ function getProviderConfig(providerId) {
  * @param {number} params.temperature - Temperature setting (default: 0.3)
  * @param {number} params.max_tokens - Max tokens (default: 800)
  * @param {boolean} params.isVision - Whether this is a vision request (default: false)
+ * @param {string} params.reasoningEffort - For Gemini: 'none'|'low'|'medium'|'high'; 'none' disables thinking so output tokens go to the response (optional)
  * @param {string} params.userId - User ID for cost tracking (optional)
  * @param {string} params.organizationId - Organization ID for cost tracking (optional)
  * @param {string} params.screenshotId - Screenshot ID for cost tracking (optional)
  * @returns {Promise<Object>} { response, provider, model }
  */
-async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tokens = 800, isVision = false, userId = null, organizationId = null, screenshotId = null }) {
+async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tokens = 800, isVision = false, reasoningEffort = null, userId = null, organizationId = null, screenshotId = null }) {
   const errors = [];
   const requestType = isVision ? 'vision' : 'text';
 
@@ -571,6 +572,10 @@ async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tok
       };
       if (config.useLiteLLMUser) {
         requestParams.user = getLiteLLMUser();
+      }
+      // Disable Gemini thinking for text-only (e.g. OCR) so token budget goes to the JSON response
+      if (reasoningEffort && providerId === 'litellm-gemini') {
+        requestParams.reasoning_effort = reasoningEffort;
       }
 
       const response = await config.client.chat.completions.create(requestParams);
