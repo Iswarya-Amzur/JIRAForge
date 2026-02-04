@@ -95,7 +95,7 @@ Now compare what you found in Step 1 to the user's assigned issues:
 4. If you truly cannot determine which task (content is too generic or unrelated), return null
 5. When there's a reasonable match based on content analysis, USE IT - don't default to null
 
-Return ONLY valid JSON:
+Return ONLY valid JSON (no markdown code blocks, no extra text before or after):
 {
   "workType": "office" or "non-office",
   "taskKey": "PROJECT-123" or null,
@@ -103,7 +103,8 @@ Return ONLY valid JSON:
   "confidenceScore": 0.0-1.0,
   "contentAnalysis": "What I see: [describe the main content - code functions, file names, what's being worked on]",
   "reasoning": "Why I matched to this issue: [explain the connection between screenshot content and the issue]"
-}`;
+}
+Your response must be exactly one JSON object and nothing else.`;
 }
 
 /**
@@ -144,7 +145,7 @@ Rules:
 - Analyze the text content to understand what work is being done
 - Match to an issue based on content similarity, not just keywords
 - ONLY return task keys from the assigned issues list
-- Return ONLY valid JSON:
+- Return ONLY valid JSON (no markdown, no extra text). Your response must be exactly one JSON object:
 {
   "workType": "office" or "non-office",
   "taskKey": "PROJECT-123" or null,
