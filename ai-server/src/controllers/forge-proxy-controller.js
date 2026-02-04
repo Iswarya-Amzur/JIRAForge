@@ -172,9 +172,21 @@ exports.supabaseQuery = async (req, res) => {
         result = await supabase.from(table).insert(body).select();
         break;
       case 'PATCH':
-      case 'UPDATE':
-        // Build update query with filters
-        let updateBuilder = supabase.from(table).update(body);
+      case 'UPDATE': {
+        // Ensure body is an object (Forge sends deleted_at/status for screenshot soft-delete)
+        const updatePayload = body && typeof body === 'object' ? body : {};
+        if (table === 'screenshots' && (updatePayload.deleted_at != null || updatePayload.status === 'deleted')) {
+          logger.info('[ForgeProxy] Screenshot soft-delete', {
+            screenshotId: query?.eq?.id,
+            deleted_at: updatePayload.deleted_at,
+            status: updatePayload.status
+          });
+          // Ensure updated_at is set when soft-deleting so the row is clearly modified
+          if (updatePayload.deleted_at != null && updatePayload.updated_at == null) {
+            updatePayload.updated_at = new Date().toISOString();
+          }
+        }
+        let updateBuilder = supabase.from(table).update(updatePayload);
         // Apply eq filters
         if (query?.eq) {
           for (const [col, val] of Object.entries(query.eq)) {
@@ -195,6 +207,7 @@ exports.supabaseQuery = async (req, res) => {
         }
         result = await updateBuilder.select();
         break;
+      }
       case 'DELETE':
         let deleteBuilder = supabase.from(table).delete();
         // Apply eq filters

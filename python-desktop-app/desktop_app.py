@@ -3918,6 +3918,29 @@ class TimeTracker:
                 issues = data.get('issues', [])
                 print(f"[OK] Jira API returned {len(issues)} issues")
 
+                # If project-level JQL returned 0 issues, try broader fallback so user_assigned_issues is populated
+                if not issues:
+                    fallback_jql = 'assignee = currentUser() AND Sprint in openSprints() AND statusCategory = "In Progress"'
+                    print(f"[INFO] Retrying with broader JQL for assigned issues")
+                    fallback_resp = requests.post(
+                        f'https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/search/jql',
+                        json={
+                            'jql': fallback_jql,
+                            'maxResults': 50,
+                            'fields': ['summary', 'status', 'project', 'description', 'labels']
+                        },
+                        headers={
+                            'Authorization': f'Bearer {access_token}',
+                            'Accept': 'application/json',
+                            'Content-Type': 'application/json'
+                        }
+                    )
+                    if fallback_resp.status_code == 200:
+                        fallback_data = fallback_resp.json()
+                        issues = fallback_data.get('issues', [])
+                        if issues:
+                            print(f"[OK] Fallback JQL returned {len(issues)} issues")
+
                 # Extract and format issue data with description and labels
                 formatted_issues = []
                 for issue in issues:
@@ -4825,6 +4848,13 @@ class TimeTracker:
             work_type = window_info.get('work_type', 'office')  # Default to 'office'
             is_blacklisted = window_info.get('is_blacklisted', False)
 
+            # Refresh user_assigned_issues cache before building payload so DB gets current list
+            if self.should_refresh_issues_cache():
+                self.user_issues = self.fetch_jira_issues()
+                self.issues_cache_time = time.time()
+                if self.user_issues:
+                    print(f"[OK] Fetched {len(self.user_issues)} In Progress issues for screenshot payload")
+
             # Get project_key from user's issues or accessible projects
             # This is used as a fallback when AI fails to detect the project
             # Priority: assigned issues > accessible projects
@@ -4895,12 +4925,7 @@ class TimeTracker:
                 if thumb_result:
                     thumb_url = storage_client.storage.from_('screenshots').get_public_url(thumb_path)
                 
-                # Refresh issues cache if needed
-                if self.should_refresh_issues_cache():
-                    self.user_issues = self.fetch_jira_issues()
-                    self.issues_cache_time = time.time()
-                    if self.user_issues:
-                        print(f"[OK] Fetched {len(self.user_issues)} In Progress issues")
+                # Issues cache was already refreshed before building screenshot_data
 
                 # Update screenshot_data with URLs for database insert
                 screenshot_data['storage_url'] = screenshot_url
