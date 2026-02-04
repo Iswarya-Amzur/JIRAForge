@@ -182,10 +182,10 @@ APP_VERSION = "1.0.0"
 # Embedded credentials (for production builds - no .env file needed)
 # SECURITY: All sensitive keys moved to AI Server - fetched at runtime after authentication
 EMBEDDED_CONFIG = {
-    'ATLASSIAN_CLIENT_ID': 'Q8HT4Jn205AuTiAarj088oWNDrOqwvM5',
+    'ATLASSIAN_CLIENT_ID': 'k2Xwzy8c1g3Wk6Xpbeev0x70CXEp9lJH',
     # REMOVED: ATLASSIAN_CLIENT_SECRET - now on AI Server only (security fix)
     # REMOVED: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY - fetched from AI Server
-    'AI_SERVER_URL': 'https://forgesync.amzur.com',  # AI Server for secure token exchange & config
+    'AI_SERVER_URL': 'https://timetracker-forge.amzur.com',  # AI Server for secure token exchange & config
     'CAPTURE_INTERVAL': '300',
     'WEB_PORT': '51777',
     'ADMIN_PASSWORD': 'admin123'
@@ -987,7 +987,7 @@ class AtlassianAuthManager:
         self.redirect_uri = f'http://localhost:{web_port}/auth/callback'
         self.authorization_url = 'https://auth.atlassian.com/authorize'
         # Token exchange now goes through AI Server
-        self.ai_server_url = get_env_var('AI_SERVER_URL', 'http://216.48.190.255:3001')
+        self.ai_server_url = get_env_var('AI_SERVER_URL', 'https://timetracker-forge.amzur.com')
         self.store_path = store_path or os.path.join(get_app_data_dir(), 'time_tracker_auth.json')
 
         # Migrate from plain-text to keyring if needed
@@ -1469,6 +1469,25 @@ class OfflineManager:
             CREATE INDEX IF NOT EXISTS idx_offline_screenshots_user 
             ON offline_screenshots(user_id)
         ''')
+
+        # Create project_settings_cache table for offline caching
+        # This caches admin-configured tracked statuses per project
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS project_settings_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id TEXT NOT NULL,
+                project_key TEXT NOT NULL,
+                project_name TEXT,
+                tracked_statuses TEXT,
+                cached_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(organization_id, project_key)
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_project_settings_org 
+            ON project_settings_cache(organization_id)
+        ''')
         
         conn.commit()
         conn.close()
@@ -1946,6 +1965,100 @@ class OfflineManager:
         except Exception as e:
             print(f"[ERROR] Error syncing screenshot: {e}")
             raise
+
+    def save_project_settings_cache(self, organization_id, project_settings):
+        """Save project settings to local cache for offline use
+        
+        Args:
+            organization_id: Organization UUID
+            project_settings: Dict of {project_key: {tracked_statuses: [...], project_name: '...'}}
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            for project_key, settings in project_settings.items():
+                tracked_statuses = json.dumps(settings.get('tracked_statuses', ['In Progress']))
+                project_name = settings.get('project_name', project_key)
+                
+                # Upsert: Insert or replace
+                cursor.execute('''
+                    INSERT OR REPLACE INTO project_settings_cache 
+                    (organization_id, project_key, project_name, tracked_statuses, cached_at)
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (organization_id, project_key, project_name, tracked_statuses))
+            
+            conn.commit()
+            conn.close()
+            print(f"[OK] Cached project settings for {len(project_settings)} projects")
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to cache project settings: {e}")
+
+    def load_project_settings_cache(self, organization_id):
+        """Load project settings from local cache
+        
+        Args:
+            organization_id: Organization UUID
+            
+        Returns:
+            dict: {project_key: {tracked_statuses: [...], project_name: '...'}} or empty dict
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT project_key, project_name, tracked_statuses
+                FROM project_settings_cache
+                WHERE organization_id = ?
+            ''', (organization_id,))
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            if rows:
+                result = {}
+                for row in rows:
+                    project_key = row['project_key']
+                    result[project_key] = {
+                        'tracked_statuses': json.loads(row['tracked_statuses']) if row['tracked_statuses'] else ['In Progress'],
+                        'project_name': row['project_name'] or project_key
+                    }
+                print(f"[OK] Loaded {len(result)} project settings from local cache")
+                return result
+            
+            return {}
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to load project settings cache: {e}")
+            return {}
+
+    def clear_project_settings_cache(self, organization_id=None):
+        """Clear project settings cache
+        
+        Args:
+            organization_id: If provided, only clear for this org. Otherwise clear all.
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            if organization_id:
+                cursor.execute('DELETE FROM project_settings_cache WHERE organization_id = ?', (organization_id,))
+            else:
+                cursor.execute('DELETE FROM project_settings_cache')
+            
+            deleted = cursor.rowcount
+            conn.commit()
+            conn.close()
+            
+            if deleted > 0:
+                print(f"[OK] Cleared {deleted} cached project settings")
+                
+        except Exception as e:
+            print(f"[ERROR] Failed to clear project settings cache: {e}")
 
 # ============================================================================
 # CONSENT MANAGER
@@ -2730,6 +2843,11 @@ class TimeTracker:
         self.user_projects = []  # Cache of user's accessible Jira projects
         self.projects_cache_time = None  # Last time projects were fetched
         self.projects_cache_ttl = 3600  # 1 hour cache TTL (projects change less frequently)
+
+        # Project settings caching (admin-configured tracked statuses per project)
+        self.project_settings = {}  # Dict: {project_key: {tracked_statuses: [...], ...}}
+        self.project_settings_cache_time = None
+        self.project_settings_cache_ttl = 300  # 5 minutes cache TTL
 
         # Multi-tenancy: Organization info
         self.organization_id = None  # UUID from public.organizations table
@@ -3856,6 +3974,146 @@ class TimeTracker:
             traceback.print_exc()
             return None
 
+    def fetch_project_settings(self, force_refresh=False):
+        """Fetch project settings (tracked statuses) from Supabase
+        
+        Project admins can configure which statuses to track per project.
+        This allows different projects to have different tracked statuses.
+        Uses local SQLite cache for offline support.
+        
+        Returns:
+            dict: {project_key: {'tracked_statuses': [...], 'project_name': '...'}, ...}
+        """
+        # Check in-memory cache first
+        if not force_refresh and self.project_settings_cache_time is not None:
+            time_since_fetch = time.time() - self.project_settings_cache_time
+            if time_since_fetch < self.project_settings_cache_ttl:
+                return self.project_settings
+
+        if not self.organization_id:
+            print("[WARN] Cannot fetch project settings: No organization ID")
+            return self.project_settings or {}
+
+        # Check if online
+        is_online = self.offline_manager.check_connectivity()
+        
+        if not is_online:
+            # OFFLINE: Load from local SQLite cache
+            print("[INFO] Offline - loading project settings from local cache...")
+            cached = self.offline_manager.load_project_settings_cache(self.organization_id)
+            if cached:
+                self.project_settings = cached
+                self.project_settings_cache_time = time.time()
+                return self.project_settings
+            else:
+                print("[WARN] No cached project settings available offline")
+                return self.project_settings or {}
+
+        try:
+            # ONLINE: Fetch from Supabase
+            client = self.supabase_service if self.supabase_service else self.supabase
+            if not client:
+                print("[WARN] Cannot fetch project settings: No Supabase client")
+                # Try local cache as fallback
+                cached = self.offline_manager.load_project_settings_cache(self.organization_id)
+                if cached:
+                    self.project_settings = cached
+                    self.project_settings_cache_time = time.time()
+                return self.project_settings or {}
+
+            print("[INFO] Fetching project settings from Supabase...")
+            result = client.table('project_settings') \
+                .select('project_key, project_name, tracked_statuses') \
+                .eq('organization_id', self.organization_id) \
+                .execute()
+
+            if result.data:
+                # Convert to dict keyed by project_key
+                self.project_settings = {}
+                for row in result.data:
+                    project_key = row.get('project_key')
+                    if project_key:
+                        self.project_settings[project_key] = {
+                            'tracked_statuses': row.get('tracked_statuses', ['In Progress']),
+                            'project_name': row.get('project_name', project_key)
+                        }
+                
+                self.project_settings_cache_time = time.time()
+                print(f"[OK] Loaded project settings for {len(self.project_settings)} projects")
+                for pk, settings in self.project_settings.items():
+                    print(f"     - {pk}: {settings['tracked_statuses']}")
+                
+                # Save to local cache for offline use
+                if self.project_settings:
+                    self.offline_manager.save_project_settings_cache(
+                        self.organization_id, 
+                        self.project_settings
+                    )
+            else:
+                print("[INFO] No project settings found, will use default (In Progress)")
+                self.project_settings = {}
+                self.project_settings_cache_time = time.time()
+
+            return self.project_settings
+
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch project settings: {e}")
+            return self.project_settings or {}
+
+    def get_tracked_statuses_for_project(self, project_key):
+        """Get tracked statuses for a specific project
+        
+        Args:
+            project_key: Jira project key (e.g., 'PROJ', 'SCRUM')
+            
+        Returns:
+            list: List of status names to track, defaults to ['In Progress']
+        """
+        # Ensure project settings are loaded
+        if not self.project_settings:
+            self.fetch_project_settings()
+        
+        # Get project-specific settings or use default
+        if project_key in self.project_settings:
+            return self.project_settings[project_key].get('tracked_statuses', ['In Progress'])
+        
+        # Default fallback
+        return ['In Progress']
+
+    def build_jql_for_tracked_statuses(self):
+        """Build JQL query using project-level tracked statuses
+        
+        If project settings exist, builds a query that respects each project's
+        configured statuses. Otherwise, falls back to statusCategory.
+        
+        Returns:
+            str: JQL query string
+        """
+        # Fetch project settings if not cached
+        self.fetch_project_settings()
+        
+        if self.project_settings:
+            # Build project-specific JQL
+            # Format: (project = "A" AND status IN (...)) OR (project = "B" AND status IN (...))
+            project_clauses = []
+            for project_key, settings in self.project_settings.items():
+                statuses = settings.get('tracked_statuses', ['In Progress'])
+                if statuses:
+                    status_list = ', '.join([f'"{s}"' for s in statuses])
+                    clause = f'(project = "{project_key}" AND status IN ({status_list}))'
+                    project_clauses.append(clause)
+            
+            if project_clauses:
+                # Combine all project clauses with OR
+                status_filter = ' OR '.join(project_clauses)
+                jql = f'assignee = currentUser() AND Sprint in openSprints() AND ({status_filter})'
+                print(f"[INFO] Using project-level tracked statuses JQL")
+                return jql
+        
+        # Fallback: Use statusCategory if no project settings
+        print("[INFO] No project settings, using statusCategory = 'In Progress'")
+        return 'assignee = currentUser() AND Sprint in openSprints() AND statusCategory = "In Progress"'
+
     def fetch_jira_issues(self):
         """Fetch user's In Progress Jira issues with automatic token refresh on 401"""
         print("[INFO] Attempting to fetch Jira issues...")
@@ -3870,7 +4128,10 @@ class TimeTracker:
             return []
 
         try:
-            jql = 'assignee = currentUser() AND Sprint in openSprints() AND status = "In Progress"'
+            # Build JQL using project-level tracked statuses (admin-configured)
+            # If project settings exist, uses project-specific statuses
+            # Otherwise, falls back to statusCategory = "In Progress"
+            jql = self.build_jql_for_tracked_statuses()
             print(f"[INFO] Querying Jira with JQL (POST): {jql}")
 
             # Use /search/jql endpoint as requested by the 410 error message

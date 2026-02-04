@@ -13,3 +13,6 @@ pynput==1.7.6
 winotify==1.1.0; sys_platform == 'win32'
 keyring==25.2.1
 tzlocal>=5.0
+jaraco.text>=4.0.0
+jaraco.functools>=4.0.0
+jaraco.context>=6.0.0
