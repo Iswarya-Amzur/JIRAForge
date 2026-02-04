@@ -67,8 +67,9 @@ async function analyzeWithVision({ imageBuffer, windowTitle, applicationName, us
     const { response, provider, model } = await chatCompletionWithFallback({
       messages,
       temperature: 0.3,
-      max_tokens: 800,
+      max_tokens: 1200,
       isVision: true,
+      reasoningEffort: 'none',
       userId: userId,
       organizationId: organizationId,
       screenshotId: screenshotId
@@ -103,6 +104,7 @@ async function analyzeWithVision({ imageBuffer, windowTitle, applicationName, us
 
 /**
  * Extract a candidate JSON string from raw content using multiple strategies.
+ * Handles full/truncated markdown code blocks and bare JSON.
  * @param {string} content - Raw AI response content
  * @returns {string[]} List of candidate strings to try parsing
  */
@@ -110,35 +112,53 @@ function extractJsonCandidates(content) {
   const trimmed = content.trim();
   const candidates = [];
 
-  // 1) Markdown code blocks (prefer ```json then plain ```)
+  // 1) Markdown code blocks (prefer ```json then plain ```) - full block
   const codeBlockJson = trimmed.match(/```json\s*([\s\S]*?)\s*```/);
   if (codeBlockJson) candidates.push(codeBlockJson[1].trim());
 
   const codeBlockAny = trimmed.match(/```\s*([\s\S]*?)\s*```/);
   if (codeBlockAny) candidates.push(codeBlockAny[1].trim());
 
-  // 2) First { to last } (handles "Here is the analysis: { ... }")
+  // 2) Truncated ```json (no closing ```) - Gemini often truncates; take from first { to end
+  if (/```json\s*[\s\S]*\{/.test(trimmed)) {
+    const afterFence = trimmed.replace(/^[^]*?```json\s*/i, '').trim();
+    const firstBrace = afterFence.indexOf('{');
+    if (firstBrace !== -1) {
+      const fromBrace = afterFence.slice(firstBrace);
+      candidates.push(fromBrace);
+    }
+  }
+
+  // 3) First { to last } (handles "Here is the analysis: { ... }" or full JSON)
   const firstBrace = trimmed.indexOf('{');
   const lastBrace = trimmed.lastIndexOf('}');
   if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
     candidates.push(trimmed.slice(firstBrace, lastBrace + 1));
   }
 
-  // 3) Raw content as-is
+  // 4) Raw content as-is
   candidates.push(trimmed);
 
   return [...new Set(candidates)];
 }
 
 /**
- * Try to fix common LLM JSON mistakes (trailing commas, etc.)
+ * Try to fix common LLM JSON mistakes (trailing commas, truncated closing).
  * @param {string} raw - Raw JSON string
  * @returns {string} Potentially fixed JSON string
  */
 function tryFixJsonString(raw) {
-  return raw
+  let s = raw
     .replace(/,(\s*[}\]])/g, '$1')  // trailing commas before } or ]
-    .replace(/\r\n/g, '\n');
+    .replace(/\r\n/g, '\n')
+    .trim();
+  // If truncated (unclosed object), append closing brace(s) by balance
+  const open = (s.match(/\{/g) || []).length;
+  const close = (s.match(/\}/g) || []).length;
+  if (open > close) {
+    s += '}'.repeat(open - close);
+  }
+  return s;
 }
 
 /**

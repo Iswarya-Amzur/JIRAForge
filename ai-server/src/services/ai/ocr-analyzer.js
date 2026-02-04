@@ -87,8 +87,9 @@ async function analyzeWithOCR({ extractedText, windowTitle, applicationName, use
     const { response, provider, model } = await chatCompletionWithFallback({
       messages,
       temperature: 0.3,
-      max_tokens: 300,
+      max_tokens: 800,
       isVision: false,
+      reasoningEffort: 'none',
       userId: userId,
       organizationId: organizationId,
       screenshotId: screenshotId

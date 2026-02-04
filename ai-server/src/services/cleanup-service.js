@@ -140,8 +140,8 @@ async function markFilesAsDeleted(screenshotId) {
     const { error } = await supabase
       .from('screenshots')
       .update({
-        storage_url: null,
-        thumbnail_url: null,
+        storage_url: '',
+        thumbnail_url: '',
         status: 'deleted',
         deleted_at: toLocalISOString(new Date())
       })
