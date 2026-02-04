@@ -97,10 +97,6 @@ function TimesheetSettings() {
   const [customBlacklistApp, setCustomBlacklistApp] = useState('');
   const [customPrivateSite, setCustomPrivateSite] = useState('');
 
-  useEffect(() => {
-    loadSettings();
-  }, []);
-
   const loadSettings = async () => {
     setLoading(true);
     try {
@@ -118,6 +114,11 @@ function TimesheetSettings() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSave = async () => {
     setSaving(true);

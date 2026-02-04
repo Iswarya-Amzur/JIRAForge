@@ -23,15 +23,17 @@ export function registerPermissionsResolvers(resolver) {
       const isAdmin = await isJiraAdmin();
 
       // Get list of projects where user is Project Admin
-      // For Jira Admins, get all project keys so they can access Team Analytics for any project
+      // Always fetch projectAdminProjects for all users (including Jira Admins)
       let projectAdminProjects = [];
       let allProjectKeys = [];
 
+      // Always get projects where user is project admin
+      projectAdminProjects = await getProjectsUserAdmins();
+
+      // For Jira Admins, also get all project keys for Team Analytics
       if (isAdmin) {
         const projectKeysSet = await getAllJiraProjectKeys();
         allProjectKeys = Array.from(projectKeysSet);
-      } else {
-        projectAdminProjects = await getProjectsUserAdmins();
       }
 
       // Check basic issue permissions (useful for future features)
