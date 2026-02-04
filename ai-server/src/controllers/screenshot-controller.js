@@ -3,6 +3,9 @@ const supabaseService = require('../services/supabase-service');
 const logger = require('../utils/logger');
 const { getLocalISOString, toLocalISOString } = require('../utils/datetime');
 
+// Feature flag: Delete screenshots after analysis (default: true for privacy)
+const DELETE_AFTER_ANALYSIS = process.env.DELETE_SCREENSHOTS_AFTER_ANALYSIS !== 'false';
+
 /**
  * Validate UUID format
  * @param {string} id - String to validate
@@ -167,6 +170,39 @@ exports.analyzeScreenshot = async (req, res) => {
 
     // Update screenshot status
     await supabaseService.updateScreenshotStatus(screenshot_id, 'analyzed');
+
+    // Delete screenshot files from storage after successful analysis (privacy feature)
+    if (DELETE_AFTER_ANALYSIS && storage_path) {
+      try {
+        // Delete the main screenshot
+        await supabaseService.deleteFile('screenshots', storage_path);
+        logger.info('Deleted screenshot from storage after analysis', {
+          screenshot_id,
+          storage_path
+        });
+
+        // Delete the thumbnail (derive path from main screenshot path)
+        const thumbPath = storage_path.replace('screenshot_', 'thumb_').replace('.png', '.jpg');
+        try {
+          await supabaseService.deleteFile('screenshots', thumbPath);
+          logger.debug('Deleted thumbnail from storage', { thumbPath });
+        } catch (thumbError) {
+          // Thumbnail may not exist - this is not critical
+          logger.debug('Thumbnail not found or already deleted', { thumbPath });
+        }
+
+        // Clear storage URLs in database to prevent broken image links
+        await supabaseService.clearStorageUrls(screenshot_id);
+        logger.debug('Cleared storage URLs in database', { screenshot_id });
+      } catch (deleteError) {
+        // Log but don't fail the analysis if deletion fails
+        logger.warn('Failed to delete screenshot from storage (non-critical)', {
+          screenshot_id,
+          storage_path,
+          error: deleteError.message
+        });
+      }
+    }
 
     // If configured, create worklog in Jira (only for office work)
     if (analysis.taskKey && analysis.workType === 'office' && process.env.AUTO_CREATE_WORKLOGS === 'true') {
