@@ -8,8 +8,11 @@ const logger = require('../utils/logger');
 // Atlassian's JWKS endpoint for FIT token verification
 const JWKS_URL = 'https://forge.cdn.prod.atlassian-dev.net/.well-known/jwks.json';
 
-// Your Forge App ID (from manifest.yml)
-const FORGE_APP_ID = process.env.FORGE_APP_ID || 'ari:cloud:ecosystem::app/c8bab1dc-ae32-4e6f-9dbd-eb242cc6c14a';
+// Your Forge App ID (from manifest.yml) - MUST be set in environment
+if (!process.env.FORGE_APP_ID) {
+  throw new Error('FORGE_APP_ID environment variable is required. Set it in .env to your Forge app ARI.');
+}
+const FORGE_APP_ID = process.env.FORGE_APP_ID;
 
 // Cache the JWKS and jose module
 let cachedJWKS = null;
