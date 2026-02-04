@@ -10,6 +10,7 @@ const brdController = require('./controllers/brd-controller');
 const authController = require('./controllers/auth-controller');
 const forgeProxyController = require('./controllers/forge-proxy-controller');
 const appVersionController = require('./controllers/app-version-controller');
+const feedbackController = require('./controllers/feedback-controller');
 const authMiddleware = require('./middleware/auth');
 const forgeAuthMiddleware = require('./middleware/forge-auth');
 const logger = require('./utils/logger');
@@ -122,6 +123,35 @@ app.post('/api/auth/verify', authLimiter, authController.verifyToken);
 
 // Get Supabase configuration (returns credentials after verifying Atlassian token)
 app.post('/api/auth/supabase-config', authLimiter, authController.getSupabaseConfig);
+
+// =============================================================================
+// FEEDBACK ROUTES (Session-authenticated via feedback session store)
+// Desktop app creates a session, then opens the browser to the feedback form
+// =============================================================================
+
+// Rate limiter for feedback submissions (stricter than general)
+const feedbackLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 submissions per 15 minutes per IP
+  message: 'Too many feedback submissions, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    return req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
+  }
+});
+
+// Create feedback session (desktop app sends Atlassian token)
+app.post('/api/feedback/session', authLimiter, feedbackController.createSession);
+
+// Serve feedback form (session-authenticated via query param)
+app.get('/feedback', feedbackController.getFeedbackPage);
+
+// Submit feedback (session-authenticated via body)
+app.post('/api/feedback/submit', feedbackLimiter, feedbackController.submitFeedback);
+
+// Check feedback/Jira creation status (public - feedback ID is unguessable UUID)
+app.get('/api/feedback/status/:id', feedbackController.getFeedbackStatus);
 
 // =============================================================================
 // APP VERSION ROUTES (Public - for desktop app update checking)

@@ -182,10 +182,10 @@ APP_VERSION = "1.0.0"
 # Embedded credentials (for production builds - no .env file needed)
 # SECURITY: All sensitive keys moved to AI Server - fetched at runtime after authentication
 EMBEDDED_CONFIG = {
-    'ATLASSIAN_CLIENT_ID': 'k2Xwzy8c1g3Wk6Xpbeev0x70CXEp9lJH',
+    'ATLASSIAN_CLIENT_ID': 'Q8HT4Jn205AuTiAarj088oWNDrOqwvM5',
     # REMOVED: ATLASSIAN_CLIENT_SECRET - now on AI Server only (security fix)
     # REMOVED: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY - fetched from AI Server
-    'AI_SERVER_URL': 'https://timetracker-forge.amzur.com',  # AI Server for secure token exchange & config
+    'AI_SERVER_URL': 'https://forgesync.amzur.com',  # AI Server for secure token exchange & config
     'CAPTURE_INTERVAL': '300',
     'WEB_PORT': '51777',
     'ADMIN_PASSWORD': 'admin123'
@@ -987,7 +987,7 @@ class AtlassianAuthManager:
         self.redirect_uri = f'http://localhost:{web_port}/auth/callback'
         self.authorization_url = 'https://auth.atlassian.com/authorize'
         # Token exchange now goes through AI Server
-        self.ai_server_url = get_env_var('AI_SERVER_URL', 'https://timetracker-forge.amzur.com')
+        self.ai_server_url = get_env_var('AI_SERVER_URL', 'https://forgesync.amzur.com')
         self.store_path = store_path or os.path.join(get_app_data_dir(), 'time_tracker_auth.json')
 
         # Migrate from plain-text to keyring if needed
@@ -6232,9 +6232,15 @@ class TimeTracker:
         # menu_items.append(pystray.Menu.SEPARATOR)
         # menu_items.append(item('Settings', open_settings))
 
+        # Add Send Feedback menu item
+        def send_feedback_action():
+            self._open_feedback_form()
+
+        menu_items.append(item('Send Feedback', send_feedback_action))
+
         # Add separator and update-related menu items
         menu_items.append(pystray.Menu.SEPARATOR)
-        
+
         # Check for Updates / Download Update menu item
         def check_updates_action():
             """Check for updates and open download URL if available"""
@@ -6268,6 +6274,61 @@ class TimeTracker:
         menu_items.append(item(lambda text: get_update_label(), check_updates_action))
 
         return pystray.Menu(*menu_items)
+
+    def _open_feedback_form(self):
+        """Open the feedback form in the browser via a session-authenticated URL"""
+        try:
+            access_token = self.auth_manager.tokens.get('access_token')
+            if not access_token:
+                print("[WARN] No access token available for feedback, opening login")
+                webbrowser.open(f'http://localhost:{self.web_port}/login')
+                return
+
+            cloud_id = self.get_jira_cloud_id()
+            if not cloud_id:
+                print("[WARN] No Jira Cloud ID available for feedback")
+                return
+
+            # Create a feedback session on the AI server
+            print("[INFO] Creating feedback session...")
+            response = requests.post(
+                f"{self.ai_server_url}/api/feedback/session",
+                json={
+                    'atlassian_token': access_token,
+                    'cloud_id': cloud_id
+                },
+                timeout=15
+            )
+
+            # Handle 401 - token expired, try refresh
+            if response.status_code == 401:
+                print("[WARN] Token expired for feedback session, refreshing...")
+                if self.auth_manager.refresh_access_token():
+                    access_token = self.auth_manager.tokens.get('access_token')
+                    response = requests.post(
+                        f"{self.ai_server_url}/api/feedback/session",
+                        json={
+                            'atlassian_token': access_token,
+                            'cloud_id': cloud_id
+                        },
+                        timeout=15
+                    )
+                else:
+                    print("[ERROR] Token refresh failed for feedback")
+                    return
+
+            if response.status_code == 200:
+                result = response.json()
+                feedback_url = result.get('feedback_url')
+                if feedback_url:
+                    print(f"[OK] Opening feedback form: {feedback_url}")
+                    webbrowser.open(feedback_url)
+                else:
+                    print("[ERROR] No feedback URL in response")
+            else:
+                print(f"[ERROR] Failed to create feedback session: {response.status_code} - {response.text}")
+        except Exception as e:
+            print(f"[ERROR] Failed to open feedback form: {e}")
 
     def _exit_app(self):
         """Exit the application from tray menu"""
