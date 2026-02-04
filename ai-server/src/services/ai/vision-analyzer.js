@@ -102,21 +102,75 @@ async function analyzeWithVision({ imageBuffer, windowTitle, applicationName, us
 }
 
 /**
+ * Extract a candidate JSON string from raw content using multiple strategies.
+ * @param {string} content - Raw AI response content
+ * @returns {string[]} List of candidate strings to try parsing
+ */
+function extractJsonCandidates(content) {
+  const trimmed = content.trim();
+  const candidates = [];
+
+  // 1) Markdown code blocks (prefer ```json then plain ```)
+  const codeBlockJson = trimmed.match(/```json\s*([\s\S]*?)\s*```/);
+  if (codeBlockJson) candidates.push(codeBlockJson[1].trim());
+
+  const codeBlockAny = trimmed.match(/```\s*([\s\S]*?)\s*```/);
+  if (codeBlockAny) candidates.push(codeBlockAny[1].trim());
+
+  // 2) First { to last } (handles "Here is the analysis: { ... }")
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    candidates.push(trimmed.slice(firstBrace, lastBrace + 1));
+  }
+
+  // 3) Raw content as-is
+  candidates.push(trimmed);
+
+  return [...new Set(candidates)];
+}
+
+/**
+ * Try to fix common LLM JSON mistakes (trailing commas, etc.)
+ * @param {string} raw - Raw JSON string
+ * @returns {string} Potentially fixed JSON string
+ */
+function tryFixJsonString(raw) {
+  return raw
+    .replace(/,(\s*[}\]])/g, '$1')  // trailing commas before } or ]
+    .replace(/\r\n/g, '\n');
+}
+
+/**
  * Parse AI response and extract JSON
  * @param {string} content - Raw AI response content
  * @returns {Object} Parsed JSON object
  */
 function parseAIResponse(content) {
-  try {
-    // Extract JSON from markdown code blocks if present
-    const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) ||
-                      content.match(/```\s*([\s\S]*?)\s*```/);
-    const jsonString = jsonMatch ? jsonMatch[1] : content;
-    return JSON.parse(jsonString);
-  } catch (parseError) {
-    logger.warn('[AI] Failed to parse response as JSON');
+  if (!content || typeof content !== 'string') {
+    logger.warn('[AI] Empty or non-string response');
     throw new Error('Invalid JSON response from AI');
   }
+
+  const candidates = extractJsonCandidates(content);
+
+  for (const candidate of candidates) {
+    for (const fn of [s => s, tryFixJsonString]) {
+      try {
+        const str = fn(candidate);
+        if (!str) continue;
+        const parsed = JSON.parse(str);
+        if (parsed && typeof parsed === 'object') return parsed;
+      } catch (_) {
+        // try next candidate or fix
+      }
+    }
+  }
+
+  // Log a short sample for debugging (avoid logging huge or sensitive content)
+  const sample = content.length > 400 ? content.substring(0, 400) + '...' : content;
+  logger.warn('[AI] Failed to parse response as JSON. Sample: %s', sample.replace(/\n/g, ' '));
+  throw new Error('Invalid JSON response from AI');
 }
 
 /**
