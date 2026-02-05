@@ -14,11 +14,11 @@ function ProjectSettingsTab() {
   const [projects, setProjects] = useState([]);
   const [selectedProject, setSelectedProject] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [adminProjects, setAdminProjects] = useState([]);
   const [allProjectSettings, setAllProjectSettings] = useState([]);
 
   useEffect(() => {
     loadInitialData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadInitialData = async () => {
@@ -30,8 +30,7 @@ function ProjectSettingsTab() {
         // Only project admins can access this tab
         const hasProjectAdmin = permResult.permissions.projectAdminProjects?.length > 0;
         setIsAdmin(hasProjectAdmin);
-        setAdminProjects(permResult.permissions.projectAdminProjects || []);
-        
+
         if (hasProjectAdmin) {
           // Project admin - only load their admin projects
           await loadAdminProjects(permResult.permissions.projectAdminProjects);
