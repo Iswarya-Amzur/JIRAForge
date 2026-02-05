@@ -338,6 +338,25 @@ export async function createIssueAndAssign(req) {
       );
     }
 
+    // Mark the group as assigned (only if groupId is a valid UUID)
+    // This removes the group from the "unassigned work" view
+    if (isValidUUID(groupId)) {
+      await supabaseRequest(
+        supabaseConfig,
+        `unassigned_work_groups?id=eq.${groupId}`,
+        {
+          method: 'PATCH',
+          body: {
+            is_assigned: true,
+            assigned_to_issue_key: newIssueKey,
+            assigned_at: new Date().toISOString(),
+            assigned_by: userId
+          }
+        }
+      );
+      console.log(`[createIssueAndAssign] Marked group ${groupId} as assigned to ${newIssueKey}`);
+    }
+
     // Create worklog on new issue (only if time >= 60 seconds, Jira's minimum)
     let worklog = null;
     let worklogSkipped = false;
