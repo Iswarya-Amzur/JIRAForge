@@ -6,6 +6,7 @@
 
 const logger = require('../utils/logger');
 const { getClient } = require('../services/db/supabase-client');
+const sessionStore = require('../services/feedback-session-store');
 
 /**
  * Generic Supabase REST API proxy
@@ -994,4 +995,81 @@ function aggregateTimeByIssue(results, limit) {
     .sort((a, b) => b.totalSeconds - a.totalSeconds)
     .slice(0, limit);
 }
+
+/**
+ * Create feedback session for Forge app
+ * Uses FIT-authenticated context to get user info from Jira API
+ * Returns a feedback URL that can be opened in a new browser tab
+ *
+ * POST /api/forge/feedback/session
+ */
+exports.createFeedbackSession = async (req, res) => {
+  try {
+    const { cloudId, accountId } = req.forgeContext;
+
+    if (!cloudId || !accountId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing cloudId or accountId in authentication context'
+      });
+    }
+
+    // Get user info from our database (already synced from Jira)
+    const supabase = getClient();
+    if (!supabase) {
+      return res.status(500).json({
+        success: false,
+        error: 'Database not configured'
+      });
+    }
+
+    // Find user by Atlassian account ID
+    const { data: users, error: userError } = await supabase
+      .from('users')
+      .select('email, display_name')
+      .eq('atlassian_account_id', accountId)
+      .limit(1);
+
+    if (userError) {
+      logger.error('[ForgeProxy] Error fetching user for feedback:', userError);
+    }
+
+    const user = users?.[0];
+    const userEmail = user?.email || `${accountId}@atlassian.user`;
+    const userName = user?.display_name || 'Forge App User';
+
+    // Create session using the existing feedback session store
+    const sessionId = sessionStore.createSession({
+      atlassianToken: null, // Not needed - we use FIT auth
+      cloudId: cloudId,
+      userInfo: {
+        account_id: accountId,
+        email: userEmail,
+        name: userName
+      }
+    });
+
+    // Build feedback form URL
+    const protocol = req.protocol;
+    const host = req.get('host');
+    const feedbackUrl = `${protocol}://${host}/feedback?session=${sessionId}`;
+
+    logger.info('[ForgeProxy] Feedback session created for Forge user %s', accountId);
+
+    res.json({
+      success: true,
+      data: {
+        feedbackUrl,
+        sessionId
+      }
+    });
+
+  } catch (error) {
+    logger.error('[ForgeProxy] Feedback session creation error:', error);
+    res.status(500).json({
+      success: false,
+      error: `Failed to create feedback session: ${error.message}`
+    });
+  }
+};
 
