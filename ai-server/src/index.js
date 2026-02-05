@@ -230,6 +230,9 @@ app.post('/api/forge/storage/delete', forgeLimiter, forgeAuthMiddleware, forgePr
 // App version (for update notifications in Forge UI)
 app.post('/api/forge/app-version/latest', forgeLimiter, forgeAuthMiddleware, forgeProxyController.getLatestAppVersion);
 
+// Feedback session (opens feedback form in browser)
+app.post('/api/forge/feedback/session', forgeLimiter, forgeAuthMiddleware, forgeProxyController.createFeedbackSession);
+
 // =============================================================================
 // PROTECTED ROUTES (require authMiddleware)
 // =============================================================================

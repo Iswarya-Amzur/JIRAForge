@@ -240,11 +240,20 @@ exports.analyzeScreenshot = async (req, res) => {
     });
 
   } catch (error) {
-    logger.error('Screenshot analysis error:', error);
+    // Extract webhook data for better error logging
+    const webhookData = req.body.record || req.body;
+    const failedScreenshotId = webhookData.id || webhookData.screenshot_id;
+
+    logger.error('Screenshot analysis error', {
+      message: error.message,
+      screenshot_id: failedScreenshotId,
+      user_id: webhookData.user_id,
+      organization_id: webhookData.organization_id,
+      storage_path: webhookData.storage_path,
+      stack: error.stack
+    });
 
     // Update screenshot status to failed
-    // Support both 'id' and 'screenshot_id' from various payload formats
-    const failedScreenshotId = req.body.record?.id || req.body.id || req.body.screenshot_id;
     if (failedScreenshotId) {
       try {
         await supabaseService.updateScreenshotStatus(
