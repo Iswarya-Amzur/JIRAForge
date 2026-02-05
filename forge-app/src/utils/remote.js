@@ -344,5 +344,19 @@ function isNewerVersion(v1, v2) {
   return false; // Versions are equal
 }
 
+/**
+ * Create a feedback session and get the feedback form URL
+ * The URL can be opened in a new browser tab using router.open() from @forge/bridge
+ *
+ * @returns {Promise<string>} Feedback form URL
+ */
+export async function createFeedbackSession() {
+  console.log('[Remote] Creating feedback session');
+
+  const result = await remoteRequest('/api/forge/feedback/session', {});
+
+  return result.feedbackUrl;
+}
+
 // Export the remote request function for custom calls
 export { remoteRequest };

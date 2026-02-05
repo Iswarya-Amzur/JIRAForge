@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { invoke } from '@forge/bridge';
+import { invoke, router } from '@forge/bridge';
 import './App.css';
 import './components/common/Sidebar.css';
 import './components/modals/Modals.css';
@@ -25,6 +25,9 @@ function AppContent() {
   const [reassignModalOpen, setReassignModalOpen] = useState(false);
   const [sessionToReassign, setSessionToReassign] = useState(null);
   const [reassigning, setReassigning] = useState(false);
+
+  // Feedback State
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
 
   // Screenshot Preview State
   const [screenshotPreviewOpen, setScreenshotPreviewOpen] = useState(false);
@@ -106,6 +109,27 @@ function AppContent() {
 
   const toggleExpandedScreenshot = () => {
     setExpandedScreenshot(!expandedScreenshot);
+  };
+
+  // Feedback Handler
+  const openFeedbackForm = async () => {
+    if (feedbackLoading) return;
+
+    setFeedbackLoading(true);
+    try {
+      const result = await invoke('getFeedbackUrl');
+      if (result.success && result.feedbackUrl) {
+        router.open(result.feedbackUrl);
+      } else {
+        console.error('Failed to get feedback URL:', result.error);
+        alert('Unable to open feedback form. Please try again.');
+      }
+    } catch (err) {
+      console.error('Error opening feedback form:', err);
+      alert('Unable to open feedback form. Please try again.');
+    } finally {
+      setFeedbackLoading(false);
+    }
   };
 
   const nextPreviewImage = () => {
@@ -258,6 +282,20 @@ function AppContent() {
                 {sidebarOpen && <span className="sidebar-label">Timesheet Settings</span>}
               </button>
             )}
+            <div className="sidebar-spacer"></div>
+            <button
+              className={`sidebar-item sidebar-feedback ${feedbackLoading ? 'loading' : ''}`}
+              onClick={openFeedbackForm}
+              disabled={feedbackLoading}
+              title={feedbackLoading ? 'Opening feedback form...' : 'Send Feedback'}
+            >
+              <span className="sidebar-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                </svg>
+              </span>
+              {sidebarOpen && <span className="sidebar-label">{feedbackLoading ? 'Opening...' : 'Send Feedback'}</span>}
+            </button>
           </nav>
         </aside>
 
