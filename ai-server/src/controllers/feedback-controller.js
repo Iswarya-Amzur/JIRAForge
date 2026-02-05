@@ -4,7 +4,7 @@
  *
  * Endpoints:
  * - POST /api/feedback/session - Create feedback session (desktop app sends Atlassian token)
- * - GET /feedback - Serve feedback form (session-authenticated)
+ * - GET /api/feedback/form - Serve feedback form (session-authenticated)
  * - POST /api/feedback/submit - Submit feedback with images
  * - GET /api/feedback/status/:id - Check feedback/Jira creation status
  */
@@ -75,10 +75,10 @@ exports.createSession = async (req, res) => {
       }
     });
 
-    // Build feedback form URL
+    // Build feedback form URL (using /api prefix so nginx forwards to AI server)
     const protocol = req.protocol;
     const host = req.get('host');
-    const feedbackUrl = `${protocol}://${host}/feedback?session=${sessionId}`;
+    const feedbackUrl = `${protocol}://${host}/api/feedback/form?session=${sessionId}`;
 
     logger.info('[Feedback] Session created for user %s', atlassianUser.account_id);
 
@@ -101,7 +101,7 @@ exports.createSession = async (req, res) => {
  * Serve the feedback form page
  * Validates the session query parameter before serving the HTML.
  *
- * GET /feedback?session=<session_id>
+ * GET /api/feedback/form?session=<session_id>
  */
 exports.getFeedbackPage = (req, res) => {
   const sessionId = req.query.session;

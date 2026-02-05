@@ -1896,23 +1896,39 @@ class OfflineManager:
             
             # Try to upload image to storage (handle duplicates)
             screenshot_url = None
+            upload_verified = False
             try:
                 screenshot_result = storage_client.storage.from_('screenshots').upload(
                     storage_path, image_data, file_options={'content-type': 'image/png'}
                 )
+                # Validate upload response
                 if screenshot_result:
-                    screenshot_url = storage_client.storage.from_('screenshots').get_public_url(storage_path)
+                    if hasattr(screenshot_result, 'path') or hasattr(screenshot_result, 'Key'):
+                        upload_verified = True
+                    elif isinstance(screenshot_result, dict):
+                        upload_verified = 'path' in screenshot_result or 'Key' in screenshot_result or 'Id' in screenshot_result
+                    else:
+                        # Verify file exists after upload
+                        try:
+                            list_result = storage_client.storage.from_('screenshots').list(user_id, {'search': filename, 'limit': 1})
+                            upload_verified = list_result and len(list_result) > 0
+                        except:
+                            upload_verified = True  # Assume success if can't verify
+
+                    if upload_verified:
+                        screenshot_url = storage_client.storage.from_('screenshots').get_public_url(storage_path)
             except Exception as upload_err:
                 error_str = str(upload_err)
                 # Handle duplicate file error - file already exists, just get the URL
                 if 'Duplicate' in error_str or '409' in error_str or 'already exists' in error_str.lower():
                     print(f"[INFO] File already exists in storage, using existing: {storage_path}")
                     screenshot_url = storage_client.storage.from_('screenshots').get_public_url(storage_path)
+                    upload_verified = True
                 else:
                     raise upload_err
-            
-            if not screenshot_url:
-                raise Exception("Failed to get screenshot URL")
+
+            if not screenshot_url or not upload_verified:
+                raise Exception(f"Failed to upload screenshot to storage - upload_verified: {upload_verified}")
             
             # Try to upload thumbnail (handle duplicates)
             thumb_url = None
@@ -5172,19 +5188,52 @@ class TimeTracker:
             screenshot_result = storage_client.storage.from_('screenshots').upload(
                 storage_path, img_bytes, file_options={'content-type': 'image/png'}
             )
-            
+
+            # Validate upload response - Supabase SDK returns dict with 'path' or 'Key' on success
+            upload_success = False
             if screenshot_result:
-                # Get public URL
-                screenshot_url = storage_client.storage.from_('screenshots').get_public_url(storage_path)
-                
-                # Upload thumbnail
-                thumb_result = storage_client.storage.from_('screenshots').upload(
-                    thumb_path, thumb_bytes, file_options={'content-type': 'image/jpeg'}
+                # Check for success indicators in response
+                if hasattr(screenshot_result, 'path') or hasattr(screenshot_result, 'Key'):
+                    upload_success = True
+                elif isinstance(screenshot_result, dict):
+                    upload_success = 'path' in screenshot_result or 'Key' in screenshot_result or 'Id' in screenshot_result
+                else:
+                    # Response exists but structure unknown - verify file exists
+                    try:
+                        # Verify file was actually uploaded by listing it
+                        path_parts = storage_path.split('/')
+                        folder = path_parts[0]  # user_id folder
+                        file_name = path_parts[1]  # filename
+                        list_result = storage_client.storage.from_('screenshots').list(folder, {'search': file_name, 'limit': 1})
+                        upload_success = list_result and len(list_result) > 0
+                        if not upload_success:
+                            print(f"[ERROR] Storage upload verification failed - file not found after upload: {storage_path}")
+                    except Exception as verify_err:
+                        print(f"[WARN] Could not verify upload: {verify_err}")
+                        upload_success = True  # Assume success if we can't verify
+
+            if not upload_success:
+                print(f"[ERROR] Screenshot storage upload failed - response: {screenshot_result}")
+                # Save offline as fallback
+                local_id = self.offline_manager.save_screenshot_offline(
+                    screenshot_data, img_bytes, thumb_bytes
                 )
-                
-                thumb_url = None
-                if thumb_result:
-                    thumb_url = storage_client.storage.from_('screenshots').get_public_url(thumb_path)
+                if local_id:
+                    self.last_screenshot_end_time = end_time
+                    return f"offline_{local_id}"
+                return None
+
+            # Upload succeeded - get public URL
+            screenshot_url = storage_client.storage.from_('screenshots').get_public_url(storage_path)
+
+            # Upload thumbnail
+            thumb_result = storage_client.storage.from_('screenshots').upload(
+                thumb_path, thumb_bytes, file_options={'content-type': 'image/jpeg'}
+            )
+
+            thumb_url = None
+            if thumb_result:
+                thumb_url = storage_client.storage.from_('screenshots').get_public_url(thumb_path)
                 
                 # Issues cache was already refreshed before building screenshot_data
 
