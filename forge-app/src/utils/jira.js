@@ -165,7 +165,7 @@ export async function getAllJiraProjects() {
   try {
     const allProjects = [];
     let startAt = 0;
-    const maxResults = 50; // Jira's maximum per request
+      const maxResults = 50;
     let hasMore = true;
 
     while (hasMore) {
@@ -180,12 +180,11 @@ export async function getAllJiraProjects() {
       );
 
       const data = await response.json();
-      const projects = data.values || data || [];
+      const projects = data.values || [];
 
       if (Array.isArray(projects) && projects.length > 0) {
         allProjects.push(...projects);
         startAt += projects.length;
-        // Check if there are more projects to fetch
         hasMore = data.isLast === false || (data.total && startAt < data.total);
       } else {
         hasMore = false;
@@ -201,32 +200,11 @@ export async function getAllJiraProjects() {
     console.log(`[getAllJiraProjects] Fetched ${allProjects.length} total projects`);
     return allProjects.map(p => ({
       key: p.key,
-      name: p.name,
-      id: p.id
+      name: p.name
     }));
   } catch (error) {
     console.error('Error fetching Jira projects:', error);
-    // Fallback to old API if search endpoint fails
-    try {
-      const response = await api.asUser().requestJira(
-        route`/rest/api/3/project`,
-        {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json'
-          }
-        }
-      );
-      const projects = await response.json();
-      return (projects || []).map(p => ({
-        key: p.key,
-        name: p.name,
-        id: p.id
-      }));
-    } catch (fallbackError) {
-      console.error('Fallback also failed:', fallbackError);
-      return [];
-    }
+    return [];
   }
 }
 
@@ -241,46 +219,37 @@ export async function getAllJiraProjectKeys() {
 
 /**
  * Get list of projects where current user is a Project Administrator
- * Uses pagination to check ALL projects
  * @returns {Promise<Array<string>>} Array of project keys
  */
 export async function getProjectsUserAdmins() {
   try {
-    // Get all projects using paginated fetch
-    const projects = await getAllJiraProjects();
-    console.log(`[getProjectsUserAdmins] Checking admin permissions for ${projects.length} projects`);
+    // Get all projects accessible to the user
+    const response = await api.asUser().requestJira(
+      route`/rest/api/3/project`,
+      {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json'
+        }
+      }
+    );
 
+    const projects = await response.json();
     const adminProjects = [];
 
     // Check ADMINISTER_PROJECTS permission for each project
-    // Process in parallel batches for better performance
-    const batchSize = 10;
-    for (let i = 0; i < projects.length; i += batchSize) {
-      const batch = projects.slice(i, i + batchSize);
-      const results = await Promise.allSettled(
-        batch.map(async (project) => {
-          try {
-            const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS'], project.key);
-            if (permissions.permissions?.ADMINISTER_PROJECTS?.havePermission) {
-              return project.key;
-            }
-          } catch (error) {
-            // If permission check fails for a project, skip it
-            console.warn(`Could not check permissions for project ${project.key}:`, error.message);
-          }
-          return null;
-        })
-      );
-
-      // Collect successful results
-      results.forEach(result => {
-        if (result.status === 'fulfilled' && result.value) {
-          adminProjects.push(result.value);
+    for (const project of projects) {
+      try {
+        const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS'], project.key);
+        if (permissions.permissions?.ADMINISTER_PROJECTS?.havePermission) {
+          adminProjects.push(project.key);
         }
-      });
+      } catch (error) {
+        // If permission check fails for a project, skip it
+        console.warn(`Could not check permissions for project ${project.key}:`, error.message);
+      }
     }
 
-    console.log(`[getProjectsUserAdmins] User is admin of ${adminProjects.length} projects`);
     return adminProjects;
   } catch (error) {
     console.error('Error getting user admin projects:', error);
