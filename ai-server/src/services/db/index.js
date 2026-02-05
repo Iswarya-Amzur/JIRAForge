@@ -10,6 +10,7 @@ const analysisDbService = require('./analysis-db-service');
 const userDbService = require('./user-db-service');
 const documentDbService = require('./document-db-service');
 const clusteringDbService = require('./clustering-db-service');
+const feedbackDbService = require('./feedback-db-service');
 
 module.exports = {
   // Supabase Client
@@ -59,5 +60,11 @@ module.exports = {
   getLastClusteringRunTime: clusteringDbService.getLastClusteringRunTime,
   hasClusteringRunRecently: clusteringDbService.hasClusteringRunRecently,
   getUngroupedActivityCount: clusteringDbService.getUngroupedActivityCount,
-  getUnassignedWorkGroups: clusteringDbService.getUnassignedWorkGroups
+  getUnassignedWorkGroups: clusteringDbService.getUnassignedWorkGroups,
+
+  // Feedback DB Service
+  createFeedback: feedbackDbService.createFeedback,
+  getFeedbackById: feedbackDbService.getFeedbackById,
+  updateFeedbackStatus: feedbackDbService.updateFeedbackStatus,
+  updateFeedbackAIResults: feedbackDbService.updateFeedbackAIResults
 };

@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Send Feedback - BRD Time Tracker</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 700px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        .header {
+            background: linear-gradient(135deg, #0052CC 0%, #2684FF 100%);
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+            margin-bottom: 30px;
+            border-radius: 8px;
+        }
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 6px;
+        }
+        .header .subtitle {
+            opacity: 0.9;
+            font-size: 1em;
+        }
+        .card {
+            background: white;
+            padding: 32px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #333;
+        }
+        .form-group label .required {
+            color: #DE350B;
+        }
+        .form-group label .optional {
+            color: #999;
+            font-weight: 400;
+            font-size: 0.9em;
+        }
+        .form-group input[type="text"],
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #DFE1E6;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.2s;
+        }
+        .form-group input[type="text"]:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #0052CC;
+        }
+        .form-group textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+        .form-group select {
+            appearance: none;
+            background: white url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23666' d='M6 8L1 3h10z'/%3E%3C/svg%3E") no-repeat right 12px center;
+            padding-right: 36px;
+            cursor: pointer;
+        }
+
+        /* Image upload */
+        .upload-area {
+            border: 2px dashed #DFE1E6;
+            border-radius: 8px;
+            padding: 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.2s, background 0.2s;
+            position: relative;
+        }
+        .upload-area:hover,
+        .upload-area.dragover {
+            border-color: #0052CC;
+            background: #F4F5F7;
+        }
+        .upload-area .upload-icon {
+            font-size: 32px;
+            margin-bottom: 8px;
+            display: block;
+        }
+        .upload-area .upload-text {
+            color: #666;
+            font-size: 14px;
+        }
+        .upload-area .upload-text strong {
+            color: #0052CC;
+        }
+        .upload-area .upload-hint {
+            color: #999;
+            font-size: 12px;
+            margin-top: 4px;
+        }
+        .upload-area input[type="file"] {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+        .image-previews {
+            display: flex;
+            gap: 12px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+        .image-preview {
+            position: relative;
+            width: 100px;
+            height: 100px;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 2px solid #DFE1E6;
+        }
+        .image-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .image-preview .remove-btn {
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            width: 22px;
+            height: 22px;
+            background: #DE350B;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+
+        /* Submit button */
+        .btn-submit {
+            width: 100%;
+            padding: 12px 24px;
+            background: #0052CC;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-submit:hover:not(:disabled) {
+            background: #0747A6;
+        }
+        .btn-submit:disabled {
+            background: #B3D4FF;
+            cursor: not-allowed;
+        }
+        .btn-submit.loading {
+            position: relative;
+            color: transparent;
+        }
+        .btn-submit.loading::after {
+            content: '';
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 20px; height: 20px;
+            margin: -10px 0 0 -10px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Success page */
+        .success-card {
+            text-align: center;
+            padding: 40px 32px;
+        }
+        .success-card .success-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            display: block;
+        }
+        .success-card h2 {
+            color: #00875A;
+            margin-bottom: 12px;
+            border: none;
+            padding: 0;
+        }
+        .success-card p {
+            color: #666;
+            margin-bottom: 20px;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .status-badge.pending { background: #FFF0B3; color: #974F0C; }
+        .status-badge.processing { background: #DEEBFF; color: #0052CC; }
+        .status-badge.created { background: #E3FCEF; color: #006644; }
+        .status-badge.failed { background: #FFEBE6; color: #BF2600; }
+        .jira-link {
+            display: inline-block;
+            margin-top: 16px;
+            padding: 10px 24px;
+            background: #0052CC;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        .jira-link:hover {
+            background: #0747A6;
+        }
+        .error-msg {
+            color: #DE350B;
+            font-size: 13px;
+            margin-top: 4px;
+        }
+
+        /* Hidden */
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Send Feedback</h1>
+            <div class="subtitle">Help us improve BRD Time Tracker</div>
+        </div>
+
+        <!-- Feedback Form -->
+        <div id="form-card" class="card">
+            <form id="feedback-form">
+                <div class="form-group">
+                    <label>Category <span class="required">*</span></label>
+                    <select id="category" required>
+                        <option value="">Select a category...</option>
+                        <option value="bug">Bug Report</option>
+                        <option value="feature_request">Feature Request</option>
+                        <option value="improvement">Improvement</option>
+                        <option value="question">Question</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Title <span class="optional">(optional - AI will generate if empty)</span></label>
+                    <input type="text" id="title" placeholder="Brief summary of your feedback" maxlength="200">
+                </div>
+
+                <div class="form-group">
+                    <label>Description <span class="required">*</span></label>
+                    <textarea id="description" placeholder="Please describe your feedback in detail..." required></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label>Screenshots <span class="optional">(optional, max 3 images, 5MB each)</span></label>
+                    <div class="upload-area" id="upload-area">
+                        <span class="upload-icon">&#128247;</span>
+                        <div class="upload-text">
+                            <strong>Click to upload</strong> or drag & drop
+                        </div>
+                        <div class="upload-hint">PNG, JPEG, GIF, WebP - Max 5MB each</div>
+                        <input type="file" id="file-input" accept="image/png,image/jpeg,image/gif,image/webp" multiple>
+                    </div>
+                    <div class="image-previews" id="image-previews"></div>
+                </div>
+
+                <div id="form-error" class="error-msg hidden"></div>
+
+                <button type="button" id="submit-btn" class="btn-submit">
+                    Submit Feedback
+                </button>
+            </form>
+        </div>
+
+        <!-- Success / Status Page -->
+        <div id="success-card" class="card success-card hidden">
+            <span class="success-icon">&#9989;</span>
+            <h2>Feedback Submitted</h2>
+            <p>Your feedback has been received. A Jira ticket is being created...</p>
+            <div id="status-container">
+                <span id="status-badge" class="status-badge pending">Pending</span>
+            </div>
+            <div id="jira-link-container" class="hidden">
+                <a id="jira-link" class="jira-link" href="#" target="_blank">View Jira Ticket</a>
+            </div>
+            <div id="status-error" class="error-msg hidden"></div>
+        </div>
+    </div>
+
+    <script src="/feedback/feedback-form.js"></script>
+</body>
+</html>
