@@ -155,6 +155,35 @@ async function analyzeFeedbackWithAI(feedback) {
 }
 
 /**
+ * Fetch available issue types for a Jira project.
+ * @param {string} email - Atlassian account email
+ * @param {string} apiToken - Atlassian API token
+ * @param {string} siteUrl - Jira site URL
+ * @param {string} projectKey - Project key
+ * @returns {Promise<string[]>} Array of available issue type names
+ */
+async function getProjectIssueTypes(email, apiToken, siteUrl, projectKey) {
+  const basicAuth = Buffer.from(`${email}:${apiToken}`).toString('base64');
+  const baseUrl = siteUrl.replace(/\/$/, '');
+
+  const response = await axios.get(
+    `${baseUrl}/rest/api/3/project/${projectKey}`,
+    {
+      headers: {
+        'Authorization': `Basic ${basicAuth}`,
+        'Accept': 'application/json'
+      },
+      timeout: 15000
+    }
+  );
+
+  const issueTypes = response.data.issueTypes || [];
+  return issueTypes
+    .filter(t => !t.subtask)
+    .map(t => t.name);
+}
+
+/**
  * Create a Jira issue via Atlassian REST API using basic auth (API token).
  * All tickets go to a single configured Jira instance.
  * Uses direct site URL (e.g., https://yoursite.atlassian.net) for Basic auth.
@@ -177,6 +206,31 @@ async function createJiraIssue(email, apiToken, siteUrl, issueData) {
     reporterName,
     reporterEmail
   } = issueData;
+
+  // Resolve a valid issue type for this project
+  let resolvedIssueType = issueType || 'Task';
+  try {
+    const availableTypes = await getProjectIssueTypes(email, apiToken, siteUrl, projectKey);
+    logger.info('[Feedback] Available issue types for %s: %s', projectKey, availableTypes.join(', '));
+
+    if (availableTypes.length > 0) {
+      // Try exact match first (case-insensitive)
+      const exactMatch = availableTypes.find(
+        t => t.toLowerCase() === resolvedIssueType.toLowerCase()
+      );
+
+      if (exactMatch) {
+        resolvedIssueType = exactMatch;
+      } else {
+        // Fall back to Task, then first available
+        const taskType = availableTypes.find(t => t.toLowerCase() === 'task');
+        resolvedIssueType = taskType || availableTypes[0];
+        logger.info('[Feedback] Issue type "%s" not available, using "%s"', issueType, resolvedIssueType);
+      }
+    }
+  } catch (err) {
+    logger.warn('[Feedback] Could not fetch issue types, using "%s": %s', resolvedIssueType, err.message);
+  }
 
   // Build ADF (Atlassian Document Format) description
   const adfContent = [];
@@ -256,19 +310,9 @@ async function createJiraIssue(email, apiToken, siteUrl, issueData) {
         version: 1,
         content: adfContent
       },
-      issuetype: { name: issueType || 'Task' }
+      issuetype: { name: resolvedIssueType }
     }
   };
-
-  // Add priority if supported
-  if (priority) {
-    requestBody.fields.priority = { name: priority };
-  }
-
-  // Add labels if provided
-  if (labels && labels.length > 0) {
-    requestBody.fields.labels = labels;
-  }
 
   // Basic auth: base64(email:apiToken)
   const basicAuth = Buffer.from(`${email}:${apiToken}`).toString('base64');
@@ -278,6 +322,14 @@ async function createJiraIssue(email, apiToken, siteUrl, issueData) {
   // Remove trailing slash if present
   const baseUrl = siteUrl.replace(/\/$/, '');
   const apiUrl = `${baseUrl}/rest/api/3/issue`;
+
+  // First attempt: include priority and labels
+  if (priority) {
+    requestBody.fields.priority = { name: priority };
+  }
+  if (labels && labels.length > 0) {
+    requestBody.fields.labels = labels;
+  }
 
   try {
     const response = await axios.post(apiUrl, requestBody, {
@@ -290,8 +342,6 @@ async function createJiraIssue(email, apiToken, siteUrl, issueData) {
     });
 
     const issueKey = response.data.key;
-
-    // Build the browse URL directly from siteUrl
     const browseUrl = `${baseUrl}/browse/${issueKey}`;
 
     return {
@@ -300,8 +350,43 @@ async function createJiraIssue(email, apiToken, siteUrl, issueData) {
       id: response.data.id
     };
   } catch (error) {
-    const errorMsg = error.response?.data?.errors
-      ? JSON.stringify(error.response.data.errors)
+    // If priority or labels caused the failure, retry without them
+    const errors = error.response?.data?.errors;
+    if (errors && (errors.priority || errors.labels)) {
+      logger.warn('[Feedback] Retrying without priority/labels due to: %s', JSON.stringify(errors));
+      delete requestBody.fields.priority;
+      delete requestBody.fields.labels;
+
+      try {
+        const retryResponse = await axios.post(apiUrl, requestBody, {
+          headers: {
+            'Authorization': authHeader,
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          timeout: 30000
+        });
+
+        const issueKey = retryResponse.data.key;
+        const browseUrl = `${baseUrl}/browse/${issueKey}`;
+
+        return {
+          key: issueKey,
+          url: browseUrl,
+          id: retryResponse.data.id
+        };
+      } catch (retryError) {
+        const retryMsg = retryError.response?.data?.errors
+          ? JSON.stringify(retryError.response.data.errors)
+          : retryError.response?.data?.errorMessages?.join(', ') || retryError.message;
+
+        logger.error('[Feedback] Jira API retry error: %s', retryMsg);
+        throw new Error(`Jira API error: ${retryMsg}`);
+      }
+    }
+
+    const errorMsg = errors
+      ? JSON.stringify(errors)
       : error.response?.data?.errorMessages?.join(', ') || error.message;
 
     logger.error('[Feedback] Jira API error: %s', errorMsg);

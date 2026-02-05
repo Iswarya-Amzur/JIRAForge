@@ -21,7 +21,11 @@
     let uploadArea, fileInput, previewsContainer, submitBtn, formEl;
 
     // Initialize when DOM is ready
-    document.addEventListener('DOMContentLoaded', init);
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 
     function init() {
         uploadArea = document.getElementById('upload-area');
