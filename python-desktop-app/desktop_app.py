@@ -6291,8 +6291,9 @@ class TimeTracker:
 
             # Create a feedback session on the AI server
             print("[INFO] Creating feedback session...")
+            ai_server_url = self.auth_manager.ai_server_url
             response = requests.post(
-                f"{self.ai_server_url}/api/feedback/session",
+                f"{ai_server_url}/api/feedback/session",
                 json={
                     'atlassian_token': access_token,
                     'cloud_id': cloud_id
@@ -6306,7 +6307,7 @@ class TimeTracker:
                 if self.auth_manager.refresh_access_token():
                     access_token = self.auth_manager.tokens.get('access_token')
                     response = requests.post(
-                        f"{self.ai_server_url}/api/feedback/session",
+                        f"{ai_server_url}/api/feedback/session",
                         json={
                             'atlassian_token': access_token,
                             'cloud_id': cloud_id

@@ -147,6 +147,12 @@ app.post('/api/feedback/session', authLimiter, feedbackController.createSession)
 // Serve feedback form (session-authenticated via query param)
 app.get('/feedback', feedbackController.getFeedbackPage);
 
+// Serve feedback form JavaScript (public static file)
+app.get('/feedback/feedback-form.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.sendFile(path.join(__dirname, 'feedback', 'feedback-form.js'));
+});
+
 // Submit feedback (session-authenticated via body)
 app.post('/api/feedback/submit', feedbackLimiter, feedbackController.submitFeedback);
 
