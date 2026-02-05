@@ -1049,10 +1049,10 @@ exports.createFeedbackSession = async (req, res) => {
       }
     });
 
-    // Build feedback form URL
+    // Build feedback form URL (using /api prefix so nginx forwards to AI server)
     const protocol = req.protocol;
     const host = req.get('host');
-    const feedbackUrl = `${protocol}://${host}/feedback?session=${sessionId}`;
+    const feedbackUrl = `${protocol}://${host}/api/feedback/form?session=${sessionId}`;
 
     logger.info('[ForgeProxy] Feedback session created for Forge user %s', accountId);
 
