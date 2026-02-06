@@ -219,37 +219,49 @@ export async function getAllJiraProjectKeys() {
 
 /**
  * Get list of projects where current user is a Project Administrator
+ * Uses action=edit parameter to filter projects where user has ADMINISTER_PROJECTS
+ * or ADMINISTER (Jira Admin) permission - much faster than checking each project
  * @returns {Promise<Array<string>>} Array of project keys
  */
 export async function getProjectsUserAdmins() {
   try {
-    // Get all projects accessible to the user
-    const response = await api.asUser().requestJira(
-      route`/rest/api/3/project`,
-      {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json'
-        }
-      }
-    );
-
-    const projects = await response.json();
     const adminProjects = [];
+    let startAt = 0;
+    const maxResults = 50;
+    let hasMore = true;
 
-    // Check ADMINISTER_PROJECTS permission for each project
-    for (const project of projects) {
-      try {
-        const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS'], project.key);
-        if (permissions.permissions?.ADMINISTER_PROJECTS?.havePermission) {
-          adminProjects.push(project.key);
+    while (hasMore) {
+      // action=edit returns only projects where user has Administer Projects
+      // or Administer Jira permission - no need for separate permission checks
+      const response = await api.asUser().requestJira(
+        route`/rest/api/3/project/search?action=edit&startAt=${startAt}&maxResults=${maxResults}`,
+        {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json'
+          }
         }
-      } catch (error) {
-        // If permission check fails for a project, skip it
-        console.warn(`Could not check permissions for project ${project.key}:`, error.message);
+      );
+
+      const data = await response.json();
+      const projects = data.values || [];
+
+      if (Array.isArray(projects) && projects.length > 0) {
+        adminProjects.push(...projects.map(p => p.key));
+        startAt += projects.length;
+        hasMore = data.isLast === false || (data.total && startAt < data.total);
+      } else {
+        hasMore = false;
+      }
+
+      // Safety limit to prevent infinite loops
+      if (startAt > 500) {
+        console.warn('[getProjectsUserAdmins] Safety limit reached (500 projects)');
+        break;
       }
     }
 
+    console.log(`[getProjectsUserAdmins] Found ${adminProjects.length} admin projects`);
     return adminProjects;
   } catch (error) {
     console.error('Error getting user admin projects:', error);

@@ -27,13 +27,20 @@ function ProjectSettingsTab() {
       // Check permissions and get admin projects
       const permResult = await invoke('getUserPermissions');
       if (permResult.success) {
-        // Only project admins can access this tab
+        // Jira Admins or Project Admins can access this tab
+        const isJiraAdmin = permResult.permissions.isJiraAdmin;
         const hasProjectAdmin = permResult.permissions.projectAdminProjects?.length > 0;
-        setIsAdmin(hasProjectAdmin);
+        const hasAccess = isJiraAdmin || hasProjectAdmin;
+        setIsAdmin(hasAccess);
 
-        if (hasProjectAdmin) {
-          // Project admin - only load their admin projects
-          await loadAdminProjects(permResult.permissions.projectAdminProjects);
+        if (hasAccess) {
+          if (isJiraAdmin) {
+            // Jira Admin - load all projects
+            await loadAllProjects();
+          } else {
+            // Project admin - only load their admin projects
+            await loadAdminProjects(permResult.permissions.projectAdminProjects);
+          }
         }
       }
 
@@ -46,12 +53,27 @@ function ProjectSettingsTab() {
     }
   };
 
+  const loadAllProjects = async () => {
+    try {
+      const result = await invoke('getJiraProjects');
+      if (result.success && result.projects) {
+        // Jira Admin - show all projects
+        setProjects(result.projects);
+        if (result.projects.length > 0 && !selectedProject) {
+          setSelectedProject(result.projects[0]);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load all projects:', err);
+    }
+  };
+
   const loadAdminProjects = async (projectKeys) => {
     try {
       const result = await invoke('getJiraProjects');
       if (result.success && result.projects) {
         // Filter to only projects the user is admin of
-        const filteredProjects = result.projects.filter(p => 
+        const filteredProjects = result.projects.filter(p =>
           projectKeys.includes(p.key)
         );
         setProjects(filteredProjects);
@@ -108,7 +130,7 @@ function ProjectSettingsTab() {
             <path d="M9 9L15 15" stroke="#DE350B" strokeWidth="2" strokeLinecap="round"/>
           </svg>
           <h2>Access Denied</h2>
-          <p>Only Project Administrators can access project settings.</p>
+          <p>Only Jira Administrators or Project Administrators can access project settings.</p>
         </div>
       </div>
     );
