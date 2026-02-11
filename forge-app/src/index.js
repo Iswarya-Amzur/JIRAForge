@@ -15,6 +15,7 @@ import { registerUserResolvers } from './resolvers/userResolvers.js';
 import { registerUnassignedWorkResolvers } from './resolvers/unassignedWorkResolvers.js';
 import { registerDiagnosticResolvers } from './resolvers/diagnosticResolvers.js';
 import { registerFeedbackResolvers } from './resolvers/feedbackResolvers.js';
+import { runScheduledWorklogSync } from './services/scheduledWorklogSync.js';
 
 // Create resolver instance
 const resolver = new Resolver();
@@ -34,3 +35,8 @@ registerFeedbackResolvers(resolver);
 
 // Export handler for Forge
 export const handler = resolver.getDefinitions();
+
+// Export scheduled trigger handler for worklog sync
+export const scheduledWorklogSyncHandler = async () => {
+  return await runScheduledWorklogSync();
+};

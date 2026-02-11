@@ -8,6 +8,7 @@ import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, supabaseRe
 import { getIssueTransitions, transitionIssue } from '../../utils/jira.js';
 import { formatDuration, formatJiraDate } from '../../utils/formatters.js';
 import { isValidUUID, isValidIssueKey, isValidProjectKey, isValidDate, sanitizeUUIDArray } from '../../utils/validators.js';
+import { getTrackingSettings } from '../../services/settingsService.js';
 
 /**
  * Assign a group of sessions to existing Jira issue
@@ -112,13 +113,26 @@ export async function assignToExistingIssue(req) {
       );
     }
 
-    // 5. Create worklog in Jira (only if time >= 60 seconds, Jira's minimum)
+    // 5. Create worklog in Jira (only if time >= 60 seconds and auto-sync is disabled)
     let worklog = null;
+    let worklogSkipped = false;
+    let worklogSkippedReason = null;
     const JIRA_MIN_WORKLOG_SECONDS = 60;
 
-    if (timeToLog >= JIRA_MIN_WORKLOG_SECONDS) {
+    // Check if auto-sync is enabled (scheduled sync will handle worklogs)
+    let autoSyncEnabled = false;
+    try {
+      const trackingSettings = await getTrackingSettings(accountId, cloudId);
+      autoSyncEnabled = trackingSettings.jiraWorklogSyncEnabled === true;
+    } catch (e) { /* default false */ }
+
+    if (autoSyncEnabled) {
+      worklogSkipped = true;
+      worklogSkippedReason = 'Auto-sync enabled; scheduled sync will create the worklog';
+      console.log(`[assignToExistingIssue] Skipping worklog - auto-sync is enabled`);
+    } else if (timeToLog >= JIRA_MIN_WORKLOG_SECONDS) {
       const worklogResponse = await api.asUser().requestJira(
-        route`/rest/api/3/issue/${issueKey}/worklog`,
+        route`/rest/api/3/issue/${issueKey}/worklog?adjustEstimate=leave`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -151,17 +165,17 @@ export async function assignToExistingIssue(req) {
         worklog = await worklogResponse.json();
       }
     } else {
-      console.log(`[assignToExistingIssue] Skipping worklog creation - time (${timeToLog}s) is below Jira minimum (${JIRA_MIN_WORKLOG_SECONDS}s)`);
+      worklogSkipped = true;
+      worklogSkippedReason = `Time (${timeToLog}s) is below Jira's minimum of ${JIRA_MIN_WORKLOG_SECONDS}s`;
+      console.log(`[assignToExistingIssue] Skipping worklog creation - ${worklogSkippedReason}`);
     }
 
     return {
       success: true,
       assigned_count: sessionIds.length,
       worklog_id: worklog?.id || null,
-      worklog_skipped: timeToLog < JIRA_MIN_WORKLOG_SECONDS,
-      worklog_skipped_reason: timeToLog < JIRA_MIN_WORKLOG_SECONDS
-        ? `Time (${timeToLog}s) is below Jira's minimum of ${JIRA_MIN_WORKLOG_SECONDS}s`
-        : null,
+      worklog_skipped: worklogSkipped,
+      worklog_skipped_reason: worklogSkippedReason,
       issue_key: issueKey
     };
 
@@ -357,13 +371,25 @@ export async function createIssueAndAssign(req) {
       console.log(`[createIssueAndAssign] Marked group ${groupId} as assigned to ${newIssueKey}`);
     }
 
-    // Create worklog on new issue (only if time >= 60 seconds, Jira's minimum)
+    // Create worklog on new issue (only if time >= 60 seconds and auto-sync is disabled)
     let worklog = null;
     let worklogSkipped = false;
+    let worklogSkippedReason = null;
 
-    if (timeToLog >= JIRA_MIN_WORKLOG_SECONDS) {
+    // Check if auto-sync is enabled (scheduled sync will handle worklogs)
+    let autoSyncEnabled = false;
+    try {
+      const trackingSettings = await getTrackingSettings(accountId, cloudId);
+      autoSyncEnabled = trackingSettings.jiraWorklogSyncEnabled === true;
+    } catch (e) { /* default false */ }
+
+    if (autoSyncEnabled) {
+      worklogSkipped = true;
+      worklogSkippedReason = 'Auto-sync enabled; scheduled sync will create the worklog';
+      console.log(`[createIssueAndAssign] Skipping worklog - auto-sync is enabled`);
+    } else if (timeToLog >= JIRA_MIN_WORKLOG_SECONDS) {
       const worklogResponse = await api.asUser().requestJira(
-        route`/rest/api/3/issue/${newIssueKey}/worklog`,
+        route`/rest/api/3/issue/${newIssueKey}/worklog?adjustEstimate=leave`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -397,7 +423,8 @@ export async function createIssueAndAssign(req) {
       }
     } else {
       worklogSkipped = true;
-      console.log(`[createIssueAndAssign] Skipping worklog - time (${timeToLog}s) is below Jira minimum (${JIRA_MIN_WORKLOG_SECONDS}s)`);
+      worklogSkippedReason = `Time (${timeToLog}s) is below Jira's minimum of ${JIRA_MIN_WORKLOG_SECONDS}s`;
+      console.log(`[createIssueAndAssign] Skipping worklog - ${worklogSkippedReason}`);
     }
 
     // Cache the new issue for future AI analysis - include organization_id for multi-tenancy
@@ -448,9 +475,7 @@ export async function createIssueAndAssign(req) {
       assigned_count: sessionIds.length,
       worklog_id: worklog?.id,
       worklog_skipped: worklogSkipped,
-      worklog_skipped_reason: worklogSkipped
-        ? `Time (${timeToLog}s) is below Jira's minimum of ${JIRA_MIN_WORKLOG_SECONDS}s`
-        : null
+      worklog_skipped_reason: worklogSkippedReason
     };
 
   } catch (error) {
@@ -711,14 +736,26 @@ export async function bulkReassignByTimeInterval(req) {
       console.log(`[bulkReassignByTimeInterval] Marked ${uniqueGroupIds.length} groups as assigned`);
     }
 
-    // Create worklog in Jira if requested (minimum 60 seconds required by Jira)
+    // Create worklog in Jira if requested (minimum 60 seconds required by Jira, and auto-sync disabled)
     let worklog = null;
     let worklogSkipped = false;
+    let worklogSkippedReason = null;
     const JIRA_MIN_WORKLOG_SECONDS = 60;
 
-    if (createWorklog && totalSeconds >= JIRA_MIN_WORKLOG_SECONDS) {
+    // Check if auto-sync is enabled (scheduled sync will handle worklogs)
+    let autoSyncEnabled = false;
+    try {
+      const trackingSettings = await getTrackingSettings(accountId, cloudId);
+      autoSyncEnabled = trackingSettings.jiraWorklogSyncEnabled === true;
+    } catch (e) { /* default false */ }
+
+    if (autoSyncEnabled) {
+      worklogSkipped = true;
+      worklogSkippedReason = 'Auto-sync enabled; scheduled sync will create the worklog';
+      console.log(`[bulkReassignByTimeInterval] Skipping worklog - auto-sync is enabled`);
+    } else if (createWorklog && totalSeconds >= JIRA_MIN_WORKLOG_SECONDS) {
       const worklogResponse = await api.asUser().requestJira(
-        route`/rest/api/3/issue/${targetIssueKey}/worklog`,
+        route`/rest/api/3/issue/${targetIssueKey}/worklog?adjustEstimate=leave`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -754,7 +791,8 @@ export async function bulkReassignByTimeInterval(req) {
       }
     } else if (createWorklog && totalSeconds < JIRA_MIN_WORKLOG_SECONDS) {
       worklogSkipped = true;
-      console.log(`[bulkReassignByTimeInterval] Skipping worklog - time (${totalSeconds}s) is below Jira minimum (${JIRA_MIN_WORKLOG_SECONDS}s)`);
+      worklogSkippedReason = `Time (${totalSeconds}s) is below Jira's minimum of ${JIRA_MIN_WORKLOG_SECONDS}s`;
+      console.log(`[bulkReassignByTimeInterval] Skipping worklog - ${worklogSkippedReason}`);
     }
 
     return {
@@ -768,9 +806,7 @@ export async function bulkReassignByTimeInterval(req) {
         target_issue_key: targetIssueKey,
         worklog_id: worklog?.id || null,
         worklog_skipped: worklogSkipped,
-        worklog_skipped_reason: worklogSkipped
-          ? `Time (${totalSeconds}s) is below Jira's minimum of ${JIRA_MIN_WORKLOG_SECONDS}s`
-          : null,
+        worklog_skipped_reason: worklogSkippedReason,
         time_range: {
           start: startDateTime,
           end: endDateTime

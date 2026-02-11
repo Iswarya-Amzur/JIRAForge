@@ -92,7 +92,7 @@ exports.clusterUnassignedWork = async (sessions, userIssues = []) => {
     logger.info('[AI] Clustering %d unassigned sessions', sessions.length);
 
     // If too many sessions, process in batches
-    const MAX_SESSIONS_PER_BATCH = 50;
+    const MAX_SESSIONS_PER_BATCH = 30;
     if (sessions.length > MAX_SESSIONS_PER_BATCH) {
       logger.info('[AI] Large session count (%d), batching by %d', sessions.length, MAX_SESSIONS_PER_BATCH);
       return await clusterInBatches(sessions, userIssues, MAX_SESSIONS_PER_BATCH);
@@ -228,7 +228,7 @@ CRITICAL - DESCRIPTIONS MUST BE SPECIFIC:
     const { response, provider, model } = await chatCompletionWithFallback({
       messages,
       temperature: 0.2,
-      max_tokens: 4000,
+      max_tokens: 8000,
       isVision: false,
       userId: null, // Clustering doesn't have user context
       organizationId: null,

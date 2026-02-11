@@ -62,7 +62,8 @@ export const DEFAULT_TRACKING_SETTINGS = {
   nonWorkThresholdPercent: 30,
   flagExcessiveNonWork: true,
   privateSitesEnabled: true,
-  privateSites: []
+  privateSites: [],
+  jiraWorklogSyncEnabled: false
 };
 
 // Pagination

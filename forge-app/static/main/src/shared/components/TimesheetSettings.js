@@ -85,11 +85,15 @@ function TimesheetSettings() {
 
     // Private Sites
     privateSitesEnabled: true,
-    privateSites: []
+    privateSites: [],
+
+    // Jira Worklog Sync
+    jiraWorklogSyncEnabled: false
   });
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
 
   // Input states for adding custom items
@@ -135,6 +139,25 @@ function TimesheetSettings() {
       setMessage({ type: 'error', text: 'Failed to save settings: ' + err.message });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSyncNow = async () => {
+    setSyncing(true);
+    setMessage({ type: '', text: '' });
+    try {
+      const result = await invoke('triggerWorklogSync');
+      if (result.success) {
+        const synced = result.synced || 0;
+        const errors = result.errors || 0;
+        setMessage({ type: 'success', text: `Worklog sync completed! Synced: ${synced}, Errors: ${errors}` });
+      } else {
+        setMessage({ type: 'error', text: result.error || 'Sync failed' });
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: 'Sync failed: ' + err.message });
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -630,6 +653,51 @@ function TimesheetSettings() {
             </div>
           </div>
         )}
+      </section>
+
+      {/* Jira Worklog Auto-Sync Section */}
+      <section className="settings-section">
+        <div className="section-header">
+          <div className="section-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M23 12C23 18.0751 18.0751 23 12 23C5.92487 23 1 18.0751 1 12C1 5.92487 5.92487 1 12 1C18.0751 1 23 5.92487 23 12Z" stroke="currentColor" strokeWidth="2"/>
+              <path d="M12 6V12L16 14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+          <h2>Jira Worklog Auto-Sync</h2>
+          <label className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={settings.jiraWorklogSyncEnabled}
+              onChange={() => handleToggle('jiraWorklogSyncEnabled')}
+            />
+            <span className="toggle-slider"></span>
+            <span className="toggle-label">
+              {settings.jiraWorklogSyncEnabled ? 'Enabled' : 'Disabled'}
+            </span>
+          </label>
+        </div>
+
+        <div className="section-content">
+          <p className="field-description">
+            When enabled, tracked time from the desktop app is automatically pushed to Jira's native "Time Spent" field as worklogs.
+            This sync runs automatically every hour via a scheduled job. One worklog per issue per user is maintained — it will be created on first sync
+            and updated on subsequent runs if time has changed.
+          </p>
+          <p className="field-hint">
+            Worklogs will appear in each issue's "Work Log" tab and the "Time Spent" field in the Details panel.
+          </p>
+          {settings.jiraWorklogSyncEnabled && (
+            <button
+              className="save-btn"
+              onClick={handleSyncNow}
+              disabled={syncing}
+              style={{ marginTop: '12px', maxWidth: '200px' }}
+            >
+              {syncing ? 'Syncing...' : 'Sync Now'}
+            </button>
+          )}
+        </div>
       </section>
 
       {/* Message Display */}

@@ -65,20 +65,45 @@ export async function getActiveIssuesWithTime(accountId, cloudId) {
     };
   }
 
-  // Fetch time tracking data for all issues
-  const timeTrackingData = await supabaseRequest(
-    supabaseConfig,
-    `analysis_results?user_id=eq.${userId}&organization_id=eq.${organization.id}&work_type=eq.office&active_task_key=not.is.null&select=id,screenshot_id,active_task_key,created_at,screenshots(id,timestamp,duration_seconds,storage_path,window_title,application_name,work_date)&order=created_at.desc&limit=1000`
-  );
+  // Fetch time tracking data for all issues using pagination
+  const PAGE_SIZE = 1000;
+  const allTimeTrackingData = [];
+  let queryOffset = 0;
+
+  while (true) {
+    const page = await supabaseRequest(
+      supabaseConfig,
+      `analysis_results?user_id=eq.${userId}&organization_id=eq.${organization.id}&work_type=eq.office&active_task_key=not.is.null&select=id,screenshot_id,active_task_key,created_at,screenshots(id,timestamp,duration_seconds,storage_path,window_title,application_name,work_date)&order=created_at.desc&limit=${PAGE_SIZE}&offset=${queryOffset}`
+    );
+
+    if (!page || !Array.isArray(page) || page.length === 0) {
+      break;
+    }
+
+    allTimeTrackingData.push(...page);
+    queryOffset += page.length;
+
+    if (page.length < PAGE_SIZE) {
+      break;
+    }
+
+    // Safety limit to prevent infinite loops
+    if (allTimeTrackingData.length > 50000) {
+      console.warn(`[getActiveIssuesWithTime] Safety limit reached (50000 records) for user ${userId}`);
+      break;
+    }
+  }
+
+  console.log(`[getActiveIssuesWithTime] Fetched ${allTimeTrackingData.length} time tracking records for user ${userId}`);
 
   // Aggregate time by issue key and build work sessions
   const timeByIssue = {};
   const lastWorkedByIssue = {};
   const sessionsByIssue = {};
 
-  if (timeTrackingData && Array.isArray(timeTrackingData)) {
+  if (allTimeTrackingData.length > 0) {
     // Sort by screenshot timestamp ascending to build sessions chronologically
-    const sortedData = [...timeTrackingData].sort((a, b) => {
+    const sortedData = allTimeTrackingData.sort((a, b) => {
       const timeA = a.screenshots?.timestamp || a.created_at;
       const timeB = b.screenshots?.timestamp || b.created_at;
       return new Date(timeA) - new Date(timeB);

@@ -4,18 +4,6 @@ import { formatTime } from '../../../utils';
 import { normalizeDate, formatLocalDate } from './dateUtils';
 
 /**
- * Parse timestamp as local time.
- * Desktop app stores local time via datetime.now() without timezone,
- * but the timestamptz column adds +00:00 treating it as UTC.
- * Strip timezone suffix so JS interprets it as the local time it actually is.
- */
-const parseAsLocalTime = (isoString) => {
-  if (!isoString) return null;
-  const stripped = isoString.replace(/([+-]\d{2}(:\d{2})?|Z)$/, '');
-  return new Date(stripped);
-};
-
-/**
  * Day View Component
  * Displays today's timesheet with team member cards and activity timeline
  */
@@ -110,8 +98,8 @@ function DayView({ loading, timeData }) {
     let maxHours = -Infinity;
 
     allSessions.forEach(session => {
-      const start = parseAsLocalTime(session.startTime || session.timestamp);
-      const end = parseAsLocalTime(session.endTime || session.timestamp);
+      const start = new Date(session.startTime || session.timestamp);
+      const end = new Date(session.endTime || session.timestamp);
       if (!start || !end) return;
 
       // Hours from midnight (can exceed 24 for next-day activity)
@@ -183,8 +171,8 @@ function DayView({ loading, timeData }) {
 
     // Convert sessions to time blocks with position and width
     return sessions.map(session => {
-      const startTime = parseAsLocalTime(session.startTime || session.timestamp);
-      const endTime = parseAsLocalTime(session.endTime || session.timestamp);
+      const startTime = new Date(session.startTime || session.timestamp);
+      const endTime = new Date(session.endTime || session.timestamp);
       if (!startTime || !endTime) return null;
 
       const leftPercent = timeToPercent(startTime);
@@ -217,15 +205,13 @@ function DayView({ loading, timeData }) {
     return null;
   };
 
-  // Get tooltip text for a time block (show time range only)
+  // Get tooltip text for a time block
   const getBlockTooltip = (block) => {
-    const formatTimeDisplay = (date) => date.toLocaleTimeString('en-US', {
+    return block.startTime.toLocaleTimeString('en-US', {
       hour: 'numeric',
       minute: '2-digit',
       hour12: true
     });
-
-    return `${formatTimeDisplay(block.startTime)} - ${formatTimeDisplay(block.endTime)}`;
   };
 
   // Check if timeline is available (for admins or regular user)
@@ -240,7 +226,7 @@ function DayView({ loading, timeData }) {
   const getTimeAgo = (timestamp) => {
     if (!timestamp) return null;
     const now = new Date();
-    const then = parseAsLocalTime(timestamp);
+    const then = new Date(timestamp);
     if (!then) return null;
     const diffMs = now - then;
     const diffMins = Math.floor(diffMs / 60000);

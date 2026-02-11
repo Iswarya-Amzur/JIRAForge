@@ -91,6 +91,16 @@ exports.analyzeScreenshot = async (req, res) => {
       });
     }
 
+    // Atomically claim the screenshot for processing (prevents webhook + polling race condition)
+    const claimed = await supabaseService.claimScreenshotForProcessing(screenshot_id);
+    if (!claimed) {
+      logger.info('Screenshot already processing or processed, skipping', { screenshot_id });
+      return res.json({
+        success: true,
+        message: 'Already processing or processed'
+      });
+    }
+
     // If organization_id is missing (Edge Function doesn't send it), fetch from screenshot record
     let resolvedOrganizationId = organization_id;
     if (!resolvedOrganizationId) {

@@ -171,7 +171,24 @@ function UnassignedWork() {
   }
 
   if (error) {
-    return <div className="unassigned-work-container"><div className="error">Error: {error}</div></div>;
+    return (
+      <div className="unassigned-work-container">
+        <h2>Unassigned Work</h2>
+        <div className="error-state">
+          <div className="error-state-icon">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#de350b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+          </div>
+          <p className="error-state-message">Unable to load unassigned work. This is usually a temporary issue.</p>
+          <button className="error-retry-btn" onClick={() => loadUnassignedWork()} disabled={loading}>
+            {loading ? 'Retrying...' : 'Try Again'}
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (sessions.length === 0) {
