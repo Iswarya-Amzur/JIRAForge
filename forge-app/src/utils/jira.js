@@ -103,7 +103,7 @@ export async function createJiraIssue(projectKey, issueData) {
  */
 export async function createJiraWorklog(issueKey, timeSpentSeconds, startedAt) {
   const response = await api.asUser().requestJira(
-    route`/rest/api/3/issue/${issueKey}/worklog`,
+    route`/rest/api/3/issue/${issueKey}/worklog?adjustEstimate=leave`,
     {
       method: 'POST',
       headers: {
@@ -118,6 +118,86 @@ export async function createJiraWorklog(issueKey, timeSpentSeconds, startedAt) {
   );
 
   return response.json();
+}
+
+/**
+ * Update an existing worklog entry for a Jira issue
+ * @param {string} issueKey - Jira issue key (e.g., PROJ-123)
+ * @param {string} worklogId - Existing worklog ID to update
+ * @param {number} timeSpentSeconds - Updated time spent in seconds
+ * @returns {Promise<Response>} Raw response (caller checks status)
+ */
+export async function updateJiraWorklog(issueKey, worklogId, timeSpentSeconds) {
+  const response = await api.asUser().requestJira(
+    route`/rest/api/3/issue/${issueKey}/worklog/${worklogId}?adjustEstimate=leave`,
+    {
+      method: 'PUT',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ timeSpentSeconds })
+    }
+  );
+  return response;
+}
+
+/**
+ * Create a worklog entry for a Jira issue (as app — for scheduled jobs)
+ * @param {string} issueKey - Jira issue key (e.g., PROJ-123)
+ * @param {number} timeSpentSeconds - Time spent in seconds
+ * @param {string} startedAt - ISO timestamp when work started
+ * @returns {Promise<Object>} Created worklog response
+ */
+export async function createJiraWorklogAsApp(issueKey, timeSpentSeconds, startedAt) {
+  const response = await api.asApp().requestJira(
+    route`/rest/api/3/issue/${issueKey}/worklog?adjustEstimate=leave`,
+    {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        timeSpentSeconds,
+        started: startedAt
+      })
+    }
+  );
+  return response.json();
+}
+
+/**
+ * Update an existing worklog entry (as app — for scheduled jobs)
+ * @param {string} issueKey - Jira issue key (e.g., PROJ-123)
+ * @param {string} worklogId - Existing worklog ID to update
+ * @param {number} timeSpentSeconds - Updated time spent in seconds
+ * @returns {Promise<Response>} Raw response (caller checks status)
+ */
+export async function updateJiraWorklogAsApp(issueKey, worklogId, timeSpentSeconds) {
+  const response = await api.asApp().requestJira(
+    route`/rest/api/3/issue/${issueKey}/worklog/${worklogId}?adjustEstimate=leave`,
+    {
+      method: 'PUT',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ timeSpentSeconds })
+    }
+  );
+  return response;
+}
+
+export async function deleteJiraWorklogAsApp(issueKey, worklogId) {
+  const response = await api.asApp().requestJira(
+    route`/rest/api/3/issue/${issueKey}/worklog/${worklogId}?adjustEstimate=leave`,
+    {
+      method: 'DELETE',
+      headers: { 'Accept': 'application/json' }
+    }
+  );
+  return response;
 }
 
 /**

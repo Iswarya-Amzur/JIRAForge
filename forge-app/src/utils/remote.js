@@ -11,46 +11,79 @@ import { getFromCache, setInCache, TTL, CacheKeys } from './cache.js';
 // Remote key from manifest.yml - must match exactly
 const REMOTE_KEY = 'ai-server';
 
+// In-flight promise map for request deduplication
+// Prevents duplicate concurrent requests for the same resource
+const inFlightRequests = new Map();
+
 /**
  * Make a request to the AI server via Forge Remote
  * Uses invokeRemote which automatically adds the FIT token
  * Requires 'compute' in the remote's operations array in manifest.yml
+ * Includes retry logic for transient failures (401 auth errors, 5xx server errors)
  * @param {string} endpoint - API endpoint path (e.g., '/api/forge/organization')
  * @param {Object} options - Request options
  * @returns {Promise<Object>} Response data
  */
 async function remoteRequest(endpoint, options = {}) {
-  console.log(`[Remote] invokeRemote to ${REMOTE_KEY}${endpoint}`);
+  const MAX_RETRIES = 2;
+  const BASE_DELAY_MS = 1000;
 
-  try {
-    const response = await invokeRemote(REMOTE_KEY, {
-      path: endpoint,
-      method: options.method || 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-      },
-      body: options.body ? JSON.stringify(options.body) : undefined
-    });
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      if (attempt > 0) {
+        const delay = BASE_DELAY_MS * attempt;
+        console.log(`[Remote] Retry ${attempt}/${MAX_RETRIES} for ${endpoint} after ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
 
-    console.log(`[Remote] Response status: ${response.status}`);
+      console.log(`[Remote] invokeRemote to ${REMOTE_KEY}${endpoint}`);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[Remote] Request failed: ${response.status}`, errorText);
-      throw new Error(`Remote request failed: ${errorText}`);
+      const response = await invokeRemote(REMOTE_KEY, {
+        path: endpoint,
+        method: options.method || 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers
+        },
+        body: options.body ? JSON.stringify(options.body) : undefined
+      });
+
+      console.log(`[Remote] Response status: ${response.status}`);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        const isRetryable = response.status === 401 || response.status >= 500;
+
+        if (isRetryable && attempt < MAX_RETRIES) {
+          console.warn(`[Remote] Retryable error ${response.status} on ${endpoint} (attempt ${attempt + 1})`);
+          continue;
+        }
+
+        console.error(`[Remote] Request failed: ${response.status}`, errorText);
+        throw new Error(`Remote request failed: ${errorText}`);
+      }
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Unknown error from remote');
+      }
+
+      return result.data;
+    } catch (error) {
+      const isRetryable = error.message?.includes('Authentication failed') ||
+        error.message?.includes('ETIMEDOUT') ||
+        error.message?.includes('ECONNRESET') ||
+        error.message?.includes('fetch failed');
+
+      if (isRetryable && attempt < MAX_RETRIES) {
+        console.warn(`[Remote] Retryable error on ${endpoint} (attempt ${attempt + 1}):`, error.message);
+        continue;
+      }
+
+      console.error(`[Remote] invokeRemote error:`, error.message);
+      throw error;
     }
-
-    const result = await response.json();
-
-    if (!result.success) {
-      throw new Error(result.error || 'Unknown error from remote');
-    }
-
-    return result.data;
-  } catch (error) {
-    console.error(`[Remote] invokeRemote error:`, error.message);
-    throw error;
   }
 }
 
@@ -90,57 +123,70 @@ export async function getOrCreateOrganization(cloudId, orgName = null, jiraUrl =
     return cached;
   }
 
-  try {
-    // If orgName or jiraUrl not provided, fetch from Jira API
-    if (!orgName || !jiraUrl) {
-      try {
-        console.log('[Remote] Fetching Jira server info for organization details');
-        const serverInfoResponse = await api.asApp().requestJira(
-          route`/rest/api/3/serverInfo`,
-          { method: 'GET' }
-        );
-
-        if (serverInfoResponse.ok) {
-          const serverInfo = await serverInfoResponse.json();
-          jiraUrl = jiraUrl || serverInfo.baseUrl;
-
-          // serverTitle often returns generic "Jira" - extract site name from URL instead
-          let siteName = serverInfo.serverTitle;
-          if (!siteName || siteName === 'Jira' || siteName === 'Jira Software') {
-            // Extract subdomain from URL (e.g., "saik" from "https://saik.atlassian.net")
-            try {
-              const url = new URL(jiraUrl);
-              const subdomain = url.hostname.split('.')[0];
-              // Only use subdomain if it's not a UUID (cloud IDs look like UUIDs)
-              if (subdomain && !subdomain.match(/^[0-9a-f]{8}-[0-9a-f]{4}-/i)) {
-                siteName = subdomain;
-              }
-            } catch (e) {
-              // URL parsing failed, keep serverTitle
-            }
-          }
-
-          orgName = orgName || siteName || 'Unknown Organization';
-          console.log(`[Remote] Got Jira info - Name: ${orgName}, URL: ${jiraUrl}`);
-        }
-      } catch (apiError) {
-        console.warn('[Remote] Could not fetch Jira server info:', apiError.message);
-        // Continue with defaults if API call fails
-      }
-    }
-
-    const org = await remoteRequest('/api/forge/organization', {
-      body: { orgName, jiraUrl }
-    });
-
-    // Cache the result
-    setInCache(cacheKey, org, TTL.ORGANIZATION);
-
-    return org;
-  } catch (error) {
-    console.error('[Remote] Error getting/creating organization:', error);
-    throw error;
+  // Deduplicate concurrent requests for the same cloudId
+  if (inFlightRequests.has(cacheKey)) {
+    console.log(`[Remote] Deduplicating org request for ${cloudId}`);
+    return inFlightRequests.get(cacheKey);
   }
+
+  const promise = (async () => {
+    try {
+      // If orgName or jiraUrl not provided, fetch from Jira API
+      if (!orgName || !jiraUrl) {
+        try {
+          console.log('[Remote] Fetching Jira server info for organization details');
+          const serverInfoResponse = await api.asApp().requestJira(
+            route`/rest/api/3/serverInfo`,
+            { method: 'GET' }
+          );
+
+          if (serverInfoResponse.ok) {
+            const serverInfo = await serverInfoResponse.json();
+            jiraUrl = jiraUrl || serverInfo.baseUrl;
+
+            // serverTitle often returns generic "Jira" - extract site name from URL instead
+            let siteName = serverInfo.serverTitle;
+            if (!siteName || siteName === 'Jira' || siteName === 'Jira Software') {
+              // Extract subdomain from URL (e.g., "saik" from "https://saik.atlassian.net")
+              try {
+                const url = new URL(jiraUrl);
+                const subdomain = url.hostname.split('.')[0];
+                // Only use subdomain if it's not a UUID (cloud IDs look like UUIDs)
+                if (subdomain && !subdomain.match(/^[0-9a-f]{8}-[0-9a-f]{4}-/i)) {
+                  siteName = subdomain;
+                }
+              } catch (e) {
+                // URL parsing failed, keep serverTitle
+              }
+            }
+
+            orgName = orgName || siteName || 'Unknown Organization';
+            console.log(`[Remote] Got Jira info - Name: ${orgName}, URL: ${jiraUrl}`);
+          }
+        } catch (apiError) {
+          console.warn('[Remote] Could not fetch Jira server info:', apiError.message);
+          // Continue with defaults if API call fails
+        }
+      }
+
+      const org = await remoteRequest('/api/forge/organization', {
+        body: { orgName, jiraUrl }
+      });
+
+      // Cache the result
+      setInCache(cacheKey, org, TTL.ORGANIZATION);
+
+      return org;
+    } catch (error) {
+      console.error('[Remote] Error getting/creating organization:', error);
+      throw error;
+    } finally {
+      inFlightRequests.delete(cacheKey);
+    }
+  })();
+
+  inFlightRequests.set(cacheKey, promise);
+  return promise;
 }
 
 /**
@@ -356,6 +402,61 @@ export async function createFeedbackSession() {
   const result = await remoteRequest('/api/forge/feedback/session', {});
 
   return result.feedbackUrl;
+}
+
+/**
+ * Submit feedback from the in-app modal
+ * Creates a session, extracts the session ID, then submits feedback data
+ *
+ * @param {Object} feedbackData - Feedback form data
+ * @param {string} feedbackData.category - Feedback category (required)
+ * @param {string} feedbackData.title - Feedback title (optional)
+ * @param {string} feedbackData.description - Feedback description (required)
+ * @param {Array} feedbackData.images - Base64 image strings (optional, max 3)
+ * @returns {Promise<Object>} Submit result with feedbackId
+ */
+export async function submitFeedback(feedbackData) {
+  console.log('[Remote] Submitting in-app feedback');
+
+  // Step 1: Create a feedback session to get a session URL
+  const feedbackUrl = await createFeedbackSession();
+  console.log('[Remote] Got feedback URL:', feedbackUrl);
+
+  // Step 2: Extract session_id from the URL query params
+  const url = new URL(feedbackUrl);
+  const sessionId = url.searchParams.get('session');
+  if (!sessionId) {
+    throw new Error('Could not extract session ID from feedback URL');
+  }
+  console.log('[Remote] Extracted session ID:', sessionId);
+
+  // Step 3: Submit the feedback data to the existing submit endpoint
+  const response = await invokeRemote(REMOTE_KEY, {
+    path: '/api/feedback/submit',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      session_id: sessionId,
+      category: feedbackData.category,
+      title: feedbackData.title || '',
+      description: feedbackData.description,
+      images: feedbackData.images || [],
+      app_version: 'forge-in-app'
+    })
+  });
+
+  console.log('[Remote] Feedback submit response status:', response.status);
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('[Remote] Feedback submit failed:', errorText);
+    throw new Error(`Failed to submit feedback: ${errorText}`);
+  }
+
+  const result = await response.json();
+  return result;
 }
 
 // Export the remote request function for custom calls

@@ -12,7 +12,7 @@ export function normalizeDate(workDate) {
   if (typeof workDate === 'string') {
     return workDate.split('T')[0];
   } else if (workDate instanceof Date) {
-    return workDate.toISOString().split('T')[0];
+    return formatLocalDate(workDate);
   }
   return String(workDate).split('T')[0];
 }

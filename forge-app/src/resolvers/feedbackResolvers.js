@@ -3,7 +3,7 @@
  * Handles feedback-related operations for the Forge app
  */
 
-import { createFeedbackSession } from '../utils/remote.js';
+import { createFeedbackSession, submitFeedback } from '../utils/remote.js';
 
 /**
  * Register feedback resolvers
@@ -24,6 +24,48 @@ export function registerFeedbackResolvers(resolver) {
       };
     } catch (error) {
       console.error('Error creating feedback session:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  });
+
+  /**
+   * Submit feedback from the in-app modal
+   * Validates inputs and submits via remote
+   */
+  resolver.define('submitFeedback', async (req) => {
+    try {
+      const { category, title, description, images } = req.payload;
+
+      // Validate required fields
+      if (!category) {
+        return { success: false, error: 'Category is required' };
+      }
+      if (!description || !description.trim()) {
+        return { success: false, error: 'Description is required' };
+      }
+
+      // Validate images
+      if (images && images.length > 3) {
+        return { success: false, error: 'Maximum 3 screenshots allowed' };
+      }
+
+      const result = await submitFeedback({
+        category,
+        title: title || '',
+        description: description.trim(),
+        images: images || []
+      });
+
+      return {
+        success: true,
+        message: 'Feedback submitted successfully',
+        feedbackId: result.feedbackId || result.id
+      };
+    } catch (error) {
+      console.error('Error submitting feedback:', error);
       return {
         success: false,
         error: error.message

@@ -182,10 +182,10 @@ APP_VERSION = "1.0.0"
 # Embedded credentials (for production builds - no .env file needed)
 # SECURITY: All sensitive keys moved to AI Server - fetched at runtime after authentication
 EMBEDDED_CONFIG = {
-    'ATLASSIAN_CLIENT_ID': 'k2Xwzy8c1g3Wk6Xpbeev0x70CXEp9lJH',
+    'ATLASSIAN_CLIENT_ID': 'Q8HT4Jn205AuTiAarj088oWNDrOqwvM5',
     # REMOVED: ATLASSIAN_CLIENT_SECRET - now on AI Server only (security fix)
     # REMOVED: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY - fetched from AI Server
-    'AI_SERVER_URL': 'https://timetracker-forge.amzur.com',  # AI Server for secure token exchange & config
+    'AI_SERVER_URL': 'https://forgesync.amzur.com',  # AI Server for secure token exchange & config
     'CAPTURE_INTERVAL': '300',
     'WEB_PORT': '51777',
     'ADMIN_PASSWORD': 'admin123'
@@ -498,7 +498,7 @@ def request_graceful_shutdown():
     try:
         signal_path = get_shutdown_signal_path()
         with open(signal_path, 'w') as f:
-            f.write(f"shutdown_requested_at={datetime.now().isoformat()}\n")
+            f.write(f"shutdown_requested_at={datetime.now(timezone.utc).isoformat()}\n")
             f.write(f"requested_by_pid={os.getpid()}\n")
         print("[INFO] Shutdown signal sent to running instance")
         return True
@@ -1142,6 +1142,8 @@ class AtlassianAuthManager:
             raise ValueError("Missing code_verifier - PKCE flow was not properly initiated")
 
         # Exchange code for tokens via AI Server (client_secret is on server only)
+        # Use (connect, read) timeout tuple - the AI server itself calls Atlassian's
+        # token endpoint which can take up to 30s, so we need a longer read timeout
         print("[INFO] Exchanging OAuth code via AI Server (with PKCE)...")
         response = requests.post(
             f"{self.ai_server_url}/api/auth/atlassian/callback",
@@ -1151,7 +1153,7 @@ class AtlassianAuthManager:
                 'code_verifier': code_verifier  # PKCE: Send verifier to AI server
             },
             headers={'Content-Type': 'application/json'},
-            timeout=30
+            timeout=(10, 60)
         )
 
         if response.status_code != 200:
@@ -1235,7 +1237,7 @@ class AtlassianAuthManager:
                     'refresh_token': refresh_token
                 },
                 headers={'Content-Type': 'application/json'},
-                timeout=30
+                timeout=(10, 60)
             )
 
             if response.status_code != 200:
@@ -1284,7 +1286,7 @@ class AtlassianAuthManager:
                     'atlassian_token': access_token
                 },
                 headers={'Content-Type': 'application/json'},
-                timeout=30
+                timeout=(10, 60)
             )
 
             if response.status_code == 401:
@@ -1349,7 +1351,7 @@ class AtlassianAuthManager:
             response = requests.post(
                 f"{ai_server_url}/api/auth/supabase-config",
                 json={'atlassian_token': access_token},
-                timeout=30
+                timeout=(10, 60)
             )
 
             if response.status_code == 401:
@@ -2833,6 +2835,8 @@ class TimeTracker:
         self.idle_timeout = 300  # 5 minutes idle timeout (in seconds)
         self._tracking_thread = None
         self._activity_monitor_thread = None  # Activity monitoring thread
+        self._system_event_thread = None  # Windows sleep/lock event listener
+        self._system_event_hwnd = None  # HWND for the system event message-only window
         self.screenshot_hash = None
         
         # Event-based tracking: Window switch detection
@@ -3609,7 +3613,7 @@ class TimeTracker:
             details: Optional dict with additional details to display
         """
         log_entry = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'level': level.upper(),
             'message': message
         }
@@ -3731,7 +3735,7 @@ class TimeTracker:
                 'name': atlassian_user.get('name'),
                 'user_id': user_id,
                 'organization_id': self.organization_id,
-                'cached_at': datetime.now().isoformat()
+                'cached_at': datetime.now(timezone.utc).isoformat()
             }
             with open(self._get_user_cache_path(), 'w') as f:
                 json.dump(cache_data, f)
@@ -3780,7 +3784,7 @@ class TimeTracker:
 
             update_data = {
                 'desktop_logged_in': logged_in,
-                'desktop_last_heartbeat': datetime.now().isoformat()
+                'desktop_last_heartbeat': datetime.now(timezone.utc).isoformat()
             }
 
             # Add app version if logging in
@@ -3806,7 +3810,7 @@ class TimeTracker:
                 return
 
             client.table('users').update({
-                'desktop_last_heartbeat': datetime.now().isoformat()
+                'desktop_last_heartbeat': datetime.now(timezone.utc).isoformat()
             }).eq('id', self.current_user_id).execute()
 
             print(f"[OK] Heartbeat sent")
@@ -4402,8 +4406,9 @@ class TimeTracker:
             client = self.supabase_service if self.supabase_service else self.supabase
             
             # Fetch settings for current organization (or global settings)
+            print(f"[DEBUG] Fetching tracking_settings for organization_id: {self.organization_id}")
             query = client.table('tracking_settings').select('*')
-            
+
             # If we have an organization_id, filter by it
             if self.organization_id:
                 query = query.eq('organization_id', self.organization_id)
@@ -4412,7 +4417,8 @@ class TimeTracker:
                 query = query.is_('organization_id', 'null')
             
             result = query.limit(1).execute()
-            
+            print(f"[DEBUG] tracking_settings query returned {len(result.data) if result.data else 0} rows")
+
             if result.data and len(result.data) > 0:
                 settings = result.data[0]
                 
@@ -4449,9 +4455,49 @@ class TimeTracker:
                 self.add_admin_log('INFO', f'Settings loaded: interval={self.capture_interval}s, mode={mode_str}')
 
             else:
+                # Fallback: try global settings (organization_id IS NULL)
+                # This matches the Forge app's getTrackingSettings fallback behavior
+                if self.organization_id:
+                    print(f"[DEBUG] No org-specific settings found, trying global settings (organization_id IS NULL)")
+                    fallback_result = client.table('tracking_settings').select('*').is_('organization_id', 'null').limit(1).execute()
+                    print(f"[DEBUG] Global settings query returned {len(fallback_result.data) if fallback_result.data else 0} rows")
+                    if fallback_result.data and len(fallback_result.data) > 0:
+                        result = fallback_result
+                        settings = result.data[0]
+
+                        # Map database columns to local settings
+                        self.tracking_settings = {
+                            'screenshot_monitoring_enabled': settings.get('screenshot_monitoring_enabled', True),
+                            'screenshot_interval_seconds': settings.get('screenshot_interval_seconds', 900),
+                            'tracking_mode': settings.get('tracking_mode', 'interval'),
+                            'event_tracking_enabled': settings.get('event_tracking_enabled', False),
+                            'track_window_changes': settings.get('track_window_changes', True),
+                            'track_idle_time': settings.get('track_idle_time', True),
+                            'idle_threshold_seconds': settings.get('idle_threshold_seconds', 300),
+                            'whitelist_enabled': settings.get('whitelist_enabled', True),
+                            'whitelisted_apps': settings.get('whitelisted_apps') or [],
+                            'blacklist_enabled': settings.get('blacklist_enabled', True),
+                            'blacklisted_apps': settings.get('blacklisted_apps') or [],
+                            'non_work_threshold_percent': settings.get('non_work_threshold_percent', 30),
+                            'flag_excessive_non_work': settings.get('flag_excessive_non_work', True),
+                            'private_sites_enabled': settings.get('private_sites_enabled', True),
+                            'private_sites': settings.get('private_sites') or []
+                        }
+
+                        self.capture_interval = self.tracking_settings['screenshot_interval_seconds']
+                        self.idle_timeout = self.tracking_settings['idle_threshold_seconds']
+
+                        self.tracking_settings_last_fetch = time.time()
+                        tracking_mode = self.tracking_settings.get('tracking_mode', 'interval')
+                        event_enabled = self.tracking_settings.get('event_tracking_enabled', False)
+                        mode_str = "interval + event" if (event_enabled or tracking_mode == 'event') else "interval-only"
+                        print(f"[OK] Tracking settings loaded (global fallback) - mode: {mode_str}, interval: {self.capture_interval}s")
+                        self.add_admin_log('INFO', f'Settings loaded (global): interval={self.capture_interval}s, mode={mode_str}')
+                        return
+
                 print("[INFO] No tracking settings found in Supabase, using defaults")
                 self.tracking_settings_last_fetch = time.time()
-                
+
         except Exception as e:
             print(f"[WARN] Failed to fetch tracking settings: {e}")
             # Continue with default settings
@@ -5029,7 +5075,7 @@ class TimeTracker:
                 # Update current window tracking
                 # IMPORTANT: Start time is set to NOW, so the next screenshot will cover from this moment
                 self.current_window_key = window_key
-                self.current_window_start_time = datetime.now()
+                self.current_window_start_time = datetime.now(timezone.utc)
                 self.current_window_screenshot_id = None  # Reset - will be set when screenshot is captured
                 self.current_window_record_created_at = None  # Reset - will be set when screenshot is captured
                 if self.current_window_key and self.current_window_key != 'unknown':
@@ -5082,7 +5128,7 @@ class TimeTracker:
             thumb_bytes = thumb_buffer.getvalue()
             
             # Generate filenames
-            timestamp = datetime.now()
+            timestamp = datetime.now(timezone.utc)
             filename = f"screenshot_{int(timestamp.timestamp())}.png"
             thumb_filename = f"thumb_{int(timestamp.timestamp())}.jpg"
             
@@ -5152,7 +5198,7 @@ class TimeTracker:
                 'user_assigned_issues': self.user_issues,
                 # Timezone support for correct date grouping
                 'user_timezone': get_local_timezone_name(),  # e.g., 'Asia/Kolkata'
-                'work_date': timestamp.date().isoformat(),   # Local date: 'YYYY-MM-DD'
+                'work_date': datetime.now().date().isoformat(),   # Local date: 'YYYY-MM-DD'
                 'metadata': {
                     'work_type': work_type,
                     'is_blacklisted': is_blacklisted,
@@ -5280,7 +5326,7 @@ class TimeTracker:
 
                     # Track when this record was actually created (for interval safeguard)
                     # This is different from start_time which may be from last_screenshot_end_time
-                    self.current_window_record_created_at = datetime.now()
+                    self.current_window_record_created_at = datetime.now(timezone.utc)
 
                     # Track end_time for continuity - next screenshot will start from here
                     # This ensures no gaps between records
@@ -5327,6 +5373,41 @@ class TimeTracker:
         
         return None
 
+    def _finalize_active_session(self, reason="idle"):
+        """Finalize the current work session by updating its end_time in the DB.
+        Called when entering idle (timeout, system sleep, or screen lock)."""
+        if self.current_window_screenshot_id is None or self.current_window_db_start_time is None:
+            return
+        try:
+            end_time = datetime.fromtimestamp(self.last_activity_time, tz=timezone.utc)
+            duration_seconds = int((end_time - self.current_window_db_start_time).total_seconds())
+
+            if duration_seconds < 1:
+                duration_seconds = 1
+                end_time = self.current_window_db_start_time + timedelta(seconds=1)
+
+            db_client = self.supabase_service if self.supabase_service else self.supabase
+            update_result = db_client.table('screenshots').update({
+                'end_time': end_time.isoformat(),
+                'timestamp': end_time.isoformat(),
+                'duration_seconds': duration_seconds
+            }).eq('id', self.current_window_screenshot_id).execute()
+
+            if update_result.data:
+                print(f"[OK] Finalized work session ({reason}):")
+                print(f"     - Record ID: {self.current_window_screenshot_id}")
+                print(f"     - Start: {self.current_window_db_start_time.strftime('%H:%M:%S')} (from DB)")
+                print(f"     - End (last activity): {end_time.strftime('%H:%M:%S')}")
+                print(f"     - Duration: {duration_seconds}s")
+
+            self.current_window_screenshot_id = None
+            self.current_window_record_created_at = None
+            self.current_window_start_time = None
+            self.current_window_db_start_time = None
+            self.last_screenshot_end_time = end_time
+        except Exception as e:
+            print(f"[ERROR] Error finalizing session ({reason}): {e}")
+
     def monitor_user_activity(self):
         """Monitor mouse and keyboard activity for idle detection"""
         try:
@@ -5359,6 +5440,139 @@ class TimeTracker:
         keyboard_listener.start()
 
         print("[OK] Activity monitoring started (5-minute idle timeout)")
+
+    def monitor_system_events(self):
+        """Monitor Windows sleep/lock events to instantly detect inactivity.
+        Runs on a daemon thread. Uses a message-only window to receive
+        WM_POWERBROADCAST (sleep/wake) and WM_WTSSESSION_CHANGE (lock/unlock)."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+        except Exception as e:
+            print(f"[WARN] ctypes not available — system event monitoring disabled: {e}")
+            return
+
+        try:
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            wtsapi32 = ctypes.windll.wtsapi32
+
+            # Window message constants
+            WM_POWERBROADCAST = 0x0218
+            PBT_APMSUSPEND = 0x0004
+            PBT_APMRESUMEAUTOMATIC = 0x0012
+            WM_WTSSESSION_CHANGE = 0x02B1
+            WTS_SESSION_LOCK = 0x7
+            WTS_SESSION_UNLOCK = 0x8
+            HWND_MESSAGE = wintypes.HWND(-3)
+            NOTIFY_FOR_THIS_SESSION = 0
+
+            # On 64-bit Windows, LRESULT/WPARAM/LPARAM are 64-bit.
+            # ctypes.c_long is only 32-bit on Windows, causing overflow errors.
+            LRESULT = ctypes.c_longlong
+
+            # Set proper arg/return types for DefWindowProcW to avoid overflow
+            user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            user32.DefWindowProcW.restype = LRESULT
+
+            WNDPROC = ctypes.WINFUNCTYPE(
+                LRESULT,             # LRESULT (64-bit on x64)
+                wintypes.HWND,       # hWnd
+                wintypes.UINT,       # uMsg
+                wintypes.WPARAM,     # wParam
+                wintypes.LPARAM,     # lParam
+            )
+
+            def wnd_proc(hwnd, msg, wparam, lparam):
+                try:
+                    if msg == WM_POWERBROADCAST:
+                        if wparam == PBT_APMSUSPEND:
+                            print("[INFO] System sleep detected — finalizing session")
+                            if not self.is_idle:
+                                self._finalize_active_session("system sleep")
+                                self.is_idle = True
+                                self.update_tray_icon()
+                                self.add_admin_log('INFO', 'System sleep detected — entered idle')
+                        elif wparam == PBT_APMRESUMEAUTOMATIC:
+                            print("[INFO] System wake detected — will resume tracking on activity")
+                            self.needs_idle_resume = True
+                    elif msg == WM_WTSSESSION_CHANGE:
+                        if wparam == WTS_SESSION_LOCK:
+                            print("[INFO] Screen lock detected — finalizing session")
+                            if not self.is_idle:
+                                self._finalize_active_session("screen lock")
+                                self.is_idle = True
+                                self.update_tray_icon()
+                                self.add_admin_log('INFO', 'Screen locked — entered idle')
+                        elif wparam == WTS_SESSION_UNLOCK:
+                            print("[INFO] Screen unlock detected — will resume tracking on activity")
+                            self.needs_idle_resume = True
+                except Exception as e:
+                    print(f"[ERROR] Error in system event handler: {e}")
+                return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+            # Store callback on self to prevent garbage collection while window is alive
+            self._wndproc_callback = WNDPROC(wnd_proc)
+
+            class WNDCLASSEXW(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.UINT),
+                    ("style", wintypes.UINT),
+                    ("lpfnWndProc", WNDPROC),
+                    ("cbClsExtra", ctypes.c_int),
+                    ("cbWndExtra", ctypes.c_int),
+                    ("hInstance", wintypes.HINSTANCE),
+                    ("hIcon", wintypes.HANDLE),
+                    ("hCursor", wintypes.HANDLE),
+                    ("hbrBackground", wintypes.HANDLE),
+                    ("lpszMenuName", wintypes.LPCWSTR),
+                    ("lpszClassName", wintypes.LPCWSTR),
+                    ("hIconSm", wintypes.HANDLE),
+                ]
+
+            wc = WNDCLASSEXW()
+            wc.cbSize = ctypes.sizeof(WNDCLASSEXW)
+            wc.lpfnWndProc = self._wndproc_callback
+            wc.hInstance = kernel32.GetModuleHandleW(None)
+            wc.lpszClassName = "JIRAForgeSysEventWnd"
+
+            atom = user32.RegisterClassExW(ctypes.byref(wc))
+            if not atom:
+                print("[ERROR] Failed to register window class for system event monitoring")
+                return
+
+            hwnd = user32.CreateWindowExW(
+                0, wc.lpszClassName, "JIRAForge System Event Monitor",
+                0, 0, 0, 0, 0,
+                HWND_MESSAGE, None, wc.hInstance, None
+            )
+            if not hwnd:
+                print("[ERROR] Failed to create message-only window for system event monitoring")
+                return
+
+            # Store hwnd for potential cleanup
+            self._system_event_hwnd = hwnd
+
+            # Register for session notifications (lock/unlock)
+            try:
+                if not wtsapi32.WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION):
+                    print("[WARN] WTSRegisterSessionNotification failed — lock/unlock detection disabled")
+                    print("[INFO] Sleep/wake detection is still active")
+            except Exception as e:
+                print(f"[WARN] Could not register for session notifications: {e}")
+                print("[INFO] Sleep/wake detection is still active")
+
+            print("[OK] System event monitoring started (sleep/wake, lock/unlock)")
+
+            # Message pump
+            msg = wintypes.MSG()
+            while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+
+        except Exception as e:
+            print(f"[WARN] System event monitoring failed to start: {e}")
+            print("[INFO] Idle detection will still work via activity timeout")
 
     def sync_offline_data(self, force=False):
         """Sync offline data to Supabase when online
@@ -5533,49 +5747,15 @@ class TimeTracker:
                 current_idle_timeout = self.tracking_settings.get('idle_threshold_seconds', self.idle_timeout)
                 if idle_duration > current_idle_timeout:
                     if not self.is_idle:
-                        idle_start_time = datetime.now()
-                        last_activity = datetime.fromtimestamp(self.last_activity_time)
-                        print(f"[INFO] Entering idle mode at {idle_start_time.strftime('%H:%M:%S')}:")
-                        print(f"     - Last activity: {last_activity.strftime('%H:%M:%S')}")
+                        idle_start_time = datetime.now(timezone.utc)
+                        last_activity = datetime.fromtimestamp(self.last_activity_time, tz=timezone.utc)
+                        print(f"[INFO] Entering idle mode at {idle_start_time.strftime('%H:%M:%S')} UTC:")
+                        print(f"     - Last activity: {last_activity.strftime('%H:%M:%S')} UTC")
                         print(f"     - Idle duration: {int(idle_duration)}s (threshold: {current_idle_timeout}s)")
                         
-                        # IMPORTANT: Finalize the current window's duration BEFORE going idle
+                        # Finalize the current window's duration BEFORE going idle
                         # This prevents idle time from being counted as work time
-                        if self.current_window_screenshot_id is not None and self.current_window_db_start_time is not None:
-                            try:
-                                # Use the last activity time as the end time, not current time
-                                # This gives us the actual work duration before user went idle
-                                end_time = datetime.fromtimestamp(self.last_activity_time)
-                                # Use the ACTUAL start_time from database for accurate duration calculation
-                                duration_seconds = int((end_time - self.current_window_db_start_time).total_seconds())
-
-                                if duration_seconds < 1:
-                                    duration_seconds = 1
-                                    end_time = self.current_window_db_start_time + timedelta(seconds=1)
-
-                                db_client = self.supabase_service if self.supabase_service else self.supabase
-                                update_result = db_client.table('screenshots').update({
-                                    'end_time': end_time.isoformat(),
-                                    'timestamp': end_time.isoformat(),
-                                    'duration_seconds': duration_seconds
-                                }).eq('id', self.current_window_screenshot_id).execute()
-
-                                if update_result.data:
-                                    print(f"[OK] Finalized work session before idle:")
-                                    print(f"     - Record ID: {self.current_window_screenshot_id}")
-                                    print(f"     - Start: {self.current_window_db_start_time.strftime('%H:%M:%S')} (from DB)")
-                                    print(f"     - End (last activity): {end_time.strftime('%H:%M:%S')}")
-                                    print(f"     - Duration: {duration_seconds}s")
-
-                                # Reset tracking state - will start fresh when resuming
-                                self.current_window_screenshot_id = None
-                                self.current_window_record_created_at = None
-                                self.current_window_start_time = None
-                                self.current_window_db_start_time = None
-                                self.last_screenshot_end_time = end_time
-
-                            except Exception as e:
-                                print(f"[ERROR] Error finalizing session before idle: {e}")
+                        self._finalize_active_session("idle timeout")
                         
                         self.is_idle = True
                         self.update_tray_icon()
@@ -5589,8 +5769,8 @@ class TimeTracker:
 
                 # Resume from idle if activity was detected by pynput
                 if self.needs_idle_resume:
-                    resume_time = datetime.now()
-                    print(f"[INFO] Activity detected at {resume_time.strftime('%H:%M:%S')}, resuming tracking from idle")
+                    resume_time = datetime.now(timezone.utc)
+                    print(f"[INFO] Activity detected at {resume_time.strftime('%H:%M:%S')} UTC, resuming tracking from idle")
                     print(f"     - All tracking state reset - new session will start fresh")
                     self.is_idle = False
                     self.needs_idle_resume = False
@@ -5670,7 +5850,7 @@ class TimeTracker:
                         # 1. Previous record's end_time
                         # 2. Next record's start_time (via last_screenshot_end_time)
                         # This ensures PERFECT continuity with NO gaps or overlaps
-                        end_time = datetime.now()
+                        end_time = datetime.now(timezone.utc)
 
                         # Set last_screenshot_end_time IMMEDIATELY so upload_screenshot uses this exact value
                         self.last_screenshot_end_time = end_time
@@ -5718,7 +5898,7 @@ class TimeTracker:
                         # If we always reset to now(), we'd create gaps when window switches are
                         # skipped due to min_screenshot_interval cooldown
                         if self.last_screenshot_end_time is None:
-                            self.last_screenshot_end_time = datetime.now()
+                            self.last_screenshot_end_time = datetime.now(timezone.utc)
 
                 # Decide whether to capture a new screenshot
                 should_capture = False
@@ -5744,7 +5924,7 @@ class TimeTracker:
                         # This exact timestamp will be used for both:
                         # 1. Current record's end_time
                         # 2. Next record's start_time (via last_screenshot_end_time)
-                        end_time = datetime.now()
+                        end_time = datetime.now(timezone.utc)
 
                         # Set last_screenshot_end_time IMMEDIATELY so upload_screenshot uses this exact value
                         self.last_screenshot_end_time = end_time
@@ -5784,7 +5964,7 @@ class TimeTracker:
                     should_capture = True
                     capture_reason = "interval"
                 
-                if should_capture:
+                if should_capture and not self.is_idle:
                     screenshot = self.capture_screenshot()
                     if screenshot:
                         # Upload screenshot with event-based tracking (start_time and end_time)
@@ -5876,6 +6056,13 @@ class TimeTracker:
                 target=self.monitor_user_activity, daemon=True
             )
             self._activity_monitor_thread.start()
+
+        # Start system event monitoring thread (sleep/lock detection)
+        if WIN32_AVAILABLE and (not self._system_event_thread or not self._system_event_thread.is_alive()):
+            self._system_event_thread = threading.Thread(
+                target=self.monitor_system_events, daemon=True
+            )
+            self._system_event_thread.start()
 
         # Start offline sync thread
         if not self._sync_thread or not self._sync_thread.is_alive():

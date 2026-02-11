@@ -43,13 +43,31 @@ async function downloadFile(bucket, filePath) {
     }
 
     if (!listData || listData.length === 0) {
-      logger.error('File not found in Supabase storage', {
+      // Retry once after 3s delay to handle Supabase storage replication lag
+      logger.warn('File not found in Supabase storage, retrying in 3s...', {
         bucket,
-        filePath,
-        folderPath,
-        fileName
+        filePath
       });
-      throw new Error(`File not found: ${filePath}`);
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      const { data: retryListData, error: retryListError } = await supabase.storage
+        .from(bucket)
+        .list(folderPath, {
+          limit: 1,
+          search: fileName
+        });
+
+      if (retryListError || !retryListData || retryListData.length === 0) {
+        logger.error('File not found in Supabase storage after retry', {
+          bucket,
+          filePath,
+          folderPath,
+          fileName
+        });
+        throw new Error(`File not found: ${filePath}`);
+      }
+
+      logger.info('File found on retry after replication lag', { bucket, filePath });
     }
 
     // File exists, now download it

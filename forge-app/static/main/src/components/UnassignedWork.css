@@ -96,19 +96,60 @@
   font-weight: 400;
 }
 
-.loading,
-.error {
+.loading {
   padding: 40px;
   text-align: center;
   font-size: 16px;
   color: var(--ds-text);
 }
 
-.error {
-  color: #de350b;
-  background: #ffebe6;
-  border: 1px solid #ff5630;
+/* Error state with retry button */
+.error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  background: #fff;
+  border: 1px solid #ffbdad;
   border-radius: 8px;
+  text-align: center;
+  box-shadow: 0 1px 2px rgba(9, 30, 66, 0.08);
+}
+
+.error-state-icon {
+  margin-bottom: 16px;
+}
+
+.error-state-message {
+  font-size: 15px;
+  color: var(--ds-text-subtle);
+  margin: 0 0 20px 0;
+  max-width: 360px;
+  line-height: 1.5;
+}
+
+.error-retry-btn {
+  padding: 8px 20px;
+  background: #6656fc;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.error-retry-btn:hover:not(:disabled) {
+  background: #5b4bf0;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(102, 86, 252, 0.3);
+}
+
+.error-retry-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* Notification Settings Toggle */

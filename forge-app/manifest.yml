@@ -13,6 +13,9 @@ modules:
   function:
     - key: main
       handler: index.handler
+    - key: scheduledWorklogSync
+      handler: index.scheduledWorklogSyncHandler
+      timeoutSeconds: 900
 
   jira:projectPage:
     - key: brd-time-tracker-project-page
@@ -35,6 +38,11 @@ modules:
       resource: settings
       resolver:
         function: main
+
+  scheduledTrigger:
+    - key: worklog-sync-trigger
+      function: scheduledWorklogSync
+      interval: hour
 
 resources:
   - key: main

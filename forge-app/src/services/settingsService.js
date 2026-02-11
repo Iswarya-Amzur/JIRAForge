@@ -105,7 +105,8 @@ export async function getTrackingSettings(accountId, cloudId) {
         nonWorkThresholdPercent: settings.non_work_threshold_percent,
         flagExcessiveNonWork: settings.flag_excessive_non_work,
         privateSitesEnabled: settings.private_sites_enabled,
-        privateSites: settings.private_sites || []
+        privateSites: settings.private_sites || [],
+        jiraWorklogSyncEnabled: settings.jira_worklog_sync_enabled ?? false
       };
     }
 
@@ -187,6 +188,7 @@ export async function saveTrackingSettings(accountId, cloudId, settings) {
     flag_excessive_non_work: settings.flagExcessiveNonWork,
     private_sites_enabled: settings.privateSitesEnabled,
     private_sites: settings.privateSites || [],
+    jira_worklog_sync_enabled: settings.jiraWorklogSyncEnabled ?? false,
     updated_by: userId,
     updated_at: new Date().toISOString()
   };

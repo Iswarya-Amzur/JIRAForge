@@ -173,8 +173,12 @@ class PollingService {
       application_name
     });
 
-    // Update status to processing
-    await supabaseService.updateScreenshotStatus(screenshot_id, 'processing');
+    // Atomically claim the screenshot for processing (prevents webhook + polling race condition)
+    const claimed = await supabaseService.claimScreenshotForProcessing(screenshot_id);
+    if (!claimed) {
+      logger.info('Screenshot already claimed by another process, skipping', { screenshot_id });
+      return;
+    }
 
     // Parse user_assigned_issues if it's a string
     let parsedAssignedIssues = user_assigned_issues;

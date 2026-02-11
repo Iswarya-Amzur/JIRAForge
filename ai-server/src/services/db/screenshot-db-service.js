@@ -176,6 +176,44 @@ async function clearStorageUrls(screenshotId) {
 }
 
 /**
+ * Atomically claim a screenshot for processing
+ * Uses conditional update to prevent race conditions between webhook and polling
+ * @param {string} screenshotId - Screenshot ID
+ * @returns {Promise<boolean>} True if this caller won the claim (status was 'pending'), false otherwise
+ */
+async function claimScreenshotForProcessing(screenshotId) {
+  try {
+    const supabase = getClient();
+
+    // Atomic: only update if status is 'pending' or 'failed' (retry-eligible)
+    // If another process already claimed it, this returns no rows
+    const { data, error } = await supabase
+      .from('screenshots')
+      .update({
+        status: 'processing',
+        updated_at: getLocalISOString()
+      })
+      .eq('id', screenshotId)
+      .in('status', ['pending', 'failed'])
+      .select('id');
+
+    if (error) {
+      throw error;
+    }
+
+    // If data array is empty, another process already claimed this screenshot
+    const claimed = data && data.length > 0;
+    if (!claimed) {
+      logger.info('Screenshot already claimed or not pending', { screenshotId });
+    }
+    return claimed;
+  } catch (error) {
+    logger.error('Error claiming screenshot for processing:', error);
+    throw new Error(`Failed to claim screenshot: ${error.message}`);
+  }
+}
+
+/**
  * Get screenshot by ID
  * @param {string} screenshotId - Screenshot ID
  * @returns {Promise<Object|null>} Screenshot data or null if not found
@@ -208,5 +246,6 @@ module.exports = {
   updateScreenshotDuration,
   getPendingScreenshots,
   getScreenshotById,
-  clearStorageUrls
+  clearStorageUrls,
+  claimScreenshotForProcessing
 };
