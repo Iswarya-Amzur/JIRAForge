@@ -37,7 +37,9 @@ class PollingService {
 
     // Then set up interval
     this.intervalId = setInterval(() => {
-      this.processPendingScreenshots();
+      this.processPendingScreenshots().catch(error => {
+        logger.error('Error in polling cycle:', error);
+      });
     }, this.pollInterval);
   }
 
@@ -71,6 +73,10 @@ class PollingService {
     this.processing = true;
 
     try {
+      // Reset screenshots stuck in 'processing' for too long (e.g., crashed/hung analysis)
+      // This recovers screenshots that were claimed but never completed
+      await supabaseService.resetStuckProcessingScreenshots(10);
+
       // Fetch pending screenshots from Supabase
       const pendingScreenshots = await supabaseService.getPendingScreenshots(this.batchSize);
 
@@ -85,10 +91,19 @@ class PollingService {
       let successCount = 0;
       let failureCount = 0;
 
+      // Per-screenshot timeout (default: 90 seconds)
+      const screenshotTimeoutMs = parseInt(process.env.SCREENSHOT_PROCESSING_TIMEOUT_MS || '90000', 10);
+
       // Process each screenshot
       for (const screenshot of pendingScreenshots) {
         try {
-          await this.processScreenshot(screenshot);
+          // Wrap processScreenshot with a timeout to prevent any single screenshot from hanging
+          await Promise.race([
+            this.processScreenshot(screenshot),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error(`Screenshot processing timed out after ${screenshotTimeoutMs / 1000}s`)), screenshotTimeoutMs)
+            )
+          ]);
           successCount++;
         } catch (error) {
           failureCount++;

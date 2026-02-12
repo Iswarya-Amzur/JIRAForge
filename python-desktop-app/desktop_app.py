@@ -1245,8 +1245,9 @@ class AtlassianAuthManager:
                 error = error_data.get('error', response.text)
                 print(f"[ERROR] Token refresh failed: {error}")
                 # Check if re-authentication is required
-                if error_data.get('requiresReauth'):
+                if error_data.get('requiresReauth') or 'invalid' in str(error).lower():
                     print("[WARN] Refresh token expired - user must re-authenticate")
+                    self._show_reauth_notification()
                 return False
 
             result = response.json()
@@ -1261,6 +1262,7 @@ class AtlassianAuthManager:
             })
             self._save_tokens()
 
+            self._reauth_notification_shown = False  # Reset on successful refresh
             print("[OK] Access token refreshed successfully via AI Server")
             return True
         except Exception as e:
@@ -3076,6 +3078,9 @@ class TimeTracker:
 
                 print(f"[OK] Authenticated user: {user_info.get('email', 'unknown')}")
 
+                # Reset reauth notification flag on successful login
+                self._reauth_notification_shown = False
+
                 # Update desktop app status to logged in
                 self._update_desktop_status(logged_in=True)
 
@@ -4406,7 +4411,6 @@ class TimeTracker:
             client = self.supabase_service if self.supabase_service else self.supabase
             
             # Fetch settings for current organization (or global settings)
-            print(f"[DEBUG] Fetching tracking_settings for organization_id: {self.organization_id}")
             query = client.table('tracking_settings').select('*')
 
             # If we have an organization_id, filter by it
@@ -4417,7 +4421,6 @@ class TimeTracker:
                 query = query.is_('organization_id', 'null')
             
             result = query.limit(1).execute()
-            print(f"[DEBUG] tracking_settings query returned {len(result.data) if result.data else 0} rows")
 
             if result.data and len(result.data) > 0:
                 settings = result.data[0]
@@ -4458,9 +4461,7 @@ class TimeTracker:
                 # Fallback: try global settings (organization_id IS NULL)
                 # This matches the Forge app's getTrackingSettings fallback behavior
                 if self.organization_id:
-                    print(f"[DEBUG] No org-specific settings found, trying global settings (organization_id IS NULL)")
                     fallback_result = client.table('tracking_settings').select('*').is_('organization_id', 'null').limit(1).execute()
-                    print(f"[DEBUG] Global settings query returned {len(fallback_result.data) if fallback_result.data else 0} rows")
                     if fallback_result.data and len(fallback_result.data) > 0:
                         result = fallback_result
                         settings = result.data[0]
@@ -4657,6 +4658,29 @@ class TimeTracker:
 
         except Exception as e:
             print(f"[WARN] Failed to show notification: {e}")
+
+    def _show_reauth_notification(self):
+        """Show a one-time notification that the user needs to re-authenticate"""
+        if getattr(self, '_reauth_notification_shown', False):
+            return  # Already shown, don't spam
+        self._reauth_notification_shown = True
+
+        if not WINOTIFY_AVAILABLE:
+            print("[WARN] Re-authentication required (notification unavailable)")
+            return
+
+        try:
+            notification = Notification(
+                app_id="Time Tracker",
+                title="Authentication Expired",
+                msg="Your session has expired. Please open Time Tracker and log in again to continue syncing with Jira.",
+                duration="long"
+            )
+            notification.set_audio(audio.Default, loop=False)
+            notification.show()
+            print("[OK] Re-authentication notification shown to user")
+        except Exception as e:
+            print(f"[WARN] Failed to show reauth notification: {e}")
 
     def show_pause_reminder_notification(self):
         """Show notification reminding user they have paused tracking"""
@@ -4892,14 +4916,6 @@ class TimeTracker:
         for whitelist_entry in whitelisted_apps:
             if self.app_matches(app_name, whitelist_entry):
                 return True
-
-        # Debug: Log when app is not found in whitelist (first occurrence only)
-        if not hasattr(self, '_whitelist_debug_logged'):
-            self._whitelist_debug_logged = set()
-        normalized_app = self.normalize_app_name(app_name)
-        if normalized_app not in self._whitelist_debug_logged:
-            self._whitelist_debug_logged.add(normalized_app)
-            print(f"[DEBUG] '{normalized_app}' not matched in whitelist: {whitelisted_apps}")
 
         return False
 
@@ -5722,20 +5738,22 @@ class TimeTracker:
                     time.sleep(1)
                     continue
 
-                # Periodically refresh tracking settings from Supabase
-                if time.time() - last_settings_refresh > settings_refresh_interval:
-                    self.fetch_tracking_settings()
-                    last_settings_refresh = time.time()
+                # Skip periodic checks while idle — no need to hit APIs when user is away
+                if not self.is_idle:
+                    # Periodically refresh tracking settings from Supabase
+                    if time.time() - last_settings_refresh > settings_refresh_interval:
+                        self.fetch_tracking_settings()
+                        last_settings_refresh = time.time()
 
-                # Periodically check for app updates (every 4 hours by default)
-                # This runs in the background and shows notification if update available
-                if time.time() - self.last_version_check_time > self.version_check_interval:
-                    self.check_for_app_updates(show_notification=True)
+                    # Periodically check for app updates (every 4 hours by default)
+                    # This runs in the background and shows notification if update available
+                    if time.time() - self.last_version_check_time > self.version_check_interval:
+                        self.check_for_app_updates(show_notification=True)
 
-                # Periodically check for unassigned work and send notifications
-                if time.time() - last_notification_check > notification_check_interval:
-                    self.check_and_notify_unassigned_work()
-                    last_notification_check = time.time()
+                    # Periodically check for unassigned work and send notifications
+                    if time.time() - last_notification_check > notification_check_interval:
+                        self.check_and_notify_unassigned_work()
+                        last_notification_check = time.time()
                 
                 # Check if screenshot monitoring is enabled
                 if not self.tracking_settings.get('screenshot_monitoring_enabled', True):
@@ -6797,92 +6815,107 @@ class TimeTracker:
             display: flex;
             align-items: center;
             justify-content: center;
-            background: #f5f5f5;
+            background: linear-gradient(135deg, #FAFBFC 0%, #DFE1E6 100%);
         }
         .login-card {
             background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            padding: 32px;
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(9, 30, 66, 0.12), 0 0 1px rgba(9, 30, 66, 0.2);
+            padding: 40px 36px;
             width: 100%;
-            max-width: 400px;
+            max-width: 420px;
+            text-align: center;
         }
-        .header {
+        .app-logo {
+            width: 56px;
+            height: 56px;
+            background: linear-gradient(135deg, #0052CC 0%, #2684FF 100%);
+            border-radius: 14px;
             display: flex;
             align-items: center;
-            gap: 10px;
-            margin-bottom: 8px;
+            justify-content: center;
+            margin: 0 auto 20px;
+            box-shadow: 0 4px 12px rgba(0, 82, 204, 0.3);
         }
-        .header .clock-icon {
-            font-size: 24px;
+        .app-logo svg {
+            width: 30px;
+            height: 30px;
         }
-        .header h1 {
+        h1 {
             font-size: 22px;
-            font-weight: 600;
-            color: #333;
+            font-weight: 700;
+            color: #172B4D;
+            margin-bottom: 6px;
         }
         .subtitle {
-            color: #666;
+            color: #6B778C;
             font-size: 14px;
-            margin-bottom: 24px;
+            line-height: 1.5;
+            margin-bottom: 28px;
         }
-        .info-box {
-            background: #e3f2fd;
-            border-radius: 6px;
-            padding: 16px;
-            margin-bottom: 20px;
-        }
-        .info-box h3 {
-            font-size: 14px;
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 4px;
-        }
-        .info-box p {
-            font-size: 13px;
-            color: #666;
+        .divider {
+            height: 1px;
+            background: #EBECF0;
+            margin-bottom: 28px;
         }
         .login-btn {
             width: 100%;
-            height: 44px;
-            background: #4285f4;
+            height: 48px;
+            background: #0052CC;
             color: white;
             border: none;
             border-radius: 6px;
             font-size: 15px;
-            font-weight: 500;
+            font-weight: 600;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 8px;
-            transition: background 0.2s;
+            gap: 10px;
+            transition: background 0.2s, box-shadow 0.2s;
+            letter-spacing: 0.2px;
         }
         .login-btn:hover {
-            background: #3367d6;
+            background: #0065FF;
+            box-shadow: 0 4px 12px rgba(0, 82, 204, 0.35);
+        }
+        .login-btn:active {
+            background: #0747A6;
+            box-shadow: none;
+        }
+        .login-btn svg {
+            flex-shrink: 0;
+        }
+        .info-text {
+            margin-top: 20px;
+            font-size: 12px;
+            color: #97A0AF;
+            line-height: 1.5;
         }
     </style>
 </head>
 <body>
     <div class="login-card">
-        <div class="header">
-            <span class="clock-icon">&#128337;</span>
-            <h1>Amzur Timesheet Tracker</h1>
+        <div class="app-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12 6 12 12 16 14"/>
+            </svg>
         </div>
-        <p class="subtitle">Please sign in with your Atlassian account to start tracking time.</p>
+        <h1>Amzur Timesheet Tracker</h1>
+        <p class="subtitle">Sign in with your Atlassian account to start tracking time on this computer.</p>
 
-        <div class="info-box">
-            <h3>Desktop Application</h3>
-            <p>This will authorize time tracking on this computer.</p>
-        </div>
+        <div class="divider"></div>
 
         <button class="login-btn" onclick="window.location.href='/auth/atlassian'">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M7.127 14.456c-.18-.24-.46-.226-.617.07L3.14 20.99c-.12.232.013.472.27.472h5.177c.127 0 .246-.075.308-.195.71-1.418.425-3.567-1.774-6.857l.006.046z"/>
-                <path d="M11.04 4.156c-1.37 2.343-1.298 4.978.19 7.907.053.103.14.217.26.34l3.597 6.874c.063.117.182.192.31.192h5.177c.256 0 .389-.24.268-.472L12.315 4.156c-.12-.232-.397-.361-.638-.361-.24 0-.517.13-.637.361z"/>
+            <svg width="20" height="20" viewBox="0 0 32 32" fill="none">
+                <path d="M10.68 19.76c-.27-.36-.7-.35-.94.1L4.75 28.67c-.18.35.02.71.4.71h7.79c.2 0 .37-.11.47-.29 1.07-2.14.64-5.37-2.67-10.35l-.06.02z" fill="white" fill-opacity="0.65"/>
+                <path d="M15.58 4.67c-2.07 3.53-1.97 7.52.28 11.93.08.16.21.33.4.51l5.42 10.36c.1.18.27.29.47.29h7.79c.38 0 .58-.36.4-.71L17.54 4.67c-.18-.35-.6-.55-.96-.55-.36 0-.78.2-.96.55z" fill="white"/>
             </svg>
             Sign in with Atlassian
         </button>
+
+        <p class="info-text">This will authorize time tracking on this computer via Atlassian OAuth.</p>
     </div>
 </body>
 </html>'''
