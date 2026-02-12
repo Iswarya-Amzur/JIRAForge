@@ -13,6 +13,9 @@ const logger = require('../../utils/logger');
 const { logLLMRequest } = require('../sheets-logger');
 const { logCostTracking } = require('../cost-tracker');
 
+// AI request timeout (default: 60 seconds)
+const AI_REQUEST_TIMEOUT_MS = parseInt(process.env.AI_REQUEST_TIMEOUT_MS || '60000', 10);
+
 // Client instances
 let fireworksClient = null;
 let litellmGeminiClient = null;   // For Gemini models
@@ -70,7 +73,9 @@ function initializeFireworksClient() {
   try {
     fireworksClient = new OpenAI({
       apiKey: fireworksApiKey,
-      baseURL: fireworksBaseUrl
+      baseURL: fireworksBaseUrl,
+      timeout: AI_REQUEST_TIMEOUT_MS,
+      maxRetries: 0
     });
     const model = getFireworksModel();
     logger.info('[AI] Fireworks initialized | Endpoint: %s | Model: %s', fireworksBaseUrl, getShortModelName(model));
@@ -97,7 +102,9 @@ function initializeLiteLLMGeminiClient() {
   try {
     litellmGeminiClient = new OpenAI({
       apiKey: geminiApiKey,
-      baseURL: litellmBaseUrl
+      baseURL: litellmBaseUrl,
+      timeout: AI_REQUEST_TIMEOUT_MS,
+      maxRetries: 0
     });
     logger.info('[AI] LiteLLM/Gemini initialized | Endpoint: %s | Key: %s...',
       litellmBaseUrl, geminiApiKey.substring(0, 10));
@@ -124,7 +131,9 @@ function initializeLiteLLMOpenAIClient() {
   try {
     litellmOpenAIClient = new OpenAI({
       apiKey: openaiApiKey,
-      baseURL: litellmBaseUrl
+      baseURL: litellmBaseUrl,
+      timeout: AI_REQUEST_TIMEOUT_MS,
+      maxRetries: 0
     });
     logger.info('[AI] LiteLLM/OpenAI initialized | Endpoint: %s | Key: %s...',
       litellmBaseUrl, openaiApiKey.substring(0, 10));

@@ -3,6 +3,24 @@ import { invoke } from '@forge/bridge';
 import { formatTime } from '../../../utils';
 import { normalizeDate, formatLocalDate } from './dateUtils';
 
+// Parse a UTC timestamp string from the database into a Date object.
+// Supabase timestamptz values arrive as e.g. "2026-02-11 07:30:23.360899+00"
+// which has a space separator and short "+00" offset — both non-standard for JS Date.
+// This normalizes to strict ISO 8601 before parsing.
+const parseUTC = (ts) => {
+  if (!ts) return null;
+  let s = String(ts).trim();
+  // 1. Replace space with 'T' for ISO 8601 compliance
+  s = s.replace(' ', 'T');
+  // 2. Normalize short timezone offset: +00 → +00:00, -05 → -05:00
+  s = s.replace(/([+-]\d{2})$/, '$1:00');
+  // 3. If no timezone info at all, assume UTC
+  if (!/[Zz]$/.test(s) && !/[+-]\d{2}:\d{2}$/.test(s)) {
+    s += 'Z';
+  }
+  return new Date(s);
+};
+
 /**
  * Day View Component
  * Displays today's timesheet with team member cards and activity timeline
@@ -98,8 +116,8 @@ function DayView({ loading, timeData }) {
     let maxHours = -Infinity;
 
     allSessions.forEach(session => {
-      const start = new Date(session.startTime || session.timestamp);
-      const end = new Date(session.endTime || session.timestamp);
+      const start = parseUTC(session.startTime || session.timestamp);
+      const end = parseUTC(session.endTime || session.timestamp);
       if (!start || !end) return;
 
       // Hours from midnight (can exceed 24 for next-day activity)
@@ -171,8 +189,8 @@ function DayView({ loading, timeData }) {
 
     // Convert sessions to time blocks with position and width
     return sessions.map(session => {
-      const startTime = new Date(session.startTime || session.timestamp);
-      const endTime = new Date(session.endTime || session.timestamp);
+      const startTime = parseUTC(session.startTime || session.timestamp);
+      const endTime = parseUTC(session.endTime || session.timestamp);
       if (!startTime || !endTime) return null;
 
       const leftPercent = timeToPercent(startTime);
@@ -226,7 +244,7 @@ function DayView({ loading, timeData }) {
   const getTimeAgo = (timestamp) => {
     if (!timestamp) return null;
     const now = new Date();
-    const then = new Date(timestamp);
+    const then = parseUTC(timestamp);
     if (!then) return null;
     const diffMs = now - then;
     const diffMins = Math.floor(diffMs / 60000);

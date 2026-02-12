@@ -241,11 +241,53 @@ async function getScreenshotById(screenshotId) {
   }
 }
 
+/**
+ * Reset screenshots stuck in 'processing' status back to 'pending'
+ * Screenshots that have been in 'processing' for longer than the timeout
+ * are assumed to have failed silently (e.g., process crash, network hang)
+ * @param {number} timeoutMinutes - Minutes after which a 'processing' screenshot is considered stuck (default: 10)
+ * @returns {Promise<number>} Number of screenshots reset
+ */
+async function resetStuckProcessingScreenshots(timeoutMinutes = 10) {
+  try {
+    const supabase = getClient();
+    const cutoffTime = toLocalISOString(new Date(Date.now() - timeoutMinutes * 60 * 1000));
+
+    const { data, error } = await supabase
+      .from('screenshots')
+      .update({
+        status: 'pending',
+        updated_at: getLocalISOString()
+      })
+      .eq('status', 'processing')
+      .lt('updated_at', cutoffTime)
+      .select('id');
+
+    if (error) {
+      throw error;
+    }
+
+    const resetCount = data?.length || 0;
+    if (resetCount > 0) {
+      logger.info(`Reset ${resetCount} stuck 'processing' screenshots back to 'pending'`, {
+        timeoutMinutes,
+        cutoffTime
+      });
+    }
+
+    return resetCount;
+  } catch (error) {
+    logger.error('Error resetting stuck processing screenshots:', error);
+    return 0;
+  }
+}
+
 module.exports = {
   updateScreenshotStatus,
   updateScreenshotDuration,
   getPendingScreenshots,
   getScreenshotById,
   clearStorageUrls,
-  claimScreenshotForProcessing
+  claimScreenshotForProcessing,
+  resetStuckProcessingScreenshots
 };
