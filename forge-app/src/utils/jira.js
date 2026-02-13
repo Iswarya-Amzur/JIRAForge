@@ -36,35 +36,73 @@ export async function getUserAssignedIssues(statuses = JQL_ACTIVE_STATUSES, maxR
 
 /**
  * Get ALL user's assigned issues from Jira (regardless of status)
- * @param {number} maxResults - Maximum number of results
- * @returns {Promise<Object>} Jira search response
+ * Uses pagination to fetch all issues (Jira API returns max 50 per request)
+ * @returns {Promise<Object>} Jira search response with all issues
  */
-export async function getAllUserAssignedIssues(maxResults = MAX_JIRA_SEARCH_RESULTS) {
+export async function getAllUserAssignedIssues() {
   // Include all issues in open sprints (including Done) - time tracking should show for completed work
   const jql = 'assignee = currentUser() AND Sprint in openSprints() ORDER BY status ASC, dueDate ASC, rank ASC';
+  const fields = ['summary', 'status', 'project', 'issuetype', 'priority', 'updated'];
 
   console.log('[JIRA API] Fetching issues with JQL:', jql);
-  const response = await api.asUser().requestJira(
-    route`/rest/api/3/search/jql`,
-    {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        jql: jql,
-        maxResults: maxResults,
-        fields: ['summary', 'status', 'project', 'issuetype', 'priority', 'updated']
-      })
-    }
-  );
 
-  const result = await response.json();
-  console.log('[JIRA API] Response status:', response.status);
-  console.log('[JIRA API] Issues returned:', result.issues?.length || 0);
-  console.log('[JIRA API] Full result:', JSON.stringify(result, null, 2));
-  return result;
+  const allIssues = [];
+  let nextPageToken = null;
+  const pageSize = MAX_JIRA_SEARCH_RESULTS; // 50 per page
+
+  while (true) {
+    // Build request body — only include nextPageToken if we have one (not on first request)
+    const requestBody = {
+      jql,
+      maxResults: pageSize,
+      fields
+    };
+    if (nextPageToken) {
+      requestBody.nextPageToken = nextPageToken;
+    }
+
+    const response = await api.asUser().requestJira(
+      route`/rest/api/3/search/jql`,
+      {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      }
+    );
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(`[JIRA API] Search failed with status ${response.status}: ${errorBody}`);
+      // Return empty result instead of crashing — caller will see 0 issues
+      return { issues: allIssues, total: allIssues.length };
+    }
+
+    const result = await response.json();
+    const issues = result.issues || [];
+
+    allIssues.push(...issues);
+
+    console.log(`[JIRA API] Fetched ${issues.length} issues (${allIssues.length} total so far)`);
+
+    // Stop when there's no nextPageToken (last page) or empty page
+    if (issues.length === 0 || !result.nextPageToken) {
+      break;
+    }
+
+    nextPageToken = result.nextPageToken;
+
+    // Safety limit to prevent infinite loops
+    if (allIssues.length > 500) {
+      console.warn('[JIRA API] Safety limit reached (500 issues)');
+      break;
+    }
+  }
+
+  console.log(`[JIRA API] Total issues fetched: ${allIssues.length}`);
+  return { issues: allIssues, total: allIssues.length };
 }
 
 /**

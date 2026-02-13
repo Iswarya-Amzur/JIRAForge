@@ -59,15 +59,11 @@ serve(async (req) => {
         throw new Error('AI_SERVER_URL environment variable not set');
       }
 
-      // Update screenshot status to processing
-      const { error: updateError } = await supabaseClient
-        .from('screenshots')
-        .update({ status: 'processing' })
-        .eq('id', payload.record.id);
-
-      if (updateError) {
-        console.error('Error updating screenshot status:', updateError);
-      }
+      // NOTE: Do NOT update status to 'processing' here.
+      // The AI server's claimScreenshotForProcessing() handles the atomic
+      // pending → processing transition. If we set 'processing' here, the
+      // AI server's claim fails (it expects 'pending'), leaving the
+      // screenshot stuck at 'processing' forever.
 
       // Fetch user's assigned Jira issues from cache
       // Cache is updated periodically by Forge app's updateUserAssignedIssuesCache resolver
@@ -158,25 +154,23 @@ serve(async (req) => {
           errorMessage.includes('timeout');
 
         if (isTransientError) {
-          // Reset to pending for polling service to retry
-          await supabaseClient
-            .from('screenshots')
-            .update({
-              status: 'pending',
-              metadata: { webhook_error: errorMessage, will_retry: true }
-            })
-            .eq('id', payload.record.id);
-          
-          console.log('Transient error - reset to pending for retry');
+          // Status is still 'pending' (we don't change it above), so the
+          // polling service will pick it up automatically on the next cycle.
+          // Just log the error for debugging.
+          console.log('Transient error - screenshot remains pending for polling retry');
         } else {
-          // Permanent error - mark as failed
+          // Permanent error (e.g., AI server returned 4xx) — mark as failed
+          // so it doesn't get retried indefinitely.
+          // Only update if status is still 'pending' (AI server may have
+          // already claimed and handled it).
           await supabaseClient
             .from('screenshots')
             .update({
               status: 'failed',
               metadata: { error: errorMessage }
             })
-            .eq('id', payload.record.id);
+            .eq('id', payload.record.id)
+            .eq('status', 'pending');
         }
 
         throw aiError;

@@ -978,6 +978,82 @@ KEYRING_SERVICE = "TimeTracker"
 # Sensitive token keys that should be stored in keyring
 SENSITIVE_TOKEN_KEYS = ['access_token', 'refresh_token', 'supabase_token']
 
+# Windows Credential Manager has a 2560-byte limit per credential (CredWrite API).
+# OAuth/JWT tokens often exceed this, causing error 1783 "The stub received bad data".
+# We chunk large tokens across multiple keyring entries to work around this limit.
+KEYRING_CHUNK_SIZE = 2400  # Leave some headroom below the 2560-byte limit
+
+
+def _keyring_set(service, key, value):
+    """Save a value to keyring, chunking if it exceeds Windows Credential Manager limits."""
+    if len(value.encode('utf-8')) <= KEYRING_CHUNK_SIZE:
+        keyring.set_password(service, key, value)
+        # Clean up any leftover chunks from previous saves
+        for i in range(1, 10):
+            try:
+                keyring.delete_password(service, f"{key}_chunk{i}")
+            except Exception:
+                break
+    else:
+        # Split into chunks on character boundaries to avoid corrupting multi-byte UTF-8
+        chunks = []
+        current_chunk = ""
+        current_size = 0
+        for char in value:
+            char_size = len(char.encode('utf-8'))
+            if current_size + char_size > KEYRING_CHUNK_SIZE:
+                chunks.append(current_chunk)
+                current_chunk = char
+                current_size = char_size
+            else:
+                current_chunk += char
+                current_size += char_size
+        if current_chunk:
+            chunks.append(current_chunk)
+        # Store chunk count in the main key
+        keyring.set_password(service, key, f"__chunked__:{len(chunks)}")
+        for i, chunk in enumerate(chunks):
+            keyring.set_password(service, f"{key}_chunk{i+1}", chunk)
+        # Clean up extra old chunks beyond current count
+        for i in range(len(chunks) + 1, len(chunks) + 10):
+            try:
+                keyring.delete_password(service, f"{key}_chunk{i}")
+            except Exception:
+                break
+
+
+def _keyring_get(service, key):
+    """Load a value from keyring, reassembling chunks if needed."""
+    value = keyring.get_password(service, key)
+    if value is None:
+        return None
+    if value.startswith("__chunked__:"):
+        num_chunks = int(value.split(":")[1])
+        parts = []
+        for i in range(1, num_chunks + 1):
+            chunk = keyring.get_password(service, f"{key}_chunk{i}")
+            if chunk is None:
+                return None  # Corrupted, missing chunk
+            parts.append(chunk)
+        return "".join(parts)
+    return value
+
+
+def _keyring_delete(service, key):
+    """Delete a value from keyring, including any chunks."""
+    try:
+        value = keyring.get_password(service, key)
+        if value and value.startswith("__chunked__:"):
+            num_chunks = int(value.split(":")[1])
+            for i in range(1, num_chunks + 1):
+                try:
+                    keyring.delete_password(service, f"{key}_chunk{i}")
+                except Exception:
+                    pass
+        keyring.delete_password(service, key)
+    except Exception:
+        pass
+
 class AtlassianAuthManager:
     """Manages Atlassian OAuth 3LO flow via AI Server (secure token exchange)"""
 
@@ -1013,10 +1089,10 @@ class AtlassianAuthManager:
             for key in SENSITIVE_TOKEN_KEYS:
                 if key in old_data and old_data[key]:
                     # Check if already in keyring
-                    existing = keyring.get_password(KEYRING_SERVICE, key)
+                    existing = _keyring_get(KEYRING_SERVICE, key)
                     if existing is None:
                         # Migrate to keyring
-                        keyring.set_password(KEYRING_SERVICE, key, old_data[key])
+                        _keyring_set(KEYRING_SERVICE, key, old_data[key])
                         print(f"[OK] Migrated {key} to secure storage")
                         migrated = True
 
@@ -1050,7 +1126,7 @@ class AtlassianAuthManager:
         if KEYRING_AVAILABLE:
             try:
                 for key in SENSITIVE_TOKEN_KEYS:
-                    value = keyring.get_password(KEYRING_SERVICE, key)
+                    value = _keyring_get(KEYRING_SERVICE, key)
                     if value:
                         tokens[key] = value
             except Exception as e:
@@ -1075,7 +1151,7 @@ class AtlassianAuthManager:
             try:
                 for key, value in sensitive_data.items():
                     if value:
-                        keyring.set_password(KEYRING_SERVICE, key, value)
+                        _keyring_set(KEYRING_SERVICE, key, value)
             except Exception as e:
                 print(f"[WARN] Failed to save tokens to secure storage: {e}")
                 # Fallback: save to JSON if keyring fails
@@ -1387,15 +1463,10 @@ class AtlassianAuthManager:
         """Clear authentication tokens from both keyring and JSON file"""
         self.tokens = {}
 
-        # Clear sensitive tokens from keyring
+        # Clear sensitive tokens from keyring (including any chunks)
         if KEYRING_AVAILABLE:
             for key in SENSITIVE_TOKEN_KEYS:
-                try:
-                    keyring.delete_password(KEYRING_SERVICE, key)
-                except Exception as e:
-                    # Ignore errors when deleting (token may not exist)
-                    # PasswordDeleteError is raised when credential doesn't exist
-                    pass
+                _keyring_delete(KEYRING_SERVICE, key)
 
         # Remove JSON file (contains metadata)
         if os.path.exists(self.store_path):
