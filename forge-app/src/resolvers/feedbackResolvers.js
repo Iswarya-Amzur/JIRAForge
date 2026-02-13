@@ -3,7 +3,7 @@
  * Handles feedback-related operations for the Forge app
  */
 
-import { createFeedbackSession, submitFeedback } from '../utils/remote.js';
+import { createFeedbackSession, submitFeedback, getFeedbackStatus } from '../utils/remote.js';
 
 /**
  * Register feedback resolvers
@@ -62,10 +62,40 @@ export function registerFeedbackResolvers(resolver) {
       return {
         success: true,
         message: 'Feedback submitted successfully',
-        feedbackId: result.feedbackId || result.id
+        feedbackId: result.feedback_id || result.feedbackId
       };
     } catch (error) {
       console.error('Error submitting feedback:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  });
+
+  /**
+   * Get feedback status (poll for Jira ticket creation)
+   * Checks the current status of a feedback submission
+   */
+  resolver.define('getFeedbackStatus', async (req) => {
+    try {
+      const { feedbackId } = req.payload;
+
+      if (!feedbackId) {
+        return { success: false, error: 'Feedback ID is required' };
+      }
+
+      const result = await getFeedbackStatus(feedbackId);
+
+      return {
+        success: true,
+        status: result.status,
+        jira_issue_key: result.jira_issue_key || null,
+        jira_issue_url: result.jira_issue_url || null,
+        error: result.error || null
+      };
+    } catch (error) {
+      console.error('Error getting feedback status:', error);
       return {
         success: false,
         error: error.message

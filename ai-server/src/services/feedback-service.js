@@ -4,10 +4,12 @@
  */
 
 const axios = require('axios');
+const FormData = require('form-data');
 const logger = require('../utils/logger');
 const { chatCompletionWithFallback } = require('./ai/ai-client');
 const { FEEDBACK_ANALYSIS_SYSTEM_PROMPT, buildFeedbackAnalysisPrompt } = require('./ai/feedback-prompts');
 const { getFeedbackById, updateFeedbackStatus, updateFeedbackAIResults } = require('./db/feedback-db-service');
+const { downloadFile } = require('./db/storage-service');
 
 /**
  * Process feedback: AI analysis -> Jira ticket creation -> DB update
@@ -84,6 +86,23 @@ async function processAndCreateJiraTicket(feedbackId) {
         reporterName: feedback.user_display_name,
         reporterEmail: feedback.user_email
       });
+
+      // Step 3: Attach images to Jira ticket if any exist
+      if (feedback.image_paths && feedback.image_paths.length > 0) {
+        try {
+          await attachImagesToJiraIssue(
+            jiraEmail,
+            jiraApiToken,
+            jiraSiteUrl,
+            jiraResult.key,
+            feedback.image_paths
+          );
+          logger.info('[Feedback] Attached %d images to ticket %s', feedback.image_paths.length, jiraResult.key);
+        } catch (attachError) {
+          logger.error('[Feedback] Failed to attach images to %s: %s', jiraResult.key, attachError.message);
+          // Don't fail the entire process if attachments fail
+        }
+      }
 
       // Update DB with Jira info
       await updateFeedbackStatus(feedbackId, 'created', {
@@ -394,8 +413,82 @@ async function createJiraIssue(email, apiToken, siteUrl, issueData) {
   }
 }
 
+/**
+ * Attach images from Supabase storage to a Jira issue
+ * Downloads each image from Supabase and uploads it as an attachment to the Jira issue
+ * @param {string} email - Atlassian account email for basic auth
+ * @param {string} apiToken - Atlassian API token for basic auth
+ * @param {string} siteUrl - Jira site URL
+ * @param {string} issueKey - Jira issue key (e.g., 'FEEDBACK-123')
+ * @param {string[]} imagePaths - Array of image paths in Supabase storage
+ * @returns {Promise<void>}
+ */
+async function attachImagesToJiraIssue(email, apiToken, siteUrl, issueKey, imagePaths) {
+  const basicAuth = Buffer.from(`${email}:${apiToken}`).toString('base64');
+  const baseUrl = siteUrl.replace(/\/$/, '');
+  const attachmentUrl = `${baseUrl}/rest/api/3/issue/${issueKey}/attachments`;
+
+  logger.info('[Feedback] Attaching %d images to Jira issue %s', imagePaths.length, issueKey);
+
+  for (let i = 0; i < imagePaths.length; i++) {
+    const imagePath = imagePaths[i];
+    try {
+      // Download image from Supabase storage
+      logger.info('[Feedback] Downloading image %d/%d: %s', i + 1, imagePaths.length, imagePath);
+      const imageBuffer = await downloadFile('feedback-images', imagePath);
+
+      // Extract filename from path
+      const filename = imagePath.split('/').pop() || `screenshot_${i + 1}.png`;
+
+      // Create form data with the image
+      const formData = new FormData();
+      formData.append('file', imageBuffer, {
+        filename: filename,
+        contentType: getContentTypeFromFilename(filename)
+      });
+
+      // Upload to Jira
+      logger.info('[Feedback] Uploading image to Jira: %s', filename);
+      await axios.post(attachmentUrl, formData, {
+        headers: {
+          'Authorization': `Basic ${basicAuth}`,
+          'X-Atlassian-Token': 'no-check', // Required for attachment uploads
+          ...formData.getHeaders()
+        },
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+        timeout: 30000
+      });
+
+      logger.info('[Feedback] Successfully attached image %d/%d to %s', i + 1, imagePaths.length, issueKey);
+    } catch (error) {
+      logger.error('[Feedback] Failed to attach image %s to %s: %s',
+        imagePath, issueKey, error.message);
+      // Continue with next image even if one fails
+    }
+  }
+}
+
+/**
+ * Get MIME type from filename extension
+ * @param {string} filename - Filename with extension
+ * @returns {string} MIME type
+ */
+function getContentTypeFromFilename(filename) {
+  const ext = filename.split('.').pop().toLowerCase();
+  const mimeTypes = {
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'png': 'image/png',
+    'gif': 'image/gif',
+    'webp': 'image/webp'
+  };
+  return mimeTypes[ext] || 'application/octet-stream';
+}
+
 module.exports = {
   processAndCreateJiraTicket,
   analyzeFeedbackWithAI,
-  createJiraIssue
+  createJiraIssue,
+  attachImagesToJiraIssue
 };

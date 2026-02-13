@@ -633,3 +633,45 @@
 .feedback-btn-submit:hover:not(:disabled) {
   background: var(--ds-background-brand-bold-hover);
 }
+
+.feedback-btn-link {
+  background: var(--ds-background-brand-bold);
+  color: white;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.feedback-btn-link:hover {
+  background: var(--ds-background-brand-bold-hover);
+  color: white;
+}
+
+/* Feedback Status Badges */
+.feedback-status-badge {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  margin-top: 8px;
+}
+
+.feedback-status-badge.status-pending {
+  background: #f4f5f7;
+  color: #5e6c84;
+}
+
+.feedback-status-badge.status-processing {
+  background: #deebff;
+  color: #0052cc;
+}
+
+.feedback-status-badge.status-created {
+  background: #e3fcef;
+  color: #006644;
+}
+
+.feedback-status-badge.status-failed {
+  background: #ffebe6;
+  color: #bf2600;
+}
