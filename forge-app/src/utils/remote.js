@@ -459,5 +459,31 @@ export async function submitFeedback(feedbackData) {
   return result;
 }
 
+/**
+ * Get feedback status (check Jira ticket creation progress)
+ *
+ * @param {string} feedbackId - Feedback ID (UUID)
+ * @returns {Promise<Object>} Status object with jira_issue_key, jira_issue_url, status, error
+ */
+export async function getFeedbackStatus(feedbackId) {
+  console.log('[Remote] Checking feedback status:', feedbackId);
+
+  const response = await invokeRemote(REMOTE_KEY, {
+    path: `/api/feedback/status/${feedbackId}`,
+    method: 'GET'
+  });
+
+  console.log('[Remote] Feedback status response:', response.status);
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('[Remote] Feedback status check failed:', errorText);
+    throw new Error(`Failed to check feedback status: ${errorText}`);
+  }
+
+  const result = await response.json();
+  return result;
+}
+
 // Export the remote request function for custom calls
 export { remoteRequest };

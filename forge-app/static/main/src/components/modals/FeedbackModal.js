@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 
 const CATEGORIES = [
@@ -13,6 +13,8 @@ const CATEGORIES = [
 const MAX_IMAGES = 3;
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
 const MAX_TITLE_LENGTH = 200;
+const MAX_POLL_ATTEMPTS = 60; // 3 minutes (60 * 3s)
+const POLL_INTERVAL = 3000; // 3 seconds
 
 function FeedbackModal({ isOpen, onClose }) {
   const [category, setCategory] = useState('');
@@ -22,7 +24,35 @@ function FeedbackModal({ isOpen, onClose }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [feedbackId, setFeedbackId] = useState(null);
+  const [jiraStatus, setJiraStatus] = useState('pending'); // pending, processing, created, failed
+  const [jiraIssueKey, setJiraIssueKey] = useState(null);
+  const [jiraIssueUrl, setJiraIssueUrl] = useState(null);
+  const [jiraError, setJiraError] = useState(null);
   const fileInputRef = useRef(null);
+  const pollCountRef = useRef(0);
+  const pollTimerRef = useRef(null);
+
+  // Cleanup polling on unmount or when modal closes
+  useEffect(() => {
+    return () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Start polling when feedback is successfully submitted
+  useEffect(() => {
+    if (feedbackId && success) {
+      startStatusPolling();
+    }
+    return () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+      }
+    };
+  }, [feedbackId, success]);
 
   const resetForm = () => {
     setCategory('');
@@ -32,11 +62,75 @@ function FeedbackModal({ isOpen, onClose }) {
     setError('');
     setSuccess(false);
     setSubmitting(false);
+    setFeedbackId(null);
+    setJiraStatus('pending');
+    setJiraIssueKey(null);
+    setJiraIssueUrl(null);
+    setJiraError(null);
+    pollCountRef.current = 0;
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
   };
 
   const handleClose = () => {
     resetForm();
     onClose();
+  };
+
+  const startStatusPolling = () => {
+    if (!feedbackId) return;
+    
+    pollCountRef.current = 0;
+    
+    // Clear any existing timer
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+    }
+
+    // Poll immediately, then every 3 seconds
+    checkStatus();
+    pollTimerRef.current = setInterval(() => {
+      pollCountRef.current += 1;
+      
+      if (pollCountRef.current >= MAX_POLL_ATTEMPTS) {
+        clearInterval(pollTimerRef.current);
+        setJiraStatus('processing');
+        setJiraError('Taking longer than expected. The Jira ticket will still be created.');
+        return;
+      }
+      
+      checkStatus();
+    }, POLL_INTERVAL);
+  };
+
+  const checkStatus = async () => {
+    if (!feedbackId) return;
+
+    try {
+      const result = await invoke('getFeedbackStatus', { feedbackId });
+      
+      if (result.success) {
+        setJiraStatus(result.status);
+        
+        if (result.status === 'created') {
+          setJiraIssueKey(result.jira_issue_key);
+          setJiraIssueUrl(result.jira_issue_url);
+          if (pollTimerRef.current) {
+            clearInterval(pollTimerRef.current);
+          }
+        } else if (result.status === 'failed') {
+          setJiraError(result.error || 'Failed to create Jira ticket');
+          if (pollTimerRef.current) {
+            clearInterval(pollTimerRef.current);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error checking feedback status:', err);
+      // Silently ignore poll errors
+    }
   };
 
   const handleImageAdd = (e) => {
@@ -102,10 +196,9 @@ function FeedbackModal({ isOpen, onClose }) {
       });
 
       if (result.success) {
+        setFeedbackId(result.feedbackId || result.feedback_id);
         setSuccess(true);
-        setTimeout(() => {
-          handleClose();
-        }, 2000);
+        // Polling will start automatically via useEffect
       } else {
         setError(result.error || 'Failed to submit feedback. Please try again.');
       }
@@ -120,9 +213,28 @@ function FeedbackModal({ isOpen, onClose }) {
   if (!isOpen) return null;
 
   if (success) {
+    const getStatusBadge = () => {
+      const badges = {
+        pending: { label: 'Pending', className: 'status-pending' },
+        processing: { label: 'Processing...', className: 'status-processing' },
+        created: { label: 'Jira Ticket Created', className: 'status-created' },
+        failed: { label: 'Failed', className: 'status-failed' }
+      };
+      const badge = badges[jiraStatus] || badges.pending;
+      return (
+        <span className={`feedback-status-badge ${badge.className}`}>
+          {badge.label}
+        </span>
+      );
+    };
+
     return (
       <div className="modal-overlay" onClick={handleClose}>
         <div className="modal-content feedback-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header">
+            <h3>Feedback Submitted</h3>
+            <button className="modal-close" onClick={handleClose}>&times;</button>
+          </div>
           <div className="modal-body">
             <div className="feedback-success">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -130,7 +242,38 @@ function FeedbackModal({ isOpen, onClose }) {
                 <polyline points="22 4 12 14.01 9 11.01"></polyline>
               </svg>
               <h3>Thank you!</h3>
-              <p>Your feedback has been submitted successfully.</p>
+              <p>Your feedback has been received. A Jira ticket is being created...</p>
+              
+              <div style={{ marginTop: '20px' }}>
+                {getStatusBadge()}
+              </div>
+
+              {jiraStatus === 'created' && jiraIssueKey && (
+                <div style={{ marginTop: '16px' }}>
+                  <a 
+                    href={jiraIssueUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="feedback-btn feedback-btn-link"
+                  >
+                    View {jiraIssueKey}
+                  </a>
+                </div>
+              )}
+
+              {jiraError && (
+                <div className="feedback-error" style={{ marginTop: '16px' }}>
+                  {jiraError}
+                </div>
+              )}
+
+              <button
+                className="feedback-btn feedback-btn-cancel"
+                onClick={handleClose}
+                style={{ marginTop: '20px' }}
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
