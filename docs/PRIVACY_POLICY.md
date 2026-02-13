@@ -1,7 +1,6 @@
 # JIRAForge Privacy Policy
 
-**Last Updated:** January 26, 2026  
-**Effective Date:** January 26, 2026
+
 
 ---
 

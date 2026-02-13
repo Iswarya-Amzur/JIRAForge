@@ -37,17 +37,24 @@ export async function getJiraStatuses() {
       return [];
     }
 
-    // Format statuses with category information
-    const formattedStatuses = statuses.map(status => ({
-      id: status.id,
-      name: status.name,
-      description: status.description || '',
-      category: status.statusCategory?.name || 'Unknown',
-      categoryKey: status.statusCategory?.key || 'undefined',
-      categoryColorName: status.statusCategory?.colorName || 'default'
-    }));
+    // Deduplicate statuses by name — Jira returns the same status once per issue type,
+    // so "In Progress" can appear many times. Use a Map keyed by name to keep unique ones.
+    const uniqueStatuses = new Map();
+    statuses.forEach(status => {
+      if (!uniqueStatuses.has(status.name)) {
+        uniqueStatuses.set(status.name, {
+          id: status.id,
+          name: status.name,
+          description: status.description || '',
+          category: status.statusCategory?.name || 'Unknown',
+          categoryKey: status.statusCategory?.key || 'undefined',
+          categoryColorName: status.statusCategory?.colorName || 'default'
+        });
+      }
+    });
 
-    console.log(`[ProjectSettings] Fetched ${formattedStatuses.length} statuses from Jira`);
+    const formattedStatuses = Array.from(uniqueStatuses.values());
+    console.log(`[ProjectSettings] Fetched ${statuses.length} statuses from Jira, ${formattedStatuses.length} unique`);
     return formattedStatuses;
   } catch (error) {
     console.error('[ProjectSettings] Error fetching Jira statuses:', error);

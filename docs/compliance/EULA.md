@@ -3,8 +3,7 @@
 **JIRAForge Time Tracking System**
 **Desktop Application and Forge Application**
 
-**Effective Date:** January 21, 2026
-**Last Updated:** January 21, 2026
+
 
 ---
 
