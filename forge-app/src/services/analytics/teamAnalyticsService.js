@@ -4,7 +4,7 @@
  */
 
 import { getSupabaseConfig, getOrCreateOrganization, supabaseRequest } from '../../utils/supabase.js';
-import { checkUserPermissions, isJiraAdmin } from '../../utils/jira.js';
+import { checkUserPermissions, isJiraAdmin, getProjectsUserAdmins } from '../../utils/jira.js';
 import { MAX_DAILY_SUMMARY_DAYS, MAX_ISSUES_IN_ANALYTICS } from '../../config/constants.js';
 import { isValidProjectKey } from '../../utils/validators.js';
 
@@ -309,12 +309,25 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
   }
 
   // Check Project Admin Permission or Jira Admin
+  // User can view team timeline if they are:
+  // 1. Jira admin, OR
+  // 2. Project admin for the specific project (if projectKey provided), OR
+  // 3. Project admin for any project (if projectKey is null - viewing all projects)
   const isAdmin = await isJiraAdmin();
   let hasPermission = isAdmin;
+  let projectAdminProjects = [];
   
-  if (!isAdmin && projectKey) {
-    const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS'], projectKey);
+  if (!isAdmin) {
+    // Check project admin permission - with or without specific projectKey
+    // When projectKey is null, this checks if user has project admin for ANY project
+    const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS'], projectKey || null);
     hasPermission = permissions.permissions?.ADMINISTER_PROJECTS?.havePermission;
+    
+    // If user is a project admin, get the list of projects they administer
+    if (hasPermission) {
+      projectAdminProjects = await getProjectsUserAdmins() || [];
+      console.log('[TeamTimeline] Project admin projects:', projectAdminProjects);
+    }
   }
 
   if (!hasPermission) {
@@ -332,19 +345,39 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
     throw new Error('Unable to get organization information');
   }
 
+  // Determine which projects to filter by
+  // - Jira admins see all projects
+  // - Project admins see only their administered projects
+  const filterByProjects = !isAdmin && projectAdminProjects.length > 0;
+  const projectsToFilter = projectKey ? [projectKey] : projectAdminProjects;
+
+  console.log('[TeamTimeline] Fetching timeline for date:', date, 'org:', organization.id, 
+    'filterByProjects:', filterByProjects, 'projects:', projectsToFilter);
+
   // Build query for screenshots on the specified date
   // Uses idx_screenshots_org_user_work_date index for optimal performance
   // Include start_time and end_time for accurate timeline visualization
   // Note: Idle time creates GAPS in the data (no screenshots during idle)
-  let query = `screenshots?organization_id=eq.${organization.id}&work_date=eq.${date}&deleted_at=is.null&select=user_id,timestamp,start_time,end_time,duration_seconds&order=user_id,timestamp.asc&limit=5000`;
+  // Also include project_key for filtering
+  let query = `screenshots?organization_id=eq.${organization.id}&work_date=eq.${date}&deleted_at=is.null&select=user_id,timestamp,start_time,end_time,duration_seconds,project_key&order=user_id,timestamp.asc&limit=5000`;
+  
+  // Add project filter for project admins
+  if (filterByProjects && projectsToFilter.length > 0) {
+    // Use PostgREST 'in' operator: project_key=in.(P1,P2,P3)
+    query += `&project_key=in.(${projectsToFilter.join(',')})`;
+  }
 
   const screenshots = await supabaseRequest(supabaseConfig, query);
+
+  console.log('[TeamTimeline] Found screenshots count:', screenshots?.length || 0);
 
   // Fetch all users for display names
   const allUsers = await supabaseRequest(
     supabaseConfig,
     `users?organization_id=eq.${organization.id}&select=id,display_name,email,desktop_logged_in,desktop_last_heartbeat`
   );
+
+  console.log('[TeamTimeline] Found users count:', allUsers?.length || 0);
 
   // Group screenshots by user
   const userTimelineMap = {};
@@ -394,21 +427,33 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
   // Sort by total hours (most active first)
   userTimelines.sort((a, b) => b.totalHours - a.totalHours);
 
+  console.log('[TeamTimeline] Users with activity:', userTimelines.length, 
+    'User IDs:', userTimelines.map(u => ({ id: u.userId, name: u.displayName, sessions: u.totalSessions })));
+
   // Also include users who haven't tracked time but are in the organization
+  // For project admins, don't show all inactive users - only show users with activity on their projects
   const usersWithActivity = new Set(userTimelines.map(u => u.userId));
-  const inactiveUsers = (allUsers || [])
-    .filter(u => !usersWithActivity.has(u.id))
-    .map(u => ({
-      userId: u.id,
-      displayName: u.display_name || u.email || 'Unknown User',
-      desktopLoggedIn: u.desktop_logged_in || false,
-      lastHeartbeat: u.desktop_last_heartbeat,
-      sessions: [],
-      totalHours: 0,
-      totalSessions: 0,
-      firstActivity: null,
-      lastActivity: null
-    }));
+  let inactiveUsers = [];
+  
+  if (!filterByProjects) {
+    // Jira admins see all inactive organization users
+    inactiveUsers = (allUsers || [])
+      .filter(u => !usersWithActivity.has(u.id))
+      .map(u => ({
+        userId: u.id,
+        displayName: u.display_name || u.email || 'Unknown User',
+        desktopLoggedIn: u.desktop_logged_in || false,
+        lastHeartbeat: u.desktop_last_heartbeat,
+        sessions: [],
+        totalHours: 0,
+        totalSessions: 0,
+        firstActivity: null,
+        lastActivity: null
+      }));
+  }
+  // Project admins: inactive users list is empty - they only see users with activity on their projects
+
+  console.log('[TeamTimeline] Users without activity:', inactiveUsers.length);
 
   return {
     date,

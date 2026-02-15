@@ -4,7 +4,7 @@
  */
 
 import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, getUserOrganizationMembership, supabaseRequest } from '../../utils/supabase.js';
-import { isJiraAdmin, checkUserPermissions } from '../../utils/jira.js';
+import { isJiraAdmin, checkUserPermissions, getProjectsUserAdmins } from '../../utils/jira.js';
 import { MAX_DAILY_SUMMARY_DAYS, MAX_WEEKLY_SUMMARY_WEEKS, MAX_ISSUES_IN_ANALYTICS } from '../../config/constants.js';
 import { fetchDashboardData } from '../../utils/remote.js';
 
@@ -23,15 +23,24 @@ export async function fetchTimeAnalyticsBatch(accountId, cloudId) {
   const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS']);
   const isProjectAdmin = permissions.permissions?.ADMINISTER_PROJECTS?.havePermission;
   
-  // User can view all users if Jira admin or project admin
-  // Organization-level permissions will be checked server-side via membership
+  // Get the list of projects this user administers (for project admins)
+  // Jira admins see all data, project admins see only their projects
+  let projectKeys = null;
+  if (!isAdmin && isProjectAdmin) {
+    projectKeys = await getProjectsUserAdmins();
+    console.log('[Analytics] Project admin - filtering to projects:', projectKeys);
+  }
+  
+  // User can view team data if Jira admin or project admin
   const canViewAllUsers = isAdmin || isProjectAdmin;
 
-  console.log('[Analytics] Using batch endpoint with canViewAllUsers:', canViewAllUsers);
+  console.log('[Analytics] Using batch endpoint with canViewAllUsers:', canViewAllUsers, 'isJiraAdmin:', isAdmin);
 
   // Single batch request replaces 8+ individual calls
   const dashboardData = await fetchDashboardData({
     canViewAllUsers,
+    isJiraAdmin: isAdmin,
+    projectKeys: projectKeys, // null for Jira admins (see all), array for project admins
     maxDailySummaryDays: MAX_DAILY_SUMMARY_DAYS,
     maxWeeklySummaryWeeks: MAX_WEEKLY_SUMMARY_WEEKS,
     maxIssuesInAnalytics: MAX_ISSUES_IN_ANALYTICS

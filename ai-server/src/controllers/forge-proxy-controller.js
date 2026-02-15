@@ -702,6 +702,8 @@ exports.getDashboardData = async (req, res) => {
     const { cloudId, accountId } = req.forgeContext;
     const { 
       canViewAllUsers = false,  // Whether user has admin privileges
+      isJiraAdmin = false,      // Whether user is Jira admin (sees all data)
+      projectKeys = null,       // Project keys to filter by (for project admins, null = all)
       maxDailySummaryDays = 30,
       maxWeeklySummaryWeeks = 12,
       maxIssuesInAnalytics = 50
@@ -715,7 +717,17 @@ exports.getDashboardData = async (req, res) => {
       });
     }
 
-    logger.info('[ForgeProxy] Dashboard batch request', { cloudId, accountId });
+    // Determine if we should filter by specific projects
+    // Project admins (not Jira admins) should only see their projects' data
+    const shouldFilterByProjects = canViewAllUsers && !isJiraAdmin && Array.isArray(projectKeys) && projectKeys.length > 0;
+    
+    logger.info('[ForgeProxy] Dashboard batch request', { 
+      cloudId, 
+      accountId,
+      isJiraAdmin,
+      shouldFilterByProjects,
+      projectKeys: shouldFilterByProjects ? projectKeys : 'all'
+    });
 
     // 1. Get or verify organization
     const { data: orgs, error: orgError } = await supabase
@@ -772,6 +784,9 @@ exports.getDashboardData = async (req, res) => {
     
     if (!canViewTeamData) {
       dailyQuery.eq('user_id', userId);
+    } else if (shouldFilterByProjects) {
+      // Project admins only see data from their projects
+      dailyQuery.in('project_key', projectKeys);
     }
     queries.push(dailyQuery);
 
@@ -785,6 +800,9 @@ exports.getDashboardData = async (req, res) => {
     
     if (!canViewTeamData) {
       weeklyQuery.eq('user_id', userId);
+    } else if (shouldFilterByProjects) {
+      // Project admins only see data from their projects
+      weeklyQuery.in('project_key', projectKeys);
     }
     queries.push(weeklyQuery);
 
@@ -794,6 +812,11 @@ exports.getDashboardData = async (req, res) => {
       .select('*')
       .eq('organization_id', organization.id)
       .order('total_seconds', { ascending: false });
+    
+    if (shouldFilterByProjects) {
+      // Project admins only see their projects
+      projectQuery.in('project_key', projectKeys);
+    }
     queries.push(projectQuery);
 
     // Analysis results with issue data
@@ -806,17 +829,47 @@ exports.getDashboardData = async (req, res) => {
     
     if (!canViewTeamData) {
       analysisQuery.eq('user_id', userId);
+    } else if (shouldFilterByProjects) {
+      // Project admins only see issues from their projects
+      analysisQuery.in('active_project_key', projectKeys);
     }
     queries.push(analysisQuery);
 
     // All active users (for team view)
-    const usersQuery = canViewTeamData
-      ? supabase
-          .from('users')
-          .select('id, display_name, email')
-          .eq('organization_id', organization.id)
-          .eq('is_active', true)
-      : Promise.resolve({ data: [{ id: userId, display_name: user.display_name, email: user.email }] });
+    // For project admins, we need to get users who have tracked time on their projects
+    let usersQuery;
+    if (!canViewTeamData) {
+      usersQuery = Promise.resolve({ data: [{ id: userId, display_name: user.display_name, email: user.email }] });
+    } else if (shouldFilterByProjects) {
+      // Get users who have time tracked on the project admin's projects
+      // Using daily_time_summary to find users with time on these projects
+      usersQuery = supabase
+        .from('daily_time_summary')
+        .select('user_id')
+        .eq('organization_id', organization.id)
+        .in('project_key', projectKeys)
+        .then(async (result) => {
+          if (result.error) throw result.error;
+          // Get unique user IDs
+          const userIds = [...new Set((result.data || []).map(r => r.user_id))];
+          if (userIds.length === 0) {
+            return { data: [] };
+          }
+          // Fetch the actual user details
+          return supabase
+            .from('users')
+            .select('id, display_name, email')
+            .in('id', userIds)
+            .eq('is_active', true);
+        });
+    } else {
+      // Jira admin or org admin - see all users
+      usersQuery = supabase
+        .from('users')
+        .select('id, display_name, email')
+        .eq('organization_id', organization.id)
+        .eq('is_active', true);
+    }
     queries.push(usersQuery);
 
     // Execute all queries in parallel

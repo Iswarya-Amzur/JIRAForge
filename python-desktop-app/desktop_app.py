@@ -893,7 +893,9 @@ def add_to_startup():
     try:
         import winreg
 
-        exe_path = get_app_executable_path()
+        # Use installed exe path for built version (canonical location in AppData)
+        # This ensures correct startup even if registry had a stale/wrong path before
+        exe_path = get_installed_exe_path() if getattr(sys, 'frozen', False) else get_app_executable_path()
 
         # Open registry key
         key = winreg.OpenKey(
@@ -981,13 +983,23 @@ SENSITIVE_TOKEN_KEYS = ['access_token', 'refresh_token', 'supabase_token']
 # Windows Credential Manager has a 2560-byte limit per credential (CredWrite API).
 # OAuth/JWT tokens often exceed this, causing error 1783 "The stub received bad data".
 # We chunk large tokens across multiple keyring entries to work around this limit.
+# Using base64 encoding to avoid special character issues with Windows Credential Manager.
 KEYRING_CHUNK_SIZE = 2400  # Leave some headroom below the 2560-byte limit
 
 
 def _keyring_set(service, key, value):
-    """Save a value to keyring, chunking if it exceeds Windows Credential Manager limits."""
-    if len(value.encode('utf-8')) <= KEYRING_CHUNK_SIZE:
-        keyring.set_password(service, key, value)
+    """Save a value to keyring, base64-encoding and chunking if needed.
+    
+    Base64 encoding prevents Windows Credential Manager issues with special chars
+    in JWT tokens that can cause error 1783 'The stub received bad data'.
+    """
+    import base64
+    # Base64 encode to avoid special character issues
+    encoded = base64.b64encode(value.encode('utf-8')).decode('ascii')
+    encoded_with_marker = f"__b64__:{encoded}"
+    
+    if len(encoded_with_marker) <= KEYRING_CHUNK_SIZE:
+        keyring.set_password(service, key, encoded_with_marker)
         # Clean up any leftover chunks from previous saves
         for i in range(1, 10):
             try:
@@ -995,23 +1007,13 @@ def _keyring_set(service, key, value):
             except Exception:
                 break
     else:
-        # Split into chunks on character boundaries to avoid corrupting multi-byte UTF-8
+        # Split into chunks (base64 is ASCII-safe, so byte boundaries are fine)
         chunks = []
-        current_chunk = ""
-        current_size = 0
-        for char in value:
-            char_size = len(char.encode('utf-8'))
-            if current_size + char_size > KEYRING_CHUNK_SIZE:
-                chunks.append(current_chunk)
-                current_chunk = char
-                current_size = char_size
-            else:
-                current_chunk += char
-                current_size += char_size
-        if current_chunk:
-            chunks.append(current_chunk)
+        for i in range(0, len(encoded), KEYRING_CHUNK_SIZE - 20):  # Leave room for marker
+            chunks.append(encoded[i:i + KEYRING_CHUNK_SIZE - 20])
+        
         # Store chunk count in the main key
-        keyring.set_password(service, key, f"__chunked__:{len(chunks)}")
+        keyring.set_password(service, key, f"__b64_chunked__:{len(chunks)}")
         for i, chunk in enumerate(chunks):
             keyring.set_password(service, f"{key}_chunk{i+1}", chunk)
         # Clean up extra old chunks beyond current count
@@ -1023,10 +1025,36 @@ def _keyring_set(service, key, value):
 
 
 def _keyring_get(service, key):
-    """Load a value from keyring, reassembling chunks if needed."""
+    """Load a value from keyring, decoding base64 and reassembling chunks if needed."""
+    import base64
     value = keyring.get_password(service, key)
     if value is None:
         return None
+    
+    # Handle base64-encoded chunked values
+    if value.startswith("__b64_chunked__:"):
+        num_chunks = int(value.split(":")[1])
+        parts = []
+        for i in range(1, num_chunks + 1):
+            chunk = keyring.get_password(service, f"{key}_chunk{i}")
+            if chunk is None:
+                return None  # Corrupted, missing chunk
+            parts.append(chunk)
+        encoded = "".join(parts)
+        try:
+            return base64.b64decode(encoded.encode('ascii')).decode('utf-8')
+        except Exception:
+            return None
+    
+    # Handle base64-encoded single values
+    if value.startswith("__b64__:"):
+        encoded = value[8:]  # Skip "__b64__:" prefix
+        try:
+            return base64.b64decode(encoded.encode('ascii')).decode('utf-8')
+        except Exception:
+            return None
+    
+    # Legacy: handle old chunked format (non-base64)
     if value.startswith("__chunked__:"):
         num_chunks = int(value.split(":")[1])
         parts = []
@@ -1036,6 +1064,8 @@ def _keyring_get(service, key):
                 return None  # Corrupted, missing chunk
             parts.append(chunk)
         return "".join(parts)
+    
+    # Legacy: plain value (will be re-encoded on next save)
     return value
 
 
@@ -1043,7 +1073,7 @@ def _keyring_delete(service, key):
     """Delete a value from keyring, including any chunks."""
     try:
         value = keyring.get_password(service, key)
-        if value and value.startswith("__chunked__:"):
+        if value and (value.startswith("__chunked__:") or value.startswith("__b64_chunked__:")):
             num_chunks = int(value.split(":")[1])
             for i in range(1, num_chunks + 1):
                 try:
@@ -1063,7 +1093,7 @@ class AtlassianAuthManager:
         self.redirect_uri = f'http://localhost:{web_port}/auth/callback'
         self.authorization_url = 'https://auth.atlassian.com/authorize'
         # Token exchange now goes through AI Server
-        self.ai_server_url = get_env_var('AI_SERVER_URL', 'https://timetracker-forge.amzur.com')
+        self.ai_server_url = get_env_var('AI_SERVER_URL', 'https://forgesync.amzur.com')
         self.store_path = store_path or os.path.join(get_app_data_dir(), 'time_tracker_auth.json')
 
         # Migrate from plain-text to keyring if needed
@@ -6757,10 +6787,18 @@ class TimeTracker:
             time.sleep(3)
             sys.exit(1)
 
-        # Add to Windows startup (runs on system boot)
-        # Uses the installed path, not the downloaded path
-        if not is_in_startup():
+        # Add to Windows startup (runs on system boot) - ONLY when running as built exe
+        # When running from source (python desktop_app.py), get_app_executable_path() returns
+        # the .py file path - Windows would open it in the editor instead of running the app.
+        # ALWAYS update registry when running as exe (overwrites any stale/wrong path from
+        # e.g. previous run from source, moved exe, or corrupted entry).
+        if getattr(sys, 'frozen', False):
             add_to_startup()
+        else:
+            # Development mode: remove any startup entry we may have added (wrong .py path)
+            if is_in_startup():
+                remove_from_startup()
+                print("[INFO] Removed from Windows startup (development mode - use built exe for auto-start)")
 
         # Check network connectivity first
         is_online = self.offline_manager.check_connectivity(force=True)

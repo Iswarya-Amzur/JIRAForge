@@ -437,8 +437,11 @@ async function attachImagesToJiraIssue(email, apiToken, siteUrl, issueKey, image
       logger.info('[Feedback] Downloading image %d/%d: %s', i + 1, imagePaths.length, imagePath);
       const imageBuffer = await downloadFile('feedback-images', imagePath);
 
-      // Extract filename from path
-      const filename = imagePath.split('/').pop() || `screenshot_${i + 1}.png`;
+      // Extract filename from path (handle empty or slash-only paths explicitly)
+      const extractedName = imagePath
+        ? imagePath.split('/').filter(Boolean).pop()
+        : '';
+      const filename = extractedName || `screenshot_${i + 1}.png`;
 
       // Create form data with the image
       const formData = new FormData();
@@ -475,7 +478,13 @@ async function attachImagesToJiraIssue(email, apiToken, siteUrl, issueKey, image
  * @returns {string} MIME type
  */
 function getContentTypeFromFilename(filename) {
-  const ext = filename.split('.').pop().toLowerCase();
+  const lastDotIndex = typeof filename === 'string' ? filename.lastIndexOf('.') : -1;
+  // If there is no dot or the dot is the last character, we consider there to be no extension.
+  if (lastDotIndex === -1 || lastDotIndex === filename.length - 1) {
+    return 'application/octet-stream';
+  }
+
+  const ext = filename.slice(lastDotIndex + 1).toLowerCase();
   const mimeTypes = {
     'jpg': 'image/jpeg',
     'jpeg': 'image/jpeg',
