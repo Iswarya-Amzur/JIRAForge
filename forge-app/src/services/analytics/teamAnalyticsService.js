@@ -363,8 +363,11 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
     };
   }
   
-  const filterByProjects = !isAdmin && projectAdminProjects.length > 0;
+  // Determine projects to filter by:
+  // - If specific projectKey provided, always filter by it (even for admins)
+  // - Otherwise, project admins filter by their administered projects
   const projectsToFilter = projectKey ? [projectKey] : projectAdminProjects;
+  const filterByProjects = projectKey ? true : (!isAdmin && projectAdminProjects.length > 0);
 
   console.log('[TeamTimeline] Fetching timeline for date:', date, 'org:', organization.id, 
     'filterByProjects:', filterByProjects, 'projectCount:', projectsToFilter.length);
@@ -376,7 +379,7 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
   // Also include project_key for filtering
   let query = `screenshots?organization_id=eq.${organization.id}&work_date=eq.${date}&deleted_at=is.null&select=user_id,timestamp,start_time,end_time,duration_seconds,project_key&order=user_id,timestamp.asc&limit=5000`;
   
-  // Add project filter for project admins
+  // Add project filter when filtering is enabled
   if (filterByProjects && projectsToFilter.length > 0) {
     // Use PostgREST 'in' operator: project_key=in.(P1,P2,P3)
     query += `&project_key=in.(${projectsToFilter.join(',')})`;

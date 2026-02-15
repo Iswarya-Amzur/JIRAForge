@@ -703,7 +703,7 @@ exports.getDashboardData = async (req, res) => {
     const { 
       canViewAllUsers = false,  // Whether user has admin privileges
       isJiraAdmin = false,      // Whether user is Jira admin (sees all data)
-      projectKeys = null,       // Project keys to filter by (for project admins, null = all)
+      projectKeys = null,       // For project admins: array of project keys to filter by; for Jira admins: null (no project restriction)
       maxDailySummaryDays = 30,
       maxWeeklySummaryWeeks = 12,
       maxIssuesInAnalytics = 50
@@ -878,6 +878,7 @@ exports.getDashboardData = async (req, res) => {
             .from('users')
             .select('id, display_name, email')
             .in('id', userIds)
+            .eq('organization_id', organization.id)
             .eq('is_active', true);
         });
     } else {
