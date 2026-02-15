@@ -71,6 +71,10 @@ function DayView({ loading, timeData }) {
           });
           if (result.success) {
             setTimelineData(result.data);
+          } else {
+            console.warn('Failed to fetch team timeline:', result.error);
+            // Initialize with empty data so timeline still renders
+            setTimelineData({ usersWithActivity: [], usersWithoutActivity: [] });
           }
         } else {
           // Regular user: fetch only their own timeline
@@ -79,10 +83,20 @@ function DayView({ loading, timeData }) {
           });
           if (result.success) {
             setMyTimelineData(result.data);
+          } else {
+            console.warn('Failed to fetch my timeline:', result.error);
+            // Initialize with empty data so timeline still renders
+            setMyTimelineData({ sessions: [], userId: null });
           }
         }
       } catch (err) {
         console.error('Failed to load timeline:', err);
+        // Initialize with empty data so timeline structure still renders
+        if (timeData?.canViewAllUsers) {
+          setTimelineData({ usersWithActivity: [], usersWithoutActivity: [] });
+        } else {
+          setMyTimelineData({ sessions: [], userId: null });
+        }
       }
     };
 

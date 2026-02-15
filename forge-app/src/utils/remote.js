@@ -297,13 +297,17 @@ export async function deleteFromStorage(bucket, path) {
  * 
  * @param {Object} options - Dashboard options
  * @param {boolean} options.canViewAllUsers - Whether user has admin/team view permissions
+ * @param {boolean} options.isJiraAdmin - Whether user is Jira admin (sees all data)
+ * @param {Array<string>} options.projectKeys - Project keys to filter by (for project admins)
  * @param {number} options.maxDailySummaryDays - Max days for daily summary (default: 30)
  * @param {number} options.maxWeeklySummaryWeeks - Max weeks for weekly summary (default: 12)
  * @param {number} options.maxIssuesInAnalytics - Max issues to return (default: 50)
  * @returns {Promise<Object>} Complete dashboard data
  */
 export async function fetchDashboardData(options = {}) {
-  const cacheKey = 'dashboard:batch';
+  // Include projectKeys in cache key for proper cache separation
+  const projectKeysSuffix = options.projectKeys ? `:${options.projectKeys.sort().join(',')}` : ':all';
+  const cacheKey = `dashboard:batch${projectKeysSuffix}`;
   
   // Short-lived cache (30 seconds) for dashboard data
   const cached = getFromCache(cacheKey);
@@ -312,11 +316,13 @@ export async function fetchDashboardData(options = {}) {
     return cached;
   }
 
-  console.log('[Remote] Fetching dashboard data (batch)');
+  console.log('[Remote] Fetching dashboard data (batch)', options.projectKeys ? `for projects: ${options.projectKeys.join(', ')}` : 'for all projects');
   
   const result = await remoteRequest('/api/forge/dashboard', {
     body: {
       canViewAllUsers: options.canViewAllUsers || false,
+      isJiraAdmin: options.isJiraAdmin || false,
+      projectKeys: options.projectKeys || null, // null = all projects, array = filter to these
       maxDailySummaryDays: options.maxDailySummaryDays || 30,
       maxWeeklySummaryWeeks: options.maxWeeklySummaryWeeks || 12,
       maxIssuesInAnalytics: options.maxIssuesInAnalytics || 50
