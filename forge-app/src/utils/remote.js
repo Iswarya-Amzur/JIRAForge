@@ -306,7 +306,11 @@ export async function deleteFromStorage(bucket, path) {
  */
 export async function fetchDashboardData(options = {}) {
   // Include projectKeys in cache key for proper cache separation
-  const projectKeysSuffix = options.projectKeys ? `:${options.projectKeys.sort().join(',')}` : ':all';
+  // Use spread to avoid mutating caller's array, and check for non-empty array
+  const hasProjectFilters = Array.isArray(options.projectKeys) && options.projectKeys.length > 0;
+  const projectKeysSuffix = hasProjectFilters
+    ? `:${[...options.projectKeys].sort().join(',')}`
+    : ':all';
   const cacheKey = `dashboard:batch${projectKeysSuffix}`;
   
   // Short-lived cache (30 seconds) for dashboard data
@@ -322,7 +326,8 @@ export async function fetchDashboardData(options = {}) {
     body: {
       canViewAllUsers: options.canViewAllUsers || false,
       isJiraAdmin: options.isJiraAdmin || false,
-      projectKeys: options.projectKeys || null, // null = all projects, array = filter to these
+      // Preserve empty arrays (don't coerce to null) - empty = no allowed projects
+      projectKeys: Array.isArray(options.projectKeys) ? options.projectKeys : null,
       maxDailySummaryDays: options.maxDailySummaryDays || 30,
       maxWeeklySummaryWeeks: options.maxWeeklySummaryWeeks || 12,
       maxIssuesInAnalytics: options.maxIssuesInAnalytics || 50

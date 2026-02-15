@@ -346,13 +346,28 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
   }
 
   // Determine which projects to filter by
-  // - Jira admins see all projects
+  // - Jira admins see all projects  
   // - Project admins see only their administered projects
+  // Security: If project admin but projectAdminProjects is empty, return empty results
+  // to prevent accidental exposure of org-wide data when project discovery fails
+  if (!isAdmin && projectAdminProjects.length === 0) {
+    console.log('[TeamTimeline] Project admin with no discoverable projects - returning empty');
+    return {
+      date,
+      projectKey: projectKey || null,
+      organizationId: organization.id,
+      usersWithActivity: [],
+      usersWithoutActivity: [],
+      totalUsers: 0,
+      activeUsers: 0
+    };
+  }
+  
   const filterByProjects = !isAdmin && projectAdminProjects.length > 0;
   const projectsToFilter = projectKey ? [projectKey] : projectAdminProjects;
 
   console.log('[TeamTimeline] Fetching timeline for date:', date, 'org:', organization.id, 
-    'filterByProjects:', filterByProjects, 'projects:', projectsToFilter);
+    'filterByProjects:', filterByProjects, 'projectCount:', projectsToFilter.length);
 
   // Build query for screenshots on the specified date
   // Uses idx_screenshots_org_user_work_date index for optimal performance
@@ -427,8 +442,9 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
   // Sort by total hours (most active first)
   userTimelines.sort((a, b) => b.totalHours - a.totalHours);
 
-  console.log('[TeamTimeline] Users with activity:', userTimelines.length, 
-    'User IDs:', userTimelines.map(u => ({ id: u.userId, name: u.displayName, sessions: u.totalSessions })));
+  // Log aggregate stats only - avoid PII (user IDs, names, emails) in logs
+  const totalSessionsAcrossUsers = userTimelines.reduce((sum, u) => sum + (u.totalSessions || 0), 0);
+  console.log('[TeamTimeline] Users with activity:', userTimelines.length, 'Total sessions:', totalSessionsAcrossUsers);
 
   // Also include users who haven't tracked time but are in the organization
   // For project admins, don't show all inactive users - only show users with activity on their projects
