@@ -6795,10 +6795,10 @@ class TimeTracker:
         if getattr(sys, 'frozen', False):
             add_to_startup()
         else:
-            # Development mode: remove any startup entry we may have added (wrong .py path)
-            if is_in_startup():
-                remove_from_startup()
-                print("[INFO] Removed from Windows startup (development mode - use built exe for auto-start)")
+            # Development mode: do not modify Windows startup configuration.
+            # Auto-start is only configured when running the built executable.
+            # We don't remove existing entries as they may be valid (pointing to installed exe).
+            print("[INFO] Running in development mode - auto-start is only configured for the built exe.")
 
         # Check network connectivity first
         is_online = self.offline_manager.check_connectivity(force=True)

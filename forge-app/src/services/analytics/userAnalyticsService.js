@@ -28,7 +28,27 @@ export async function fetchTimeAnalyticsBatch(accountId, cloudId) {
   let projectKeys = null;
   if (!isAdmin && isProjectAdmin) {
     projectKeys = await getProjectsUserAdmins();
-    console.log('[Analytics] Project admin - filtering to projects:', projectKeys);
+    // If getProjectsUserAdmins() returns empty array (API error or no projects),
+    // treat as "no access" rather than "all access" for safety
+    if (!Array.isArray(projectKeys) || projectKeys.length === 0) {
+      console.log('[Analytics] Project admin has no discoverable projects - returning empty data');
+      // Return empty data structure instead of potentially exposing all org data
+      return {
+        organizationId: null,
+        organizationName: null,
+        userId: null,
+        userDisplayName: null,
+        userEmail: null,
+        membership: null,
+        canViewAllUsers: false,
+        dailySummary: [],
+        weeklySummary: [],
+        timeByProject: [],
+        timeByIssue: [],
+        allUsers: []
+      };
+    }
+    console.log('[Analytics] Project admin - filtering to projects:', projectKeys.length, 'projects');
   }
   
   // User can view team data if Jira admin or project admin

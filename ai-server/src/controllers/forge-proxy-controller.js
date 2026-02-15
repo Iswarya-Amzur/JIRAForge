@@ -719,14 +719,26 @@ exports.getDashboardData = async (req, res) => {
 
     // Determine if we should filter by specific projects
     // Project admins (not Jira admins) should only see their projects' data
-    const shouldFilterByProjects = canViewAllUsers && !isJiraAdmin && Array.isArray(projectKeys) && projectKeys.length > 0;
+    const isProjectAdmin = canViewAllUsers && !isJiraAdmin;
+    const hasValidProjectKeys = Array.isArray(projectKeys) && projectKeys.length > 0;
+    const shouldFilterByProjects = isProjectAdmin && hasValidProjectKeys;
+    
+    // Security: If user is project admin but has empty/missing projectKeys, reject the request
+    // This prevents accidental exposure of org-wide data when project discovery fails
+    if (isProjectAdmin && !hasValidProjectKeys) {
+      logger.warn('[ForgeProxy] Project admin with no valid projectKeys - rejecting', { cloudId, accountId });
+      return res.status(403).json({
+        success: false,
+        error: 'Project admin access requires valid project keys. No projects found for your admin permissions.'
+      });
+    }
     
     logger.info('[ForgeProxy] Dashboard batch request', { 
       cloudId, 
       accountId,
       isJiraAdmin,
       shouldFilterByProjects,
-      projectKeys: shouldFilterByProjects ? projectKeys : 'all'
+      projectKeysCount: shouldFilterByProjects ? projectKeys.length : 'all'
     });
 
     // 1. Get or verify organization
@@ -842,12 +854,18 @@ exports.getDashboardData = async (req, res) => {
       usersQuery = Promise.resolve({ data: [{ id: userId, display_name: user.display_name, email: user.email }] });
     } else if (shouldFilterByProjects) {
       // Get users who have time tracked on the project admin's projects
-      // Using daily_time_summary to find users with time on these projects
+      // Using daily_time_summary with time window to limit data volume
+      // Calculate date range matching the dashboard query (last N days)
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - maxDailySummaryDays);
+      const cutoffDateStr = cutoffDate.toISOString().split('T')[0];
+      
       usersQuery = supabase
         .from('daily_time_summary')
         .select('user_id')
         .eq('organization_id', organization.id)
         .in('project_key', projectKeys)
+        .gte('work_date', cutoffDateStr) // Limit to recent data only
         .then(async (result) => {
           if (result.error) throw result.error;
           // Get unique user IDs
