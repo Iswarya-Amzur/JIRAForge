@@ -347,7 +347,7 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
 
   // Determine which projects to filter by
   // - Jira admins see all projects  
-  // - Project admins see only their administered projects
+  // - Project admins see only their administered projects + their own screenshots
   // Security: If project admin but projectAdminProjects is empty, return empty results
   // to prevent accidental exposure of org-wide data when project discovery fails
   if (!isAdmin && projectAdminProjects.length === 0) {
@@ -363,6 +363,16 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
     };
   }
   
+  // Get current user's ID for filtering (project admins should always see their own data)
+  let currentUserId = null;
+  if (!isAdmin) {
+    const currentUserResult = await supabaseRequest(
+      supabaseConfig,
+      `users?organization_id=eq.${organization.id}&atlassian_account_id=eq.${accountId}&select=id&limit=1`
+    );
+    currentUserId = currentUserResult?.[0]?.id || null;
+  }
+
   // Determine projects to filter by:
   // - If specific projectKey provided, always filter by it (even for admins)
   // - Otherwise, project admins filter by their administered projects
@@ -380,9 +390,15 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
   let query = `screenshots?organization_id=eq.${organization.id}&work_date=eq.${date}&deleted_at=is.null&select=user_id,timestamp,start_time,end_time,duration_seconds,project_key&order=user_id,timestamp.asc&limit=5000`;
   
   // Add project filter when filtering is enabled
+  // For project admins, use OR filter to include their own screenshots + admin project screenshots
   if (filterByProjects && projectsToFilter.length > 0) {
-    // Use PostgREST 'in' operator: project_key=in.(P1,P2,P3)
-    query += `&project_key=in.(${projectsToFilter.join(',')})`;
+    if (currentUserId) {
+      // Project admin: user's own screenshots OR screenshots from admin projects
+      query += `&or=(user_id.eq.${currentUserId},project_key.in.(${projectsToFilter.join(',')}))`;
+    } else {
+      // Fallback: just filter by project (shouldn't happen)
+      query += `&project_key=in.(${projectsToFilter.join(',')})`;
+    }
   }
 
   const screenshots = await supabaseRequest(supabaseConfig, query);
