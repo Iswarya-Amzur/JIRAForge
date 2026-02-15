@@ -704,10 +704,19 @@ exports.getDashboardData = async (req, res) => {
       canViewAllUsers = false,  // Whether user has admin privileges
       isJiraAdmin = false,      // Whether user is Jira admin (sees all data)
       projectKeys = null,       // For project admins: array of project keys to filter by; for Jira admins: null (no project restriction)
-      maxDailySummaryDays = 30,
+      maxDailySummaryDays = 60, // Date range in days (not row limit) - covers current + previous month
       maxWeeklySummaryWeeks = 12,
       maxIssuesInAnalytics = 50
     } = req.body;
+
+    // Calculate date cutoffs for time-based filtering (industry standard: filter by date, not row count)
+    const dailyCutoffDate = new Date();
+    dailyCutoffDate.setDate(dailyCutoffDate.getDate() - maxDailySummaryDays);
+    const dailyCutoffStr = dailyCutoffDate.toISOString().split('T')[0];
+
+    const weeklyCutoffDate = new Date();
+    weeklyCutoffDate.setDate(weeklyCutoffDate.getDate() - (maxWeeklySummaryWeeks * 7));
+    const weeklyCutoffStr = weeklyCutoffDate.toISOString().split('T')[0];
 
     const supabase = getClient();
     if (!supabase) {
@@ -794,12 +803,14 @@ exports.getDashboardData = async (req, res) => {
     };
 
     // Daily summary
+    // Industry standard: Filter by DATE RANGE, not row count
+    // This ensures we get ALL data for the time period, regardless of how many tasks/projects
     const dailyQuery = supabase
       .from('daily_time_summary')
       .select('*')
       .eq('organization_id', organization.id)
-      .order('work_date', { ascending: false })
-      .limit(maxDailySummaryDays);
+      .gte('work_date', dailyCutoffStr)  // Filter by date, not limit by rows
+      .order('work_date', { ascending: false });
     
     if (!canViewTeamData) {
       dailyQuery.eq('user_id', userId);
@@ -810,12 +821,13 @@ exports.getDashboardData = async (req, res) => {
     queries.push(dailyQuery);
 
     // Weekly summary
+    // Industry standard: Filter by DATE RANGE, not row count
     const weeklyQuery = supabase
       .from('weekly_time_summary')
       .select('*')
       .eq('organization_id', organization.id)
-      .order('week_start', { ascending: false })
-      .limit(maxWeeklySummaryWeeks);
+      .gte('week_start', weeklyCutoffStr)  // Filter by date, not limit by rows
+      .order('week_start', { ascending: false });
     
     if (!canViewTeamData) {
       weeklyQuery.eq('user_id', userId);
