@@ -786,6 +786,13 @@ exports.getDashboardData = async (req, res) => {
     // 4. Execute all data queries in PARALLEL for maximum performance
     const queries = [];
 
+    // Build OR filter for project admins: own data OR team data from admin projects
+    // This ensures project admins can ALWAYS see their own data, plus team data from their projects
+    const buildProjectAdminOrFilter = (userIdCol, projectKeyCol) => {
+      // Format: "user_id.eq.uuid,project_key.in.(P1,P2,P3)"
+      return `${userIdCol}.eq.${userId},${projectKeyCol}.in.(${projectKeys.join(',')})`;
+    };
+
     // Daily summary
     const dailyQuery = supabase
       .from('daily_time_summary')
@@ -797,8 +804,8 @@ exports.getDashboardData = async (req, res) => {
     if (!canViewTeamData) {
       dailyQuery.eq('user_id', userId);
     } else if (shouldFilterByProjects) {
-      // Project admins only see data from their projects
-      dailyQuery.in('project_key', projectKeys);
+      // Project admins see: their own data (any project) + team data from admin projects
+      dailyQuery.or(buildProjectAdminOrFilter('user_id', 'project_key'));
     }
     queries.push(dailyQuery);
 
@@ -813,12 +820,13 @@ exports.getDashboardData = async (req, res) => {
     if (!canViewTeamData) {
       weeklyQuery.eq('user_id', userId);
     } else if (shouldFilterByProjects) {
-      // Project admins only see data from their projects
-      weeklyQuery.in('project_key', projectKeys);
+      // Project admins see: their own data (any project) + team data from admin projects
+      weeklyQuery.or(buildProjectAdminOrFilter('user_id', 'project_key'));
     }
     queries.push(weeklyQuery);
 
-    // Project summary
+    // Project summary - for admins, show all projects they can see (own + admin projects)
+    // Note: project_time_summary is aggregated by project, so we filter differently
     const projectQuery = supabase
       .from('project_time_summary')
       .select('*')
@@ -826,7 +834,9 @@ exports.getDashboardData = async (req, res) => {
       .order('total_seconds', { ascending: false });
     
     if (shouldFilterByProjects) {
-      // Project admins only see their projects
+      // For project admins, we need to include projects where they have personal data too
+      // This requires a different approach - get all projects from their daily summary
+      // For now, include their admin projects (team data); their own project data comes from daily/weekly
       projectQuery.in('project_key', projectKeys);
     }
     queries.push(projectQuery);
@@ -842,18 +852,19 @@ exports.getDashboardData = async (req, res) => {
     if (!canViewTeamData) {
       analysisQuery.eq('user_id', userId);
     } else if (shouldFilterByProjects) {
-      // Project admins only see issues from their projects
-      analysisQuery.in('active_project_key', projectKeys);
+      // Project admins see: their own issues (any project) + team issues from admin projects
+      analysisQuery.or(buildProjectAdminOrFilter('user_id', 'active_project_key'));
     }
     queries.push(analysisQuery);
 
     // All active users (for team view)
     // For project admins, we need to get users who have tracked time on their projects
+    // PLUS always include the current user so they can see their own data
     let usersQuery;
     if (!canViewTeamData) {
       usersQuery = Promise.resolve({ data: [{ id: userId, display_name: user.display_name, email: user.email }] });
     } else if (shouldFilterByProjects) {
-      // Get users who have time tracked on the project admin's projects
+      // Get users who have time tracked on the project admin's projects OR the current user
       // Using daily_time_summary with time window to limit data volume
       // Calculate date range matching the dashboard query (last N days)
       const cutoffDate = new Date();
@@ -864,14 +875,20 @@ exports.getDashboardData = async (req, res) => {
         .from('daily_time_summary')
         .select('user_id')
         .eq('organization_id', organization.id)
-        .in('project_key', projectKeys)
+        // Use OR filter: users on admin projects OR the current user
+        .or(`project_key.in.(${projectKeys.join(',')}),user_id.eq.${userId}`)
         .gte('work_date', cutoffDateStr) // Limit to recent data only
         .then(async (result) => {
           if (result.error) throw result.error;
-          // Get unique user IDs
+          // Get unique user IDs - always include current user
           const userIds = [...new Set((result.data || []).map(r => r.user_id))];
+          // Ensure current user is always included
+          if (!userIds.includes(userId)) {
+            userIds.push(userId);
+          }
           if (userIds.length === 0) {
-            return { data: [] };
+            // This shouldn't happen since we always add userId, but handle gracefully
+            return { data: [{ id: userId, display_name: user.display_name, email: user.email }] };
           }
           // Fetch the actual user details
           return supabase
