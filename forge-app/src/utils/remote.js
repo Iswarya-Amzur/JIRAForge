@@ -306,11 +306,18 @@ export async function deleteFromStorage(bucket, path) {
  */
 export async function fetchDashboardData(options = {}) {
   // Include projectKeys in cache key for proper cache separation
-  // Use spread to avoid mutating caller's array, and check for non-empty array
-  const hasProjectFilters = Array.isArray(options.projectKeys) && options.projectKeys.length > 0;
+  // Distinguish between:
+  // - null/undefined (":all" = all projects for Jira admins)
+  // - explicit empty array (":none" = no allowed projects, should return empty)
+  // - non-empty array (":<sorted,joined keys>")
+  const projectKeys = options.projectKeys;
+  const hasProjectFilters = Array.isArray(projectKeys) && projectKeys.length > 0;
+  const hasExplicitEmptyProjects = Array.isArray(projectKeys) && projectKeys.length === 0;
   const projectKeysSuffix = hasProjectFilters
-    ? `:${[...options.projectKeys].sort().join(',')}`
-    : ':all';
+    ? `:${[...projectKeys].sort().join(',')}`
+    : hasExplicitEmptyProjects
+      ? ':none'
+      : ':all';
   const cacheKey = `dashboard:batch${projectKeysSuffix}`;
   
   // Short-lived cache (30 seconds) for dashboard data

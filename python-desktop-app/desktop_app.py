@@ -893,9 +893,16 @@ def add_to_startup():
     try:
         import winreg
 
-        # Use installed exe path for built version (canonical location in AppData)
-        # This ensures correct startup even if registry had a stale/wrong path before
-        exe_path = get_installed_exe_path() if getattr(sys, 'frozen', False) else get_app_executable_path()
+        # Prefer the installed path only if it actually exists; otherwise fall back
+        # to the current executable path to avoid writing a broken startup entry.
+        if getattr(sys, 'frozen', False):
+            installed_exe = get_installed_exe_path()
+            if installed_exe and os.path.isfile(installed_exe):
+                exe_path = installed_exe
+            else:
+                exe_path = get_app_executable_path()
+        else:
+            exe_path = get_app_executable_path()
 
         # Open registry key
         key = winreg.OpenKey(
@@ -1033,7 +1040,15 @@ def _keyring_get(service, key):
     
     # Handle base64-encoded chunked values
     if value.startswith("__b64_chunked__:"):
-        num_chunks = int(value.split(":")[1])
+        try:
+            num_chunks = int(value.split(":")[1])
+        except (ValueError, IndexError):
+            # Corrupted chunk marker - clean up and return None
+            try:
+                keyring.delete_password(service, key)
+            except Exception:
+                pass
+            return None
         parts = []
         for i in range(1, num_chunks + 1):
             chunk = keyring.get_password(service, f"{key}_chunk{i}")
@@ -1056,7 +1071,15 @@ def _keyring_get(service, key):
     
     # Legacy: handle old chunked format (non-base64)
     if value.startswith("__chunked__:"):
-        num_chunks = int(value.split(":")[1])
+        try:
+            num_chunks = int(value.split(":")[1])
+        except (ValueError, IndexError):
+            # Corrupted chunk marker - clean up and return None
+            try:
+                keyring.delete_password(service, key)
+            except Exception:
+                pass
+            return None
         parts = []
         for i in range(1, num_chunks + 1):
             chunk = keyring.get_password(service, f"{key}_chunk{i}")
@@ -1074,7 +1097,10 @@ def _keyring_delete(service, key):
     try:
         value = keyring.get_password(service, key)
         if value and (value.startswith("__chunked__:") or value.startswith("__b64_chunked__:")):
-            num_chunks = int(value.split(":")[1])
+            try:
+                num_chunks = int(value.split(":")[1])
+            except (ValueError, IndexError):
+                num_chunks = 0  # Corrupted marker, skip chunk deletion
             for i in range(1, num_chunks + 1):
                 try:
                     keyring.delete_password(service, f"{key}_chunk{i}")
