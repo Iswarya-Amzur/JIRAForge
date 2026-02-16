@@ -521,8 +521,9 @@ export async function previewBulkReassign(req) {
     const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
 
     // Build datetime range from selected date and times
-    const startDateTime = `${selectedDate}T${startTime}:00`;
-    const endDateTime = `${selectedDate}T${endTime}:00`;
+    // Append 'Z' to explicitly treat as UTC — screenshot timestamps in DB are stored as UTC
+    const startDateTime = `${selectedDate}T${startTime}:00Z`;
+    const endDateTime = `${selectedDate}T${endTime}:00Z`;
 
     console.log(`[previewBulkReassign] Previewing activities from ${startDateTime} to ${endDateTime}`);
 
@@ -630,8 +631,9 @@ export async function bulkReassignByTimeInterval(req) {
     const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
 
     // Build datetime range
-    const startDateTime = `${selectedDate}T${startTime}:00`;
-    const endDateTime = `${selectedDate}T${endTime}:00`;
+    // Append 'Z' to explicitly treat as UTC — screenshot timestamps in DB are stored as UTC
+    const startDateTime = `${selectedDate}T${startTime}:00Z`;
+    const endDateTime = `${selectedDate}T${endTime}:00Z`;
 
     console.log(`[bulkReassignByTimeInterval] Reassigning activities from ${startDateTime} to ${endDateTime} to ${targetIssueKey}`);
 

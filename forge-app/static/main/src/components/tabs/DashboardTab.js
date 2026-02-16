@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context';
 import { IssueTypeIcon, StatusDropdown } from '../common';
 import { navigateToIssue, formatTime } from '../../utils';
+import { parseUTC } from '../tabs/time-analytics/dateUtils';
 import './DashboardTab.css';
 
 function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
@@ -157,7 +158,7 @@ function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
                                     .sort((a, b) => new Date(b) - new Date(a))
                                     .map((dateKey, dateIdx) => {
                                       const dateSessions = groupSessionsByDate(issue.sessions)[dateKey];
-                                      const displayDate = new Date(dateKey);
+                                      const displayDate = new Date(dateKey + 'T00:00:00');
                                       const totalDuration = calculateTotalDuration(dateSessions);
 
                                       return (
@@ -177,8 +178,8 @@ function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
                                           </div>
                                           <div className="sessions-list">
                                             {dateSessions.map((session, sessionIdx) => {
-                                              const start = new Date(session.startTime);
-                                              const end = new Date(session.endTime);
+                                              const start = parseUTC(session.startTime) || new Date(session.startTime);
+                                              const end = parseUTC(session.endTime) || new Date(session.endTime);
                                               // Use actual duration from backend (accumulated work time)
                                               // Not timestamp span which includes idle gaps
                                               const sessionDuration = session.duration || 0;

@@ -39,7 +39,8 @@ function WeekView({ loading, timeData }) {
   today.setHours(0, 0, 0, 0);
   const todayStr = formatLocalDate(today);
   const startOfWeek = new Date(today);
-  startOfWeek.setDate(today.getDate() - today.getDay());
+  const dow = today.getDay();
+  startOfWeek.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
   const weekDates = getWeekDates(today);
   const daysCount = weekDates.length;
 

@@ -158,23 +158,24 @@ export async function fetchProjectTeamAnalytics(accountId, cloudId, projectKey) 
     .slice(0, MAX_ISSUES_IN_ANALYTICS);
 
   // === Calculate Team Summary KPIs ===
+  // Use UTC methods to ensure consistent date calculations regardless of server timezone
   const now = new Date();
   const formatDate = (d) => {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
   };
 
   const todayStr = formatDate(now);
-  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const currentMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const currentMonthStr = formatDate(currentMonthStart);
 
   // Calculate week start (Monday)
   const weekStart = new Date(now);
-  const dayOfWeek = weekStart.getDay();
+  const dayOfWeek = weekStart.getUTCDay();
   const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-  weekStart.setDate(weekStart.getDate() - daysToMonday);
+  weekStart.setUTCDate(weekStart.getUTCDate() - daysToMonday);
   const weekStartStr = formatDate(weekStart);
 
   // Filter data for this month
@@ -254,10 +255,11 @@ export async function fetchProjectTeamAnalytics(accountId, cloudId, projectKey) 
 
   // === Calculate Daily Trend (Last 14 days) ===
   const trendDays = 14;
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const trendData = [];
   for (let i = trendDays - 1; i >= 0; i--) {
     const date = new Date(now);
-    date.setDate(date.getDate() - i);
+    date.setUTCDate(date.getUTCDate() - i);
     const dateStr = formatDate(date);
 
     const dayData = (teamDailySummary || []).filter(d => {
@@ -269,8 +271,8 @@ export async function fetchProjectTeamAnalytics(accountId, cloudId, projectKey) 
 
     trendData.push({
       date: dateStr,
-      dayOfWeek: date.toLocaleDateString('en-US', { weekday: 'short' }),
-      dayOfMonth: date.getDate(),
+      dayOfWeek: dayNames[date.getUTCDay()],
+      dayOfMonth: date.getUTCDate(),
       totalHours
     });
   }
@@ -431,11 +433,12 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
     }
     
     // Add session with start_time, end_time for accurate timeline rendering
+    // Use actual duration_seconds from the DB; only fall back to a small default for legacy data
     userTimelineMap[userId].sessions.push({
       timestamp: screenshot.timestamp,
       startTime: screenshot.start_time,
       endTime: screenshot.end_time,
-      durationSeconds: screenshot.duration_seconds || 300 // Default 5 min if not set
+      durationSeconds: screenshot.duration_seconds || 0
     });
   });
 
@@ -573,12 +576,13 @@ export async function fetchMyDayTimeline(accountId, cloudId, date) {
   }
 
   // Build sessions array with start_time, end_time for accurate timeline rendering
+  // Use actual duration_seconds from the DB; only fall back to a small default for legacy data
   const sessions = screenshots.map(screenshot => {
     return {
       timestamp: screenshot.timestamp,
       startTime: screenshot.start_time,
       endTime: screenshot.end_time,
-      durationSeconds: screenshot.duration_seconds || 300
+      durationSeconds: screenshot.duration_seconds || 0
     };
   });
 

@@ -6,6 +6,7 @@
 
 const logger = require('../utils/logger');
 const { getClient } = require('../services/db/supabase-client');
+const { getUTCISOString } = require('../utils/datetime');
 const sessionStore = require('../services/feedback-session-store');
 
 /**
@@ -184,7 +185,7 @@ exports.supabaseQuery = async (req, res) => {
           });
           // Ensure updated_at is set when soft-deleting so the row is clearly modified
           if (updatePayload.deleted_at != null && updatePayload.updated_at == null) {
-            updatePayload.updated_at = new Date().toISOString();
+            updatePayload.updated_at = getUTCISOString();
           }
         }
         let updateBuilder = supabase.from(table).update(updatePayload);
@@ -317,7 +318,7 @@ exports.getOrCreateOrganization = async (req, res) => {
           .update({
             org_name: orgName,
             jira_instance_url: jiraUrl || existingOrg.jira_instance_url,
-            updated_at: new Date().toISOString()
+            updated_at: getUTCISOString()
           })
           .eq('id', existingOrg.id)
           .select()
@@ -439,7 +440,7 @@ exports.getOrCreateUser = async (req, res) => {
           .update({
             email: email || user.email,
             display_name: displayName || user.display_name,
-            updated_at: new Date().toISOString()
+            updated_at: getUTCISOString()
           })
           .eq('id', user.id);
         updated = true;

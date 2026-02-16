@@ -243,7 +243,7 @@ async function syncSingleEntry(supabaseConfig, organizationId, userId, entry, ex
   }
 
   // Create new worklog — format date for Jira (requires yyyy-MM-dd'T'HH:mm:ss.SSS+0000)
-  // Uses formatStartedForJira to preserve local time from the DB without UTC conversion
+  // Uses formatStartedForJira to format the UTC timestamp from the DB into Jira's expected format
   const startedAt = formatStartedForJira(lastWorkedOn);
   const worklogResult = await createJiraWorklogAsApp(issueKey, timeTracked, startedAt);
 

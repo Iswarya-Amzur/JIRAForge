@@ -47,15 +47,16 @@ export async function fetchAllAnalytics(accountId, cloudId) {
   );
 
   // Calculate date ranges
+  // Use UTC methods to ensure consistent date calculations regardless of server timezone
   const now = new Date();
-  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+  const currentMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const lastMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const lastMonthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
 
   const formatDate = (d) => {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
   };
 
@@ -116,11 +117,11 @@ export async function fetchAllAnalytics(accountId, cloudId) {
 
   // Calculate date thresholds for activity status
   const sevenDaysAgo = new Date(now);
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  sevenDaysAgo.setUTCDate(sevenDaysAgo.getUTCDate() - 7);
   const sevenDaysAgoStr = formatDate(sevenDaysAgo);
   
   const thirtyDaysAgo = new Date(now);
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 30);
   const thirtyDaysAgoStr = formatDate(thirtyDaysAgo);
 
   // Build project portfolio with contributor counts and activity-based status
@@ -135,13 +136,17 @@ export async function fetchAllAnalytics(accountId, cloudId) {
     .map(project => {
       const projectAllTime = (dailySummary || []).filter(d => d.project_key === project.project_key);
 
-      // Find last active date
+      // Find last active date — format using UTC to avoid server timezone shifts
       const lastActivityRecord = projectAllTime.length > 0 ? projectAllTime[0] : null;
-      const lastActiveDate = lastActivityRecord 
-        ? new Date(typeof lastActivityRecord.work_date === 'string' 
-            ? lastActivityRecord.work_date.split('T')[0] 
-            : String(lastActivityRecord.work_date)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-        : null;
+      let lastActiveDate = null;
+      if (lastActivityRecord) {
+        const dateStr = typeof lastActivityRecord.work_date === 'string' 
+          ? lastActivityRecord.work_date.split('T')[0] 
+          : String(lastActivityRecord.work_date);
+        const [y, m, d] = dateStr.split('-').map(Number);
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        lastActiveDate = `${monthNames[m - 1]} ${d}, ${y}`;
+      }
 
       // Determine activity status based on recent activity
       let activityStatus = 'inactive';

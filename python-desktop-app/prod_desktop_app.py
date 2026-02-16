@@ -177,7 +177,7 @@ load_dotenv()
 
 # Application version - IMPORTANT: Update this when releasing new versions
 # This is used for update checking and notifications
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.2.1"
 
 # Embedded credentials (for production builds - no .env file needed)
 # SECURITY: All sensitive keys moved to AI Server - fetched at runtime after authentication
@@ -3877,10 +3877,11 @@ class TimeTracker:
                 return
 
             client.table('users').update({
-                'desktop_last_heartbeat': datetime.now().isoformat()
+                'desktop_last_heartbeat': datetime.now().isoformat(),
+                'desktop_app_version': self.app_version
             }).eq('id', self.current_user_id).execute()
 
-            print(f"[OK] Heartbeat sent")
+            print(f"[OK] Heartbeat sent (v{self.app_version})")
 
         except Exception as e:
             print(f"[WARN] Failed to send heartbeat: {e}")
@@ -5184,6 +5185,18 @@ class TimeTracker:
             
             # Calculate duration in seconds
             duration_seconds = int((end_time - start_time).total_seconds())
+
+            # Sanity check: cap duration at 2x the capture interval (or 10 min minimum)
+            # This prevents inflated records if last_screenshot_end_time is stale
+            max_duration = max(
+                self.tracking_settings.get('screenshot_interval_seconds', self.capture_interval) * 2,
+                600  # At least 10 minutes
+            )
+            if duration_seconds > max_duration:
+                print(f"[WARN] Duration {duration_seconds}s exceeds max {max_duration}s — capping (stale start_time?)")
+                duration_seconds = max_duration
+                start_time = end_time - timedelta(seconds=duration_seconds)
+
             # Ensure minimum duration of 1 second (for database constraints)
             # IMPORTANT: Do NOT adjust start_time backwards - this causes overlaps!
             # Keep start_time unchanged to maintain continuity with previous record's end_time
@@ -5191,7 +5204,7 @@ class TimeTracker:
                 duration_seconds = 1
                 # Don't modify start_time - accept that actual duration was < 1 second
                 # The database will show 1s duration but time ranges won't overlap
-            
+
             # Prepare screenshot data for both online and offline storage
             work_type = window_info.get('work_type', 'office')  # Default to 'office'
             is_blacklisted = window_info.get('is_blacklisted', False)
@@ -5540,9 +5553,69 @@ class TimeTracker:
         # The interval timer is FIXED - only resets on interval captures, not window switches
         if self.last_interval_time is None:
             self.last_interval_time = time.time()
-        
+
+        # Track loop timing for suspension detection
+        last_loop_time = time.time()
+
         while self.running:
             try:
+                current_loop_time = time.time()
+
+                # === Detect system suspension/resume ===
+                # If the loop iteration took much longer than expected (we sleep 2-5s),
+                # the system was likely suspended (sleep/hibernate).
+                time_since_last_loop = current_loop_time - last_loop_time
+                if time_since_last_loop > 30:  # 30s threshold (loop normally runs every 2-5s)
+                    print(f"[INFO] Large time gap detected: {int(time_since_last_loop)}s — system was likely suspended")
+                    # Finalize current session using last known activity time
+                    if self.current_window_screenshot_id is not None and self.current_window_db_start_time is not None:
+                        try:
+                            end_time = datetime.fromtimestamp(self.last_activity_time)
+                            duration_seconds = int((end_time - self.current_window_db_start_time).total_seconds())
+                            # Sanity check: cap duration to prevent inflated records
+                            # (e.g., if last_activity_time was updated by pynput after system wake)
+                            capture_interval = self.tracking_settings.get('screenshot_interval_seconds', self.capture_interval)
+                            max_finalize_duration = max(capture_interval * 2, 600)
+                            if duration_seconds > max_finalize_duration:
+                                print(f"[WARN] Finalize duration {duration_seconds}s exceeds max {max_finalize_duration}s — capping")
+                                duration_seconds = max_finalize_duration
+                                end_time = self.current_window_db_start_time + timedelta(seconds=duration_seconds)
+                            if duration_seconds < 1:
+                                duration_seconds = 1
+                                end_time = self.current_window_db_start_time + timedelta(seconds=1)
+                            db_client = self.supabase_service if self.supabase_service else self.supabase
+                            update_result = db_client.table('screenshots').update({
+                                'end_time': end_time.isoformat(),
+                                'timestamp': end_time.isoformat(),
+                                'duration_seconds': duration_seconds
+                            }).eq('id', self.current_window_screenshot_id).execute()
+                            if update_result.data:
+                                print(f"[OK] Finalized work session (system suspension detected):")
+                                print(f"     - Record ID: {self.current_window_screenshot_id}")
+                                print(f"     - Duration: {duration_seconds}s")
+                        except Exception as e:
+                            print(f"[ERROR] Error finalizing session on suspension: {e}")
+                    # Reset ALL tracking state — new session starts fresh
+                    self.is_idle = False
+                    self.needs_idle_resume = False
+                    self.current_window_start_time = None
+                    self.current_window_db_start_time = None
+                    self.current_window_screenshot_id = None
+                    self.current_window_record_created_at = None
+                    self.last_screenshot_end_time = None
+                    self.previous_window_key = None
+                    self.previous_window_screenshot_id = None
+                    self.previous_window_start_time = None
+                    self.previous_window_db_start_time = None
+                    self.current_window_key = None
+                    self.last_interval_time = current_loop_time
+                    self.last_activity_time = current_loop_time
+                    last_loop_time = current_loop_time
+                    self.add_admin_log('INFO', f'System suspension detected ({int(time_since_last_loop)}s gap) — session finalized')
+                    continue
+                last_loop_time = current_loop_time
+                # === END suspension detection ===
+
                 # Check for shutdown signal (for graceful update/exit)
                 if check_for_shutdown_signal():
                     print("[INFO] Shutdown signal received - closing for update...")
@@ -5750,6 +5823,14 @@ class TimeTracker:
                         # This ensures log output matches what's stored in the database
                         duration_seconds = int((end_time - self.previous_window_db_start_time).total_seconds())
 
+                        # Sanity check: cap duration to prevent inflated records after suspension
+                        max_duration = max(current_capture_interval * 2, 600)
+                        if duration_seconds > max_duration:
+                            print(f"[WARN] Record duration {duration_seconds}s exceeds max {max_duration}s — capping")
+                            duration_seconds = max_duration
+                            end_time = self.previous_window_db_start_time + timedelta(seconds=duration_seconds)
+                            self.last_screenshot_end_time = end_time
+
                         # Ensure minimum duration of 1 second
                         if duration_seconds < 1:
                             duration_seconds = 1
@@ -5822,6 +5903,14 @@ class TimeTracker:
 
                         # Use the ACTUAL start_time from database for accurate duration calculation
                         duration_seconds = int((end_time - self.current_window_db_start_time).total_seconds())
+
+                        # Sanity check: cap duration to prevent inflated records after suspension
+                        max_duration = max(current_capture_interval * 2, 600)
+                        if duration_seconds > max_duration:
+                            print(f"[WARN] Record duration {duration_seconds}s exceeds max {max_duration}s — capping")
+                            duration_seconds = max_duration
+                            end_time = self.current_window_db_start_time + timedelta(seconds=duration_seconds)
+                            self.last_screenshot_end_time = end_time
 
                         if duration_seconds < 1:
                             duration_seconds = 1

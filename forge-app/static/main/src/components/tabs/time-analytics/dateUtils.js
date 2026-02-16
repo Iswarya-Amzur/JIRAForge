@@ -3,6 +3,29 @@
  */
 
 /**
+ * Parse a UTC timestamp string from the database into a Date object.
+ * Supabase timestamptz values arrive as e.g. "2026-02-11 07:30:23.360899+00"
+ * which has a space separator and short "+00" offset — both non-standard for JS Date.
+ * This normalizes to strict ISO 8601 before parsing.
+ * @param {string} ts - Timestamp string from Supabase
+ * @returns {Date|null} Parsed Date object or null if invalid
+ */
+export function parseUTC(ts) {
+  if (!ts) return null;
+  let s = String(ts).trim();
+  // 1. Replace space with 'T' for ISO 8601 compliance
+  s = s.replace(' ', 'T');
+  // 2. Normalize short timezone offset: +00 → +00:00, -05 → -05:00
+  s = s.replace(/([+-]\d{2})$/, '$1:00');
+  // 3. If no timezone info at all, assume UTC
+  if (!/[Zz]$/.test(s) && !/[+-]\d{2}:\d{2}$/.test(s)) {
+    s += 'Z';
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/**
  * Normalize work_date to YYYY-MM-DD string
  * @param {string|Date|any} workDate - The work date to normalize
  * @returns {string} Normalized date string

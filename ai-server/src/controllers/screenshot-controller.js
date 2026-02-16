@@ -1,7 +1,7 @@
 const screenshotService = require('../services/screenshot-service');
 const supabaseService = require('../services/supabase-service');
 const logger = require('../utils/logger');
-const { getLocalISOString, toLocalISOString } = require('../utils/datetime');
+const { getUTCISOString, toUTCISOString } = require('../utils/datetime');
 
 // Feature flag: Delete screenshots after analysis (default: true for privacy)
 const DELETE_AFTER_ANALYSIS = process.env.DELETE_SCREENSHOTS_AFTER_ANALYSIS !== 'false';
@@ -167,8 +167,8 @@ exports.analyzeScreenshot = async (req, res) => {
     // Duration of 0 is a valid value set by desktop app (will be updated later with actual duration)
     if (duration_seconds == null || !start_time || !end_time) {
       // Fallback: Calculate duration for legacy screenshots that don't have event-based data
-      const calculatedEndTime = timestamp || getLocalISOString();
-      const calculatedStartTime = toLocalISOString(new Date(new Date(calculatedEndTime).getTime() - (actualDuration * 1000)));
+      const calculatedEndTime = timestamp || getUTCISOString();
+      const calculatedStartTime = toUTCISOString(new Date(new Date(calculatedEndTime).getTime() - (actualDuration * 1000)));
 
       await supabaseService.updateScreenshotDuration(screenshot_id, {
         duration_seconds: duration_seconds != null ? duration_seconds : actualDuration,

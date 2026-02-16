@@ -14,7 +14,7 @@
  *
  * @returns {string} UTC ISO string
  */
-function getLocalISOString() {
+function getUTCISOString() {
   return new Date().toISOString();
 }
 
@@ -23,12 +23,18 @@ function getLocalISOString() {
  * @param {Date|string} date - Date object or parseable date string
  * @returns {string} UTC ISO string
  */
-function toLocalISOString(date) {
+function toUTCISOString(date) {
   const d = date instanceof Date ? date : new Date(date);
   return d.toISOString();
 }
 
+// Backwards-compatible aliases (deprecated — use getUTCISOString / toUTCISOString)
+const getLocalISOString = getUTCISOString;
+const toLocalISOString = toUTCISOString;
+
 module.exports = {
+  getUTCISOString,
+  toUTCISOString,
   getLocalISOString,
   toLocalISOString
 };
