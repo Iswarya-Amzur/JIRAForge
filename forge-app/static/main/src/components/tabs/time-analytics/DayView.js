@@ -1,25 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 import { formatTime } from '../../../utils';
-import { normalizeDate, formatLocalDate } from './dateUtils';
-
-// Parse a UTC timestamp string from the database into a Date object.
-// Supabase timestamptz values arrive as e.g. "2026-02-11 07:30:23.360899+00"
-// which has a space separator and short "+00" offset — both non-standard for JS Date.
-// This normalizes to strict ISO 8601 before parsing.
-const parseUTC = (ts) => {
-  if (!ts) return null;
-  let s = String(ts).trim();
-  // 1. Replace space with 'T' for ISO 8601 compliance
-  s = s.replace(' ', 'T');
-  // 2. Normalize short timezone offset: +00 → +00:00, -05 → -05:00
-  s = s.replace(/([+-]\d{2})$/, '$1:00');
-  // 3. If no timezone info at all, assume UTC
-  if (!/[Zz]$/.test(s) && !/[+-]\d{2}:\d{2}$/.test(s)) {
-    s += 'Z';
-  }
-  return new Date(s);
-};
+import { normalizeDate, formatLocalDate, parseUTC } from './dateUtils';
 
 /**
  * Day View Component
@@ -130,9 +112,14 @@ function DayView({ loading, timeData }) {
     let maxHours = -Infinity;
 
     allSessions.forEach(session => {
-      const start = parseUTC(session.startTime || session.timestamp);
       const end = parseUTC(session.endTime || session.timestamp);
-      if (!start || !end) return;
+      if (!end) return;
+
+      // Calculate actual work start from endTime - durationSeconds
+      const durationSeconds = session.durationSeconds || 0;
+      const start = durationSeconds > 0
+        ? new Date(end.getTime() - (durationSeconds * 1000))
+        : end;
 
       // Hours from midnight (can exceed 24 for next-day activity)
       const startH = (start - todayMidnight) / (1000 * 60 * 60);
@@ -145,6 +132,17 @@ function DayView({ loading, timeData }) {
     // Round down start, round up end, add 1-hour padding
     let startHour = Math.max(0, Math.floor(minHours) - 1);
     let endHour = Math.min(30, Math.ceil(maxHours) + 1);
+
+    // IMPORTANT: Extend timeline to current time to show gaps/inactivity periods
+    // This ensures that if user stopped working at 2am and it's now 10am,
+    // the gap between last activity and current time is visible
+    const now = new Date();
+    const currentHoursFromMidnight = (now - todayMidnight) / (1000 * 60 * 60);
+    
+    // If current time is after the last activity, extend endHour to show the gap
+    if (currentHoursFromMidnight > 0 && currentHoursFromMidnight < 30) {
+      endHour = Math.max(endHour, Math.ceil(currentHoursFromMidnight) + 1);
+    }
 
     // Ensure minimum 4-hour range for readability
     if (endHour - startHour < 4) {
@@ -202,21 +200,32 @@ function DayView({ loading, timeData }) {
     if (!sessions || sessions.length === 0) return [];
 
     // Convert sessions to time blocks with position and width
+    // IMPORTANT: Use durationSeconds to compute block width, NOT (endTime - startTime).
+    // The wall-clock span (startTime to endTime) can include idle/sleep time,
+    // but durationSeconds represents actual tracked work time.
+    // Block is positioned as: (endTime - durationSeconds) to endTime
     return sessions.map(session => {
-      const startTime = parseUTC(session.startTime || session.timestamp);
       const endTime = parseUTC(session.endTime || session.timestamp);
-      if (!startTime || !endTime) return null;
+      if (!endTime) return null;
 
-      const leftPercent = timeToPercent(startTime);
+      const durationSeconds = session.durationSeconds || 0;
+      // Calculate the actual work start: endTime minus tracked duration
+      const actualStart = durationSeconds > 0
+        ? new Date(endTime.getTime() - (durationSeconds * 1000))
+        : endTime;
+
+      const leftPercent = timeToPercent(actualStart);
       const rightPercent = timeToPercent(endTime);
-      const widthPercent = Math.max(0.5, rightPercent - leftPercent); // Min 0.5% width for visibility
+      const MAX_BLOCK_MINUTES = 15; // Cap individual blocks at 15 minutes for visual clarity
+      const maxBlockPercent = (MAX_BLOCK_MINUTES / TIMELINE_TOTAL_MINUTES) * 100;
+      const widthPercent = Math.max(0.3, Math.min(maxBlockPercent, rightPercent - leftPercent));
 
       return {
         left: leftPercent,
         width: widthPercent,
-        startTime: startTime,
+        startTime: actualStart,
         endTime: endTime,
-        durationSeconds: session.durationSeconds || 0
+        durationSeconds: durationSeconds
       };
     }).filter(block => block && block.left < 100 && (block.left + block.width) > 0); // Filter out nulls and blocks outside visible range
   };

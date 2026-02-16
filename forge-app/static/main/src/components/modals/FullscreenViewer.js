@@ -1,4 +1,5 @@
 import React from 'react';
+import { parseUTC } from '../tabs/time-analytics/dateUtils';
 
 /**
  * Fullscreen Viewer Component
@@ -33,7 +34,7 @@ function FullscreenViewer({
           <span> | </span>
           <span>
             {currentScreenshot?.timestamp
-              ? new Date(currentScreenshot.timestamp).toLocaleString()
+              ? (parseUTC(currentScreenshot.timestamp) || new Date(currentScreenshot.timestamp)).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })
               : 'Unknown'}
           </span>
           <span> | </span>

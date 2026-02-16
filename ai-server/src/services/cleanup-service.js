@@ -8,7 +8,7 @@
 const { getClient } = require('./db/supabase-client');
 const { deleteFile } = require('./db/storage-service');
 const logger = require('../utils/logger');
-const { toLocalISOString } = require('../utils/datetime');
+const { toUTCISOString } = require('../utils/datetime');
 
 // Configuration (can be overridden via environment variables)
 const CLEANUP_SCHEDULE_DAY = parseInt(process.env.CLEANUP_SCHEDULE_DAY || '1', 10); // 1st of month
@@ -42,7 +42,7 @@ async function getScreenshotsForCleanup(limit = BATCH_SIZE, offset = 0) {
   try {
     const supabase = getClient();
     const cutoffDate = getCutoffDate();
-    const cutoffDateString = toLocalISOString(cutoffDate);
+    const cutoffDateString = toUTCISOString(cutoffDate);
 
     logger.info(`[Cleanup] Fetching screenshots older than ${cutoffDate.toLocaleDateString()}`);
 
@@ -143,7 +143,7 @@ async function markFilesAsDeleted(screenshotId) {
         storage_url: '',
         thumbnail_url: '',
         status: 'deleted',
-        deleted_at: toLocalISOString(new Date())
+        deleted_at: toUTCISOString(new Date())
       })
       .eq('id', screenshotId);
 

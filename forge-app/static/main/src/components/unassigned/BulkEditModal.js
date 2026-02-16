@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { invoke } from '@forge/bridge';
+import { formatLocalDate, parseUTC } from '../tabs/time-analytics/dateUtils';
 import './BulkEditModal.css';
 
 function BulkEditModal({ isOpen, userIssues, onClose, onSuccess }) {
-  const [bulkEditDate, setBulkEditDate] = useState(new Date().toISOString().split('T')[0]);
+  const [bulkEditDate, setBulkEditDate] = useState(formatLocalDate(new Date()));
   const [bulkEditStartTime, setBulkEditStartTime] = useState('09:00');
   const [bulkEditEndTime, setBulkEditEndTime] = useState('17:00');
   const [bulkEditTargetIssue, setBulkEditTargetIssue] = useState('');
@@ -15,7 +16,8 @@ function BulkEditModal({ isOpen, userIssues, onClose, onSuccess }) {
 
   const formatTimeForDisplay = (timestamp) => {
     if (!timestamp) return '';
-    const date = new Date(timestamp);
+    const date = parseUTC(timestamp);
+    if (!date) return '';
     return date.toLocaleTimeString('en-US', {
       hour: 'numeric',
       minute: '2-digit',
@@ -25,7 +27,7 @@ function BulkEditModal({ isOpen, userIssues, onClose, onSuccess }) {
 
   const handleClose = () => {
     // Reset state on close
-    setBulkEditDate(new Date().toISOString().split('T')[0]);
+    setBulkEditDate(formatLocalDate(new Date()));
     setBulkEditStartTime('09:00');
     setBulkEditEndTime('17:00');
     setBulkEditTargetIssue('');
@@ -150,7 +152,7 @@ function BulkEditModal({ isOpen, userIssues, onClose, onSuccess }) {
                       type="date"
                       value={bulkEditDate}
                       onChange={(e) => setBulkEditDate(e.target.value)}
-                      max={new Date().toISOString().split('T')[0]}
+                      max={formatLocalDate(new Date())}
                     />
                   </div>
                   <div className="time-input-group">

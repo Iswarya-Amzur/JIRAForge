@@ -5,7 +5,7 @@
 
 const { getClient } = require('./supabase-client');
 const logger = require('../../utils/logger');
-const { toLocalISOString } = require('../../utils/datetime');
+const { toUTCISOString } = require('../../utils/datetime');
 
 /**
  * Get all users who have UNGROUPED unassigned activities (grouped by user and organization)
@@ -152,7 +152,7 @@ async function getUnassignedActivities(userId, organizationId) {
 async function getRecentGroups(userId, hoursAgo = 24, organizationId = null) {
   try {
     const supabase = getClient();
-    const cutoffTime = toLocalISOString(new Date(Date.now() - hoursAgo * 60 * 60 * 1000));
+    const cutoffTime = toUTCISOString(new Date(Date.now() - hoursAgo * 60 * 60 * 1000));
 
     let query = supabase
       .from('unassigned_work_groups')

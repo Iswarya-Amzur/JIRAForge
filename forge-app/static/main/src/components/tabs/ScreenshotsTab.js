@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 import { formatTime } from '../../utils';
+import { parseUTC } from '../tabs/time-analytics/dateUtils';
 import './ScreenshotsTab.css';
 
 function ScreenshotsTab() {
@@ -225,7 +226,7 @@ function ScreenshotsTab() {
                       </p>
                     )}
                     <p className="timestamp">
-                      <strong>Time:</strong> {new Date(screenshot.timestamp).toLocaleString('en-US', {
+                      <strong>Time:</strong> {(parseUTC(screenshot.timestamp) || new Date(screenshot.timestamp)).toLocaleString('en-US', {
                         month: 'short',
                         day: 'numeric',
                         year: 'numeric',
@@ -262,7 +263,7 @@ function ScreenshotsTab() {
               <span>{screenshots[galleryIndex]?.window_title || 'Unknown Window'}</span>
               <span> | </span>
               <span>{screenshots[galleryIndex]?.timestamp
-                ? new Date(screenshots[galleryIndex].timestamp).toLocaleString()
+                ? (parseUTC(screenshots[galleryIndex].timestamp) || new Date(screenshots[galleryIndex].timestamp)).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })
                 : 'Unknown'}</span>
               <span> | </span>
               <span>{galleryIndex + 1} of {screenshots.length}</span>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { invoke } from '@forge/bridge';
 import { formatTime } from '../../utils';
+import { parseUTC } from '../tabs/time-analytics/dateUtils';
 import './GroupAccordion.css';
 
 function GroupAccordion({
@@ -19,7 +20,8 @@ function GroupAccordion({
   const [loadingDetails, setLoadingDetails] = useState({});
 
   const formatTimeOfDay = (dateString) => {
-    const date = new Date(dateString);
+    const date = parseUTC(dateString);
+    if (!date) return '';
     return date.toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
@@ -28,7 +30,8 @@ function GroupAccordion({
   };
 
   const formatDate = (dateString) => {
-    const date = new Date(dateString);
+    // Date group labels are YYYY-MM-DD strings representing local calendar dates
+    const date = new Date(dateString + 'T00:00:00');
     return date.toLocaleDateString('en-US', {
       weekday: 'short',
       month: 'short',
@@ -44,8 +47,9 @@ function GroupAccordion({
       return session.durationSeconds;
     }
     // Fallback: calculate from time span (less accurate for merged sessions)
-    const start = new Date(session.startTime);
-    const end = new Date(session.endTime);
+    const start = parseUTC(session.startTime);
+    const end = parseUTC(session.endTime);
+    if (!start || !end) return 0;
     return Math.round((end - start) / 1000);
   };
 

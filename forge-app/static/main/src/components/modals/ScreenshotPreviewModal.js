@@ -1,5 +1,6 @@
 import React from 'react';
 import { formatTime } from '../../utils';
+import { parseUTC } from '../tabs/time-analytics/dateUtils';
 
 /**
  * Screenshot Preview Modal Component
@@ -64,7 +65,7 @@ function ScreenshotPreviewModal({
                   <p className="screenshot-time">
                     <strong>Time:</strong>{' '}
                     {currentScreenshot?.timestamp
-                      ? new Date(currentScreenshot.timestamp).toLocaleString()
+                      ? (parseUTC(currentScreenshot.timestamp) || new Date(currentScreenshot.timestamp)).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })
                       : 'Unknown'}
                   </p>
                 </div>
@@ -87,8 +88,8 @@ function ScreenshotPreviewModal({
         </div>
         <div className="modal-footer screenshot-footer">
           <p className="session-summary">
-            Session: {new Date(previewSession.session.startTime).toLocaleTimeString()} -{' '}
-            {new Date(previewSession.session.endTime).toLocaleTimeString()}
+            Session: {(parseUTC(previewSession.session.startTime) || new Date(previewSession.session.startTime)).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })} -{' '}
+            {(parseUTC(previewSession.session.endTime) || new Date(previewSession.session.endTime)).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
             {' | '}Duration: {formatTime(previewSession.session.duration)}
           </p>
         </div>

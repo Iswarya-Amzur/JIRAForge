@@ -5,7 +5,7 @@
 
 const { getClient, isNetworkError } = require('./supabase-client');
 const logger = require('../../utils/logger');
-const { getLocalISOString, toLocalISOString } = require('../../utils/datetime');
+const { getUTCISOString, toUTCISOString } = require('../../utils/datetime');
 
 /**
  * Update screenshot status
@@ -19,8 +19,8 @@ async function updateScreenshotStatus(screenshotId, status, errorMessage = null)
     const supabase = getClient();
     const updateData = {
       status,
-      analyzed_at: status === 'analyzed' ? getLocalISOString() : null,
-      updated_at: getLocalISOString()
+      analyzed_at: status === 'analyzed' ? getUTCISOString() : null,
+      updated_at: getUTCISOString()
     };
 
     if (errorMessage) {
@@ -68,7 +68,7 @@ async function updateScreenshotDuration(screenshotId, { duration_seconds, start_
     const updateData = {
       duration_seconds,
       start_time,
-      end_time: end_time || getLocalISOString()
+      end_time: end_time || getUTCISOString()
     };
 
     const { error } = await supabase
@@ -111,7 +111,7 @@ async function getPendingScreenshots(limit = 10) {
 
     // Fetch failed screenshots for retry (only those with retry_count < MAX_RETRIES)
     // Also only retry screenshots that failed more than 1 minute ago (backoff)
-    const oneMinuteAgo = toLocalISOString(new Date(Date.now() - 60 * 1000));
+    const oneMinuteAgo = toUTCISOString(new Date(Date.now() - 60 * 1000));
     const { data: failedData, error: failedError } = await supabase
       .from('screenshots')
       .select('*')
@@ -162,7 +162,7 @@ async function clearStorageUrls(screenshotId) {
         storage_url: '',
         thumbnail_url: '',
         storage_path: '',
-        updated_at: getLocalISOString()
+        updated_at: getUTCISOString()
       })
       .eq('id', screenshotId);
 
@@ -191,7 +191,7 @@ async function claimScreenshotForProcessing(screenshotId) {
       .from('screenshots')
       .update({
         status: 'processing',
-        updated_at: getLocalISOString()
+        updated_at: getUTCISOString()
       })
       .eq('id', screenshotId)
       .in('status', ['pending', 'failed'])
@@ -251,13 +251,13 @@ async function getScreenshotById(screenshotId) {
 async function resetStuckProcessingScreenshots(timeoutMinutes = 10) {
   try {
     const supabase = getClient();
-    const cutoffTime = toLocalISOString(new Date(Date.now() - timeoutMinutes * 60 * 1000));
+    const cutoffTime = toUTCISOString(new Date(Date.now() - timeoutMinutes * 60 * 1000));
 
     const { data, error } = await supabase
       .from('screenshots')
       .update({
         status: 'pending',
-        updated_at: getLocalISOString()
+        updated_at: getUTCISOString()
       })
       .eq('status', 'processing')
       .lt('updated_at', cutoffTime)
