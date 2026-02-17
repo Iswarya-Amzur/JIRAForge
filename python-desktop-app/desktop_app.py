@@ -1275,18 +1275,42 @@ class AtlassianAuthManager:
 
         # Exchange code for tokens via AI Server (client_secret is on server only)
         # Use (connect, read) timeout tuple - the AI server itself calls Atlassian's
-        # token endpoint which can take up to 30s, so we need a longer read timeout
+        # token endpoint which can take up to 30s, so we need a longer read timeout.
+        # Retry up to 3 times since the server may be cold-starting or temporarily slow.
         print("[INFO] Exchanging OAuth code via AI Server (with PKCE)...")
-        response = requests.post(
-            f"{self.ai_server_url}/api/auth/atlassian/callback",
-            json={
-                'code': code,
-                'redirect_uri': self.redirect_uri,
-                'code_verifier': code_verifier  # PKCE: Send verifier to AI server
-            },
-            headers={'Content-Type': 'application/json'},
-            timeout=(10, 60)
-        )
+        payload = {
+            'code': code,
+            'redirect_uri': self.redirect_uri,
+            'code_verifier': code_verifier  # PKCE: Send verifier to AI server
+        }
+        headers = {'Content-Type': 'application/json'}
+
+        response = None
+        last_error = None
+        for attempt in range(3):
+            try:
+                response = requests.post(
+                    f"{self.ai_server_url}/api/auth/atlassian/callback",
+                    json=payload,
+                    headers=headers,
+                    timeout=(30, 90)  # Generous timeouts: 30s connect, 90s read
+                )
+                break  # Success — exit retry loop
+            except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as e:
+                last_error = e
+                if attempt < 2:
+                    wait = (attempt + 1) * 5
+                    print(f"[WARN] Token exchange attempt {attempt + 1} failed ({type(e).__name__}), retrying in {wait}s...")
+                    time.sleep(wait)
+                else:
+                    print(f"[ERROR] Token exchange failed after 3 attempts: {e}")
+            except requests.exceptions.Timeout as e:
+                last_error = e
+                print(f"[ERROR] Token exchange timed out (read): {e}")
+                break  # Read timeout means server received the request; don't resend to avoid double-exchange
+
+        if response is None:
+            raise Exception(f"Could not reach the authentication server. Please check your internet connection and try again. ({last_error})")
 
         if response.status_code != 200:
             error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
@@ -1402,8 +1426,15 @@ class AtlassianAuthManager:
             return False
 
     def is_authenticated(self):
-        """Check if user is authenticated"""
-        return bool(self.tokens.get('access_token'))
+        """Check if user is authenticated (has a valid or refreshable access token)"""
+        if not self.tokens.get('access_token'):
+            return False
+        # If we have expiry info and the token is expired, try to refresh it now
+        expires_at = self.tokens.get('expires_at', 0)
+        if expires_at and time.time() > expires_at:
+            print("[INFO] Access token expired, attempting refresh...")
+            return self.refresh_access_token()
+        return True
 
     def get_supabase_token(self):
         """Get Supabase JWT from AI Server using Atlassian token"""
@@ -3234,7 +3265,19 @@ class TimeTracker:
             except Exception as e:
                 print(f"[ERROR] Auth callback failed: {e}")
                 traceback.print_exc()
-                return f"Authentication failed: {str(e)}", 500
+                # Show a user-friendly error page with a retry button
+                error_msg = str(e)
+                is_timeout = 'timeout' in error_msg.lower() or 'connect' in error_msg.lower()
+                retry_hint = "The server may be temporarily slow. Please try again." if is_timeout else "Please try again."
+                return f"""<!DOCTYPE html><html><head><title>Authentication Failed</title>
+                    <style>body{{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f4f5f7}}
+                    .card{{background:#fff;border-radius:8px;padding:40px;max-width:500px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.1)}}
+                    h2{{color:#de350b;margin-bottom:8px}}p{{color:#5e6c84;line-height:1.5}}
+                    .btn{{display:inline-block;margin-top:20px;padding:10px 24px;background:#0052CC;color:#fff;border-radius:4px;text-decoration:none;font-weight:500}}
+                    .btn:hover{{background:#0747a6}}.detail{{font-size:12px;color:#97a0af;margin-top:16px;word-break:break-all}}</style></head>
+                    <body><div class="card"><h2>Authentication Failed</h2><p>{retry_hint}</p>
+                    <a class="btn" href="/login">Try Again</a>
+                    <p class="detail">{error_msg}</p></div></body></html>""", 500
         
         @self.app.route('/success')
         def success():
@@ -5783,10 +5826,12 @@ class TimeTracker:
         return result
 
     def start_sync_thread(self):
-        """Start background thread for periodic offline sync and heartbeat"""
+        """Start background thread for periodic offline sync, heartbeat, and token refresh"""
         def sync_worker():
             heartbeat_counter = 0
             heartbeat_interval = 480  # Send heartbeat every 480 iterations (4 hours at 30s interval)
+            token_refresh_counter = 0
+            token_refresh_interval = 100  # Check token expiry every 100 iterations (~50 min at 30s)
 
             # Send initial heartbeat immediately on thread start
             if self.current_user_id and not self.current_user_id.startswith('anonymous_'):
@@ -5808,6 +5853,21 @@ class TimeTracker:
                         if heartbeat_counter >= heartbeat_interval:
                             self._send_heartbeat()
                             heartbeat_counter = 0
+
+                    # Proactive token refresh: check if access token is near expiry
+                    # and refresh it BEFORE it expires, so API calls never hit a 401.
+                    if self.auth_manager.is_authenticated():
+                        token_refresh_counter += 1
+                        if token_refresh_counter >= token_refresh_interval:
+                            token_refresh_counter = 0
+                            expires_at = self.auth_manager.tokens.get('expires_at', 0)
+                            # Refresh if token expires within the next 5 minutes
+                            if expires_at and time.time() > (expires_at - 300):
+                                print("[INFO] Access token nearing expiry, refreshing proactively...")
+                                if self.auth_manager.refresh_access_token():
+                                    print("[OK] Proactive token refresh successful")
+                                else:
+                                    print("[WARN] Proactive token refresh failed — will retry on next cycle")
 
                 except Exception as e:
                     print(f"[ERROR] Sync thread error: {e}")
@@ -6904,8 +6964,17 @@ class TimeTracker:
         # Check authentication
         if self.auth_manager.is_authenticated():
             if is_online:
-                # Online: try to get user info from Atlassian
-                user_info = self.auth_manager.get_user_info()
+                # Online: try to get user info from Atlassian (with retries)
+                user_info = None
+                for attempt in range(3):
+                    user_info = self.auth_manager.get_user_info()
+                    if user_info:
+                        break
+                    if attempt < 2:
+                        wait_secs = (attempt + 1) * 3
+                        print(f"[WARN] get_user_info attempt {attempt + 1} failed, retrying in {wait_secs}s...")
+                        time.sleep(wait_secs)
+
                 if user_info:
                     self.current_user = user_info
                     try:
@@ -6924,8 +6993,20 @@ class TimeTracker:
                     print(f"[OK] Welcome back, {user_info.get('email', 'User')}!")
                     self.add_admin_log('INFO', f"User logged in: {user_info.get('email', 'User')}")
                 else:
-                    print("[WARN] Failed to get user info, please re-authenticate")
-                    self.auth_manager.logout()
+                    # All retries failed — fall back to cached user info instead of destroying tokens.
+                    # Only logout if the server explicitly rejected the refresh token (handled inside refresh).
+                    # Network glitches, timeouts, and temporary server issues should NOT force re-login.
+                    print("[WARN] Could not verify user info after 3 attempts — falling back to cached data")
+                    cached_user = self._load_cached_user_info()
+                    if cached_user:
+                        self.current_user = cached_user
+                        self.current_user_id = cached_user.get('user_id')
+                        print(f"[OK] Using cached credentials for {cached_user.get('email', 'User')}")
+                        print("[INFO] Will retry authentication in the background")
+                    else:
+                        # No cache AND no server response — only NOW force re-auth
+                        print("[WARN] No cached credentials available, please re-authenticate")
+                        self.auth_manager.logout()
             else:
                 # Offline: try to use cached credentials
                 print("[INFO] Starting in OFFLINE MODE...")

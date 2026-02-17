@@ -45,6 +45,7 @@ function FeedbackModal({ isOpen, onClose }) {
   // Start polling when feedback is successfully submitted
   useEffect(() => {
     if (feedbackId && success) {
+      // eslint-disable-next-line no-use-before-define
       startStatusPolling();
     }
     return () => {
@@ -52,6 +53,10 @@ function FeedbackModal({ isOpen, onClose }) {
         clearInterval(pollTimerRef.current);
       }
     };
+    // startStatusPolling is intentionally omitted — it's a stable function that depends on
+    // feedbackId (already in deps). Including it would cause infinite re-renders since it's
+    // not wrapped in useCallback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feedbackId, success]);
 
   const resetForm = () => {
