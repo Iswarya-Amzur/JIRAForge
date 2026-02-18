@@ -2,11 +2,19 @@
  * Scheduled Worklog Sync
  * Runs on a Forge scheduled trigger to sync all users' tracked time to Jira worklogs.
  *
- * Uses api.asApp() since scheduled triggers have no user context.
- * Worklogs will appear as created by the app, not individual users.
+ * Uses api.asUser(accountId) (offline impersonation) so worklogs appear with each user's
+ * name (e.g. "Gayatri Alluri") instead of the app. Falls back to api.asApp() if
+ * atlassian_account_id is missing for a user.
  */
 
-import { createJiraWorklogAsApp, updateJiraWorklogAsApp, deleteJiraWorklogAsApp } from '../utils/jira.js';
+import {
+  createJiraWorklogAsUser,
+  createJiraWorklogAsApp,
+  updateJiraWorklogAsUser,
+  updateJiraWorklogAsApp,
+  deleteJiraWorklogAsUser,
+  deleteJiraWorklogAsApp
+} from '../utils/jira.js';
 import { getSupabaseConfig, supabaseRequest } from '../utils/supabase.js';
 import { formatJiraDate } from '../utils/formatters.js';
 
@@ -174,6 +182,16 @@ async function syncOrganization(supabaseConfig, organizationId) {
  * Sync a single user's issues to Jira worklogs.
  */
 async function syncUserIssues(supabaseConfig, organizationId, userId, entries) {
+  // Fetch user's Atlassian account ID for worklog author attribution (user name instead of app name)
+  const userRows = await supabaseRequest(
+    supabaseConfig,
+    `users?id=eq.${userId}&select=atlassian_account_id&limit=1`
+  );
+  const accountId = userRows?.[0]?.atlassian_account_id || null;
+  if (!accountId) {
+    console.warn(`[ScheduledSync] No atlassian_account_id for user ${userId} — worklogs will show as app`);
+  }
+
   // Fetch existing mappings for this user
   const issueKeys = entries.map(e => e.issueKey);
   const keysList = issueKeys.join(',');
@@ -193,7 +211,7 @@ async function syncUserIssues(supabaseConfig, organizationId, userId, entries) {
   for (const entry of entries) {
     try {
       const mapping = mappingByKey[entry.issueKey];
-      const didSync = await syncSingleEntry(supabaseConfig, organizationId, userId, entry, mapping);
+      const didSync = await syncSingleEntry(supabaseConfig, organizationId, userId, accountId, entry, mapping);
       if (didSync) synced++;
     } catch (err) {
       console.error(`[ScheduledSync] Error syncing ${entry.issueKey} for user ${userId}:`, err.message);
@@ -206,9 +224,10 @@ async function syncUserIssues(supabaseConfig, organizationId, userId, entries) {
 
 /**
  * Sync a single user+issue entry to Jira.
+ * Uses user impersonation when accountId is available so worklogs show the user's name.
  * @returns {boolean} true if an actual Jira API call was made
  */
-async function syncSingleEntry(supabaseConfig, organizationId, userId, entry, existingMapping) {
+async function syncSingleEntry(supabaseConfig, organizationId, userId, accountId, entry, existingMapping) {
   const { issueKey, timeTracked, lastWorkedOn } = entry;
 
   if (existingMapping) {
@@ -216,8 +235,10 @@ async function syncSingleEntry(supabaseConfig, organizationId, userId, entry, ex
       return false; // No change
     }
 
-    // Try to update existing worklog
-    const updateResponse = await updateJiraWorklogAsApp(issueKey, existingMapping.jira_worklog_id, timeTracked);
+    // Try to update existing worklog (as user when possible, else as app)
+    const updateResponse = accountId
+      ? await updateJiraWorklogAsUser(accountId, issueKey, existingMapping.jira_worklog_id, timeTracked)
+      : await updateJiraWorklogAsApp(issueKey, existingMapping.jira_worklog_id, timeTracked);
 
     if (updateResponse.status === 200) {
       await supabaseRequest(
@@ -245,7 +266,9 @@ async function syncSingleEntry(supabaseConfig, organizationId, userId, entry, ex
   // Create new worklog — format date for Jira (requires yyyy-MM-dd'T'HH:mm:ss.SSS+0000)
   // Uses formatStartedForJira to format the UTC timestamp from the DB into Jira's expected format
   const startedAt = formatStartedForJira(lastWorkedOn);
-  const worklogResult = await createJiraWorklogAsApp(issueKey, timeTracked, startedAt);
+  const worklogResult = accountId
+    ? await createJiraWorklogAsUser(accountId, issueKey, timeTracked, startedAt)
+    : await createJiraWorklogAsApp(issueKey, timeTracked, startedAt);
 
   if (worklogResult && worklogResult.id) {
     const now = new Date().toISOString();
@@ -306,12 +329,25 @@ async function cleanupOrphanedWorklogs(supabaseConfig, organizationId, activeEnt
     return;
   }
 
+  // Build user_id -> atlassian_account_id map for orphaned users
+  const userIds = [...new Set(orphaned.map(m => m.user_id))];
+  const userRows = await supabaseRequest(
+    supabaseConfig,
+    `users?id=in.(${userIds.join(',')})&select=id,atlassian_account_id`
+  );
+  const accountIdByUserId = {};
+  if (userRows && Array.isArray(userRows)) {
+    userRows.forEach(u => { accountIdByUserId[u.id] = u.atlassian_account_id; });
+  }
+
   console.log(`[ScheduledSync] Found ${orphaned.length} orphaned worklog mappings to clean up`);
 
   for (const mapping of orphaned) {
     try {
-      // Delete the Jira worklog (ignore 404 — already deleted)
-      const deleteResponse = await deleteJiraWorklogAsApp(mapping.issue_key, mapping.jira_worklog_id);
+      const accountId = accountIdByUserId[mapping.user_id];
+      const deleteResponse = accountId
+        ? await deleteJiraWorklogAsUser(accountId, mapping.issue_key, mapping.jira_worklog_id)
+        : await deleteJiraWorklogAsApp(mapping.issue_key, mapping.jira_worklog_id);
       if (deleteResponse.status !== 204 && deleteResponse.status !== 404) {
         console.warn(`[ScheduledSync] Failed to delete Jira worklog ${mapping.jira_worklog_id} for ${mapping.issue_key}: HTTP ${deleteResponse.status}`);
       }
