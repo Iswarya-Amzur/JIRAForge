@@ -36,6 +36,9 @@ from dotenv import load_dotenv
 import sqlite3
 import socket
 
+# OCR for text extraction
+from ocr import extract_text_from_image
+
 # Secure credential storage
 try:
     import keyring
@@ -5314,6 +5317,27 @@ class TimeTracker:
             thumbnail.save(thumb_buffer, format='JPEG', quality=70)
             thumb_bytes = thumb_buffer.getvalue()
             
+            # Extract text using OCR (three-layer fallback: PaddleOCR -> Tesseract -> Metadata)
+            print("[OCR] Extracting text from screenshot...")
+            ocr_result = extract_text_from_image(
+                screenshot, 
+                window_title=window_info['title'], 
+                app_name=window_info['app'],
+                use_preprocessing=True
+            )
+            
+            extracted_text = ocr_result.get('text', '')
+            ocr_confidence = ocr_result.get('confidence', 0.0)
+            ocr_method = ocr_result.get('method', 'unknown')
+            ocr_line_count = ocr_result.get('line_count', 0)
+            
+            if ocr_result.get('success'):
+                print(f"[OCR] ✓ Text extracted via {ocr_method} (confidence: {ocr_confidence:.2f}, lines: {ocr_line_count})")
+                if extracted_text:
+                    print(f"[OCR] Preview: {extracted_text[:100]}...")
+            else:
+                print(f"[OCR] ✗ Failed - will use metadata analysis (title: {window_info['title']}, app: {window_info['app']})")
+            
             # Generate filenames
             timestamp = datetime.now(timezone.utc)
             filename = f"screenshot_{int(timestamp.timestamp())}.png"
@@ -5395,6 +5419,11 @@ class TimeTracker:
                 'duration_seconds': duration_seconds,
                 'project_key': project_key,  # Project from user's assigned issues
                 'user_assigned_issues': self.user_issues,
+                # OCR extracted text
+                'extracted_text': extracted_text,
+                'ocr_confidence': ocr_confidence,
+                'ocr_method': ocr_method,
+                'ocr_line_count': ocr_line_count,
                 # Timezone support for correct date grouping
                 'user_timezone': get_local_timezone_name(),  # e.g., 'Asia/Kolkata'
                 'work_date': datetime.now().date().isoformat(),   # Local date: 'YYYY-MM-DD'
