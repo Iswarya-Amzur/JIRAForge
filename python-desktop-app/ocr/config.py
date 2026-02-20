@@ -145,7 +145,25 @@ class OCRConfig:
         """Load configuration from JSON file"""
         with open(filepath, 'r') as f:
             data = json.load(f)
+        return cls.from_dict(data)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'OCRConfig':
+        """
+        Load configuration from dictionary (e.g., from AI server).
         
+        Args:
+            data: Configuration dictionary with keys matching OCRConfig fields
+        
+        Example:
+            data = {
+                'primary_engine': 'paddle',
+                'fallback_engines': ['tesseract'],
+                'engines': {
+                    'paddle': {'min_confidence': 0.5, 'use_gpu': False, ...}
+                }
+            }
+        """
         config = cls()
         config.primary_engine = data.get('primary_engine', 'paddle')
         config.fallback_engines = data.get('fallback_engines', ['tesseract'])

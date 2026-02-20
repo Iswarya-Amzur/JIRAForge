@@ -203,6 +203,9 @@ RUNTIME_SUPABASE_CONFIG = {
     'SUPABASE_SERVICE_ROLE_KEY': None
 }
 
+# Runtime OCR config (fetched from AI server after authentication)
+RUNTIME_OCR_CONFIG = {}
+
 def get_env_var(key, default=None):
     """Get environment variable with fallback to embedded/runtime values"""
     # First try environment variable (for development with .env)
@@ -212,6 +215,9 @@ def get_env_var(key, default=None):
     # Then try runtime Supabase config (fetched from AI server)
     if key in RUNTIME_SUPABASE_CONFIG and RUNTIME_SUPABASE_CONFIG[key]:
         return RUNTIME_SUPABASE_CONFIG[key]
+    # Then try runtime OCR config (fetched from AI server)
+    if key in RUNTIME_OCR_CONFIG and RUNTIME_OCR_CONFIG[key]:
+        return RUNTIME_OCR_CONFIG[key]
     # Then try embedded config (for production builds)
     if key in EMBEDDED_CONFIG:
         return EMBEDDED_CONFIG[key]
@@ -225,6 +231,54 @@ def set_runtime_supabase_config(url, anon_key, service_role_key):
     RUNTIME_SUPABASE_CONFIG['SUPABASE_ANON_KEY'] = anon_key
     RUNTIME_SUPABASE_CONFIG['SUPABASE_SERVICE_ROLE_KEY'] = service_role_key
     print(f"[OK] Supabase config loaded from AI server")
+
+def set_runtime_ocr_config(config_dict):
+    """
+    Set OCR config fetched from AI server.
+    
+    Converts the nested config dict from AI server into flat OCR_* environment-style keys.
+    This allows OCRConfig.from_env() to work seamlessly with runtime config.
+    
+    Args:
+        config_dict: Dict from AI server with structure:
+            {
+                'primary_engine': 'paddle',
+                'fallback_engines': ['tesseract'],
+                'use_preprocessing': True,
+                'engines': {'paddle': {'min_confidence': 0.5, ...}, ...}
+            }
+    """
+    global RUNTIME_OCR_CONFIG
+    RUNTIME_OCR_CONFIG = {}
+    
+    # Set primary engine
+    RUNTIME_OCR_CONFIG['OCR_PRIMARY_ENGINE'] = config_dict.get('primary_engine', 'paddle')
+    
+    # Set fallback engines as comma-separated string
+    fallbacks = config_dict.get('fallback_engines', ['tesseract'])
+    RUNTIME_OCR_CONFIG['OCR_FALLBACK_ENGINES'] = ','.join(fallbacks)
+    
+    # Set global settings
+    RUNTIME_OCR_CONFIG['OCR_USE_PREPROCESSING'] = str(config_dict.get('use_preprocessing', True)).lower()
+    RUNTIME_OCR_CONFIG['OCR_MAX_IMAGE_DIMENSION'] = str(config_dict.get('max_image_dimension', 4096))
+    RUNTIME_OCR_CONFIG['OCR_PREPROCESSING_TARGET_DPI'] = str(config_dict.get('preprocessing_target_dpi', 300))
+    
+    # Set per-engine configurations
+    engines = config_dict.get('engines', {})
+    for engine_name, engine_config in engines.items():
+        prefix = f'OCR_{engine_name.upper()}_'
+        RUNTIME_OCR_CONFIG[f'{prefix}ENABLED'] = str(engine_config.get('enabled', True)).lower()
+        RUNTIME_OCR_CONFIG[f'{prefix}MIN_CONFIDENCE'] = str(engine_config.get('min_confidence', 0.5))
+        RUNTIME_OCR_CONFIG[f'{prefix}USE_GPU'] = str(engine_config.get('use_gpu', False)).lower()
+        RUNTIME_OCR_CONFIG[f'{prefix}LANGUAGE'] = engine_config.get('language', 'en')
+        
+        # Set extra params
+        extra_params = engine_config.get('extra_params', {})
+        for param_name, param_value in extra_params.items():
+            RUNTIME_OCR_CONFIG[f'{prefix}{param_name.upper()}'] = str(param_value)
+    
+    print(f"[OK] OCR config loaded from AI server (engines: {', '.join(engines.keys())})")
+
 
 # ============================================================================
 # VERSION CHECKING UTILITIES
@@ -1553,6 +1607,60 @@ class AtlassianAuthManager:
 
         except Exception as e:
             print(f"[ERROR] Failed to fetch Supabase config: {e}")
+            return False
+    
+    def get_ocr_config(self):
+        """
+        Fetch OCR configuration from AI Server (requires valid Atlassian token).
+        
+        This eliminates the need for OCR configuration in .env file.
+        All OCR settings are centralized on the AI server for easy updates.
+        
+        Returns:
+            bool: True if config fetched successfully, False otherwise
+        """
+        if not self.access_token:
+            print("[ERROR] No valid Atlassian token - cannot fetch OCR config")
+            return False
+        
+        ai_server_url = get_env_var('AI_SERVER_URL', 'http://216.48.190.255:3001')
+        access_token = self.access_token
+        
+        try:
+            print("[INFO] Fetching OCR config from AI Server...")
+            
+            response = requests.post(
+                f"{ai_server_url}/api/auth/ocr-config",
+                json={'atlassian_token': access_token},
+                timeout=(10, 60)
+            )
+            
+            if response.status_code == 401:
+                # Token might be expired, try refreshing
+                print("[WARN] Atlassian token rejected, attempting refresh...")
+                if self.refresh_access_token():
+                    return self.get_ocr_config()
+                else:
+                    print("[ERROR] Token refresh failed")
+                    return False
+            
+            if response.status_code != 200:
+                error = response.json().get('error', 'Unknown error')
+                print(f"[ERROR] Failed to get OCR config: {error}")
+                return False
+            
+            result = response.json()
+            if not result.get('success'):
+                print(f"[ERROR] Failed to get OCR config: {result.get('error', 'Unknown error')}")
+                return False
+            
+            # Store the OCR config in runtime config
+            ocr_config = result.get('config', {})
+            set_runtime_ocr_config(ocr_config)
+            return True
+        
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch OCR config: {e}")
             return False
 
     def logout(self):
@@ -3571,6 +3679,12 @@ class TimeTracker:
         if not self.auth_manager.get_supabase_config():
             print("[ERROR] Failed to get Supabase config from AI server")
             return False
+        
+        # Fetch OCR config from AI server (requires valid Atlassian token)
+        print("[INFO] Fetching OCR configuration from AI server...")
+        if not self.auth_manager.get_ocr_config():
+            print("[WARN] Failed to get OCR config from AI server, using defaults")
+            # OCR config is not critical - continue with defaults
 
         # Now initialize Supabase clients with runtime config
         try:

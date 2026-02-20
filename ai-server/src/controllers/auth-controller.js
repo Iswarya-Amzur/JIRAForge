@@ -385,6 +385,114 @@ exports.getSupabaseConfig = async (req, res) => {
 };
 
 /**
+ * Get OCR configuration for authenticated users
+ * Desktop app calls this after Atlassian login to get OCR settings
+ *
+ * POST /api/auth/ocr-config
+ * Body: { atlassian_token: string }
+ */
+exports.getOcrConfig = async (req, res) => {
+  try {
+    const { atlassian_token } = req.body;
+
+    if (!atlassian_token) {
+      return res.status(400).json({
+        success: false,
+        error: 'Atlassian token is required'
+      });
+    }
+
+    // Verify the Atlassian token first
+    try {
+      await axios.get(ATLASSIAN_ME_URL, {
+        headers: {
+          'Authorization': `Bearer ${atlassian_token}`,
+          'Accept': 'application/json'
+        },
+        timeout: 10000
+      });
+    } catch (error) {
+      logger.warn('[Auth] Invalid Atlassian token for OCR config:', error.response?.status);
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid or expired Atlassian token'
+      });
+    }
+
+    // Build OCR configuration from environment variables
+    // This centralizes all OCR configuration in the AI server
+    const ocrConfig = {
+      // Primary and fallback engines
+      primary_engine: process.env.OCR_PRIMARY_ENGINE || 'paddle',
+      fallback_engines: (process.env.OCR_FALLBACK_ENGINES || 'tesseract').split(',').map(e => e.trim()),
+      
+      // Global preprocessing settings
+      use_preprocessing: (process.env.OCR_USE_PREPROCESSING || 'true').toLowerCase() === 'true',
+      max_image_dimension: parseInt(process.env.OCR_MAX_IMAGE_DIMENSION || '4096', 10),
+      preprocessing_target_dpi: parseInt(process.env.OCR_PREPROCESSING_TARGET_DPI || '300', 10),
+      
+      // Engine-specific configurations (dynamically discovered from env)
+      engines: {}
+    };
+
+    // Discover all OCR engine configurations from environment
+    const discoveredEngines = new Set();
+    discoveredEngines.add(ocrConfig.primary_engine);
+    ocrConfig.fallback_engines.forEach(e => discoveredEngines.add(e));
+
+    // Scan environment for OCR_<ENGINE>_* patterns
+    Object.keys(process.env).forEach(key => {
+      if (key.startsWith('OCR_') && key.includes('_', 4)) {
+        const parts = key.split('_');
+        if (parts.length >= 3 && !['PRIMARY', 'FALLBACK', 'USE', 'MAX', 'PREPROCESSING'].includes(parts[1])) {
+          discoveredEngines.add(parts[1].toLowerCase());
+        }
+      }
+    });
+
+    // Build configuration for each discovered engine
+    discoveredEngines.forEach(engineName => {
+      const prefix = `OCR_${engineName.toUpperCase()}_`;
+      const engineConfig = {
+        name: engineName,
+        enabled: (process.env[`${prefix}ENABLED`] || 'true').toLowerCase() === 'true',
+        min_confidence: parseFloat(process.env[`${prefix}MIN_CONFIDENCE`] || '0.5'),
+        use_gpu: (process.env[`${prefix}USE_GPU`] || 'false').toLowerCase() === 'true',
+        language: process.env[`${prefix}LANGUAGE`] || 'en',
+        extra_params: {}
+      };
+
+      // Capture any extra custom parameters
+      const standardKeys = ['ENABLED', 'MIN_CONFIDENCE', 'USE_GPU', 'LANGUAGE'];
+      Object.keys(process.env).forEach(key => {
+        if (key.startsWith(prefix)) {
+          const paramName = key.substring(prefix.length).toLowerCase();
+          if (!standardKeys.includes(paramName.toUpperCase())) {
+            engineConfig.extra_params[paramName] = process.env[key];
+          }
+        }
+      });
+
+      ocrConfig.engines[engineName] = engineConfig;
+    });
+
+    logger.info(`[Auth] Providing OCR config to authenticated user (engines: ${Array.from(discoveredEngines).join(', ')})`);
+
+    res.json({
+      success: true,
+      config: ocrConfig
+    });
+
+  } catch (error) {
+    logger.error('[Auth] OCR config error:', error);
+    res.status(500).json({
+      success: false,
+      error: `Failed to get OCR config: ${error.message}`
+    });
+  }
+};
+
+/**
  * Verify Atlassian token and return user info
  * Utility endpoint for desktop app to validate tokens
  *

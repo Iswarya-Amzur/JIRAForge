@@ -126,6 +126,9 @@ app.post('/api/auth/verify', authLimiter, authController.verifyToken);
 // Get Supabase configuration (returns credentials after verifying Atlassian token)
 app.post('/api/auth/supabase-config', authLimiter, authController.getSupabaseConfig);
 
+// Get OCR configuration (returns OCR settings after verifying Atlassian token)
+app.post('/api/auth/ocr-config', authLimiter, authController.getOcrConfig);
+
 // =============================================================================
 // FEEDBACK ROUTES (Session-authenticated via feedback session store)
 // Desktop app creates a session, then opens the browser to the feedback form
