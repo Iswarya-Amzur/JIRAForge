@@ -15,6 +15,7 @@ import { registerUserResolvers } from './resolvers/userResolvers.js';
 import { registerUnassignedWorkResolvers } from './resolvers/unassignedWorkResolvers.js';
 import { registerDiagnosticResolvers } from './resolvers/diagnosticResolvers.js';
 import { registerFeedbackResolvers } from './resolvers/feedbackResolvers.js';
+import { registerClassificationResolvers } from './resolvers/classificationResolvers.js';
 import { runScheduledWorklogSync } from './services/scheduledWorklogSync.js';
 
 // Create resolver instance
@@ -32,6 +33,7 @@ registerUserResolvers(resolver);
 registerUnassignedWorkResolvers(resolver);
 registerDiagnosticResolvers(resolver);
 registerFeedbackResolvers(resolver);
+registerClassificationResolvers(resolver);
 
 // Export handler for Forge
 export const handler = resolver.getDefinitions();

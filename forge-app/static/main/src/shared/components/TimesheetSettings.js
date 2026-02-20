@@ -2,48 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 import './TimesheetSettings.css';
 
-// Common applications for quick selection
-// Includes both friendly names and common exe names for better matching
-const COMMON_WORK_APPS = [
-  { name: 'VS Code', value: 'code' },  // Matches Code.exe
-  { name: 'Cursor IDE', value: 'cursor' },  // Matches Cursor.exe
-  { name: 'GitHub', value: 'github' },
-  { name: 'GitLab', value: 'gitlab' },
-  { name: 'JIRA', value: 'jira' },
-  { name: 'Confluence', value: 'confluence' },
-  { name: 'Slack', value: 'slack' },
-  { name: 'Microsoft Teams', value: 'teams' },
-  { name: 'Zoom', value: 'zoom' },
-  { name: 'Chrome', value: 'chrome' },  // Matches chrome.exe
-  { name: 'Firefox', value: 'firefox' },
-  { name: 'Edge', value: 'msedge' },  // Matches msedge.exe
-  { name: 'IntelliJ IDEA', value: 'intellij' },
-  { name: 'Postman', value: 'postman' },
-  { name: 'Figma', value: 'figma' },
-  { name: 'Notion', value: 'notion' },
-  { name: 'Terminal', value: 'terminal' },
-  { name: 'PowerShell', value: 'powershell' }
-];
-
-const COMMON_NON_WORK_APPS = [
-  { name: 'Netflix', value: 'netflix' },
-  { name: 'Amazon Prime Video', value: 'primevideo' },
-  { name: 'YouTube', value: 'youtube' },
-  { name: 'Facebook', value: 'facebook' },
-  { name: 'Instagram', value: 'instagram' },
-  { name: 'Twitter', value: 'twitter' },
-  { name: 'TikTok', value: 'tiktok' },
-  { name: 'Spotify', value: 'spotify' },
-  { name: 'WhatsApp', value: 'whatsapp' },
-  { name: 'Telegram', value: 'telegram' },
-  { name: 'Discord', value: 'discord' },
-  { name: 'Steam', value: 'steam' },
-  { name: 'Epic Games', value: 'epicgames' },
-  { name: 'Twitch', value: 'twitch' },
-  { name: 'Reddit', value: 'reddit' },
-  { name: 'Pinterest', value: 'pinterest' }
-];
-
 // Interval marks for slider (5 minute increments)
 const INTERVAL_MARKS = [
   { value: 300, label: '5m' },
@@ -73,13 +31,13 @@ function TimesheetSettings() {
     trackIdleTime: true,
     idleThresholdSeconds: 300,
 
-    // Whitelist
+    // Productive Apps (formerly whitelist)
     whitelistEnabled: true,
-    whitelistedApps: ['code', 'cursor', 'jira', 'zoom', 'chrome', 'postman', 'github', 'slack', 'teams'],
+    whitelistedApps: [],  // Loaded from application_classifications table
 
-    // Blacklist
+    // Non-Productive Apps (formerly blacklist)
     blacklistEnabled: true,
-    blacklistedApps: ['netflix', 'spotify', 'telegram', 'tiktok', 'pinterest'],
+    blacklistedApps: [],  // Loaded from application_classifications table,
     nonWorkThresholdPercent: 30,
     flagExcessiveNonWork: true,
 
@@ -95,6 +53,12 @@ function TimesheetSettings() {
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
+  
+  // Classifications fetched from database
+  const [productiveApps, setProductiveApps] = useState([]);
+  const [nonProductiveApps, setNonProductiveApps] = useState([]);
+  const [privateApps, setPrivateApps] = useState([]);
+  const [loadingClassifications, setLoadingClassifications] = useState(true);
 
   // Input states for adding custom items
   const [customWhitelistApp, setCustomWhitelistApp] = useState('');
@@ -119,8 +83,41 @@ function TimesheetSettings() {
     }
   };
 
+  const loadClassifications = async () => {
+    setLoadingClassifications(true);
+    try {
+      // Fetch all classifications from database (no projectKey = org-level)
+      const result = await invoke('getClassifications', { projectKey: null });
+      if (result.success && result.classifications) {
+        // Filter by classification type and match_by = 'process' (for process-based apps)
+        const productive = result.classifications
+          .filter(c => c.classification === 'productive' && c.match_by === 'process')
+          .map(c => ({ name: c.display_name || c.identifier, value: c.identifier.toLowerCase() }));
+        
+        const nonProductive = result.classifications
+          .filter(c => c.classification === 'non_productive' && c.match_by === 'process')
+          .map(c => ({ name: c.display_name || c.identifier, value: c.identifier.toLowerCase() }));
+        
+        // Private sites can be both process and URL-based
+        const privateSites = result.classifications
+          .filter(c => c.classification === 'private')
+          .map(c => ({ name: c.display_name || c.identifier, value: c.identifier.toLowerCase() }));
+        
+        setProductiveApps(productive);
+        setNonProductiveApps(nonProductive);
+        setPrivateApps(privateSites);
+      }
+    } catch (err) {
+      console.error('Failed to load classifications:', err);
+      // Don't show error to user - just use empty lists
+    } finally {
+      setLoadingClassifications(false);
+    }
+  };
+
   useEffect(() => {
     loadSettings();
+    loadClassifications();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -376,7 +373,7 @@ function TimesheetSettings() {
         )}
       </section>
 
-      {/* Whitelisted Applications Section */}
+      {/* Productive Applications Section */}
       <section className="settings-section">
         <div className="section-header">
           <div className="section-icon">
@@ -385,7 +382,7 @@ function TimesheetSettings() {
               <path d="M22 4L12 14.01L9 11.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
-          <h2>Whitelisted Applications</h2>
+          <h2>Productive Applications</h2>
           <label className="toggle-switch">
             <input
               type="checkbox"
@@ -393,30 +390,36 @@ function TimesheetSettings() {
               onChange={() => handleToggle('whitelistEnabled')}
             />
             <span className="toggle-slider"></span>
-            <span className="toggle-label">Enable Whitelist</span>
+            <span className="toggle-label">Enable Productive Apps</span>
           </label>
         </div>
 
         {settings.whitelistEnabled && (
           <div className="section-content">
             <p className="field-description">
-              Applications that should be actively tracked during time monitoring
+              Applications classified as productive work apps (managed via Application Classifications)
             </p>
 
-            {/* Common Applications */}
+            {/* Applications from Database */}
             <div className="common-apps-container">
-              <label className="common-apps-label">Common Applications</label>
-              <div className="common-apps-grid">
-                {COMMON_WORK_APPS.map(app => (
-                  <button
-                    key={app.value}
-                    className={`app-chip ${settings.whitelistedApps.includes(app.value) ? 'selected' : ''}`}
-                    onClick={() => toggleCommonApp('whitelistedApps', app.value)}
-                  >
-                    {app.name}
-                  </button>
-                ))}
-              </div>
+              <label className="common-apps-label">Classified Productive Applications</label>
+              {loadingClassifications ? (
+                <p className="loading-text">Loading classifications...</p>
+              ) : productiveApps.length > 0 ? (
+                <div className="common-apps-grid">
+                  {productiveApps.map(app => (
+                    <button
+                      key={app.value}
+                      className={`app-chip ${settings.whitelistedApps.includes(app.value) ? 'selected' : ''}`}
+                      onClick={() => toggleCommonApp('whitelistedApps', app.value)}
+                    >
+                      {app.name}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="field-hint">No productive applications classified yet. Add them via Application Classifications page.</p>
+              )}
             </div>
 
             {/* Custom Application Input */}
@@ -440,28 +443,32 @@ function TimesheetSettings() {
               </div>
             </div>
 
-            {/* Current Whitelist */}
+            {/* Current Productive Apps List */}
             <div className="current-list">
-              <label>Current Whitelist ({settings.whitelistedApps.length})</label>
+              <label>Current Productive Apps ({settings.whitelistedApps.length})</label>
               <div className="tags-container">
-                {settings.whitelistedApps.map(app => (
-                  <span key={app} className="tag whitelist-tag">
-                    {app}
-                    <button
-                      className="tag-remove"
-                      onClick={() => removeFromList('whitelistedApps', app)}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
+                {settings.whitelistedApps.length > 0 ? (
+                  settings.whitelistedApps.map(app => (
+                    <span key={app} className="tag whitelist-tag">
+                      {app}
+                      <button
+                        className="tag-remove"
+                        onClick={() => removeFromList('whitelistedApps', app)}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))
+                ) : (
+                  <p className="field-hint">No productive apps selected. Use Application Classifications to manage apps.</p>
+                )}
               </div>
             </div>
           </div>
         )}
       </section>
 
-      {/* Blacklisted Applications Section */}
+      {/* Non-Productive Applications Section */}
       <section className="settings-section">
         <div className="section-header">
           <div className="section-icon">
@@ -470,7 +477,7 @@ function TimesheetSettings() {
               <path d="M4.93 4.93L19.07 19.07" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
-          <h2>Blacklisted Applications</h2>
+          <h2>Non-Productive Applications</h2>
           <label className="toggle-switch">
             <input
               type="checkbox"
@@ -478,30 +485,36 @@ function TimesheetSettings() {
               onChange={() => handleToggle('blacklistEnabled')}
             />
             <span className="toggle-slider"></span>
-            <span className="toggle-label">Enable Blacklist</span>
+            <span className="toggle-label">Enable Non-Productive Apps</span>
           </label>
         </div>
 
         {settings.blacklistEnabled && (
           <div className="section-content">
             <p className="field-description">
-              Non-productive applications that should not be tracked or monitored (e.g., entertainment, social media)
+              Applications classified as non-productive (e.g., entertainment, social media - managed via Application Classifications)
             </p>
 
-            {/* Common Non-Work Applications */}
+            {/* Applications from Database */}
             <div className="common-apps-container">
-              <label className="common-apps-label">Common Non-Productive Applications</label>
-              <div className="common-apps-grid">
-                {COMMON_NON_WORK_APPS.map(app => (
-                  <button
-                    key={app.value}
-                    className={`app-chip blacklist-chip ${settings.blacklistedApps.includes(app.value) ? 'selected' : ''}`}
-                    onClick={() => toggleCommonApp('blacklistedApps', app.value)}
-                  >
-                    {app.name}
-                  </button>
-                ))}
-              </div>
+              <label className="common-apps-label">Classified Non-Productive Applications</label>
+              {loadingClassifications ? (
+                <p className="loading-text">Loading classifications...</p>
+              ) : nonProductiveApps.length > 0 ? (
+                <div className="common-apps-grid">
+                  {nonProductiveApps.map(app => (
+                    <button
+                      key={app.value}
+                      className={`app-chip blacklist-chip ${settings.blacklistedApps.includes(app.value) ? 'selected' : ''}`}
+                      onClick={() => toggleCommonApp('blacklistedApps', app.value)}
+                    >
+                      {app.name}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="field-hint">No non-productive applications classified yet. Add them via Application Classifications page.</p>
+              )}
             </div>
 
             {/* Custom Application Input */}
@@ -525,21 +538,25 @@ function TimesheetSettings() {
               </div>
             </div>
 
-            {/* Current Blacklist */}
+            {/* Current Non-Productive Apps List */}
             <div className="current-list">
-              <label>Current Blacklist ({settings.blacklistedApps.length})</label>
+              <label>Current Non-Productive Apps ({settings.blacklistedApps.length})</label>
               <div className="tags-container">
-                {settings.blacklistedApps.map(app => (
-                  <span key={app} className="tag blacklist-tag">
-                    {app}
-                    <button
-                      className="tag-remove"
-                      onClick={() => removeFromList('blacklistedApps', app)}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
+                {settings.blacklistedApps.length > 0 ? (
+                  settings.blacklistedApps.map(app => (
+                    <span key={app} className="tag blacklist-tag">
+                      {app}
+                      <button
+                        className="tag-remove"
+                        onClick={() => removeFromList('blacklistedApps', app)}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))
+                ) : (
+                  <p className="field-hint">No non-productive apps selected. Use Application Classifications to manage apps.</p>
+                )}
               </div>
             </div>
 
@@ -552,10 +569,10 @@ function TimesheetSettings() {
                     <path d="M4 22V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </span>
-                <h3>Flag Users for Excessive Non-Work Activity</h3>
+                <h3>Flag Users for Excessive Non-Productive Activity</h3>
               </div>
               <p className="field-description">
-                Set the percentage threshold for weekly blacklisted app usage that will flag users for excessive non-work activities.
+                Set the percentage threshold for weekly non-productive app usage that will flag users for excessive non-work activities.
                 Users exceeding this threshold will be highlighted with a red indicator.
               </p>
               <div className="threshold-slider-container">
@@ -606,12 +623,34 @@ function TimesheetSettings() {
         {settings.privateSitesEnabled && (
           <div className="section-content">
             <p className="field-description">
-              Websites and applications that should be omitted from tracking (e.g., banking, personal, healthcare)
+              Websites and applications that should be omitted from tracking (e.g., banking, personal, healthcare - managed via Application Classifications)
             </p>
+
+            {/* Applications from Database */}
+            <div className="common-apps-container">
+              <label className="common-apps-label">Classified Private Sites/Applications</label>
+              {loadingClassifications ? (
+                <p className="loading-text">Loading classifications...</p>
+              ) : privateApps.length > 0 ? (
+                <div className="common-apps-grid">
+                  {privateApps.map(app => (
+                    <button
+                      key={app.value}
+                      className={`app-chip private-chip ${settings.privateSites.includes(app.value) ? 'selected' : ''}`}
+                      onClick={() => toggleCommonApp('privateSites', app.value)}
+                    >
+                      {app.name}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="field-hint">No private sites/applications classified yet. Add them via Application Classifications page.</p>
+              )}
+            </div>
 
             {/* Custom Private Site Input */}
             <div className="custom-input-container">
-              <label>Add Private Site/Domain</label>
+              <label>Add Custom Private Site/Domain</label>
               <div className="input-with-button">
                 <input
                   type="text"
@@ -633,11 +672,9 @@ function TimesheetSettings() {
             {/* Current Private List */}
             <div className="current-list">
               <label>Current Private List ({settings.privateSites.length})</label>
-              {settings.privateSites.length === 0 ? (
-                <p className="empty-list-message">No private sites configured</p>
-              ) : (
-                <div className="tags-container">
-                  {settings.privateSites.map(site => (
+              <div className="tags-container">
+                {settings.privateSites.length > 0 ? (
+                  settings.privateSites.map(site => (
                     <span key={site} className="tag private-tag">
                       {site}
                       <button
@@ -647,9 +684,11 @@ function TimesheetSettings() {
                         ×
                       </button>
                     </span>
-                  ))}
-                </div>
-              )}
+                  ))
+                ) : (
+                  <p className="field-hint">No private sites configured. Use Application Classifications to manage private sites.</p>
+                )}
+              </div>
             </div>
           </div>
         )}

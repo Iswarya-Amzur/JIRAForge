@@ -112,6 +112,9 @@ export async function getProjectSettings(projectKey, cloudId, accountId) {
         projectKey,
         projectName: settings.project_name || projectKey,
         trackedStatuses: settings.tracked_statuses || ['In Progress'],
+        batchUploadInterval: settings.batch_upload_interval,
+        autoWorklogEnabled: settings.auto_worklog_enabled,
+        nonWorkThreshold: settings.non_work_threshold,
         configuredBy: settings.configured_by,
         updatedAt: settings.updated_at,
         configured: true
@@ -122,6 +125,9 @@ export async function getProjectSettings(projectKey, cloudId, accountId) {
     return {
       projectKey,
       trackedStatuses: ['In Progress'],
+      batchUploadInterval: null,
+      autoWorklogEnabled: null,
+      nonWorkThreshold: null,
       configured: false
     };
   } catch (error) {
@@ -175,6 +181,9 @@ export async function getAllProjectSettings(cloudId, accountId) {
         projectKey: settings.project_key,
         projectName: settings.project_name || settings.project_key,
         trackedStatuses: settings.tracked_statuses || ['In Progress'],
+        batchUploadInterval: settings.batch_upload_interval,
+        autoWorklogEnabled: settings.auto_worklog_enabled,
+        nonWorkThreshold: settings.non_work_threshold,
         configuredBy: settings.configured_by,
         updatedAt: settings.updated_at
       }));
@@ -197,7 +206,7 @@ export async function getAllProjectSettings(cloudId, accountId) {
  * @param {string} accountId - Atlassian account ID
  * @returns {Promise<Object>} Result of save operation
  */
-export async function saveProjectSettings(projectKey, projectName, trackedStatuses, cloudId, accountId) {
+export async function saveProjectSettings(projectKey, projectName, trackedStatuses, cloudId, accountId, extraSettings = {}) {
   // Check if user is Jira Administrator or Project Admin
   const isAdmin = await isJiraAdmin();
   const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS']);
@@ -252,6 +261,17 @@ export async function saveProjectSettings(projectKey, projectName, trackedStatus
     configured_by: userId,
     updated_at: new Date().toISOString()
   };
+
+  // Add optional new columns if provided
+  if (extraSettings.batchUploadInterval !== undefined) {
+    projectData.batch_upload_interval = extraSettings.batchUploadInterval;
+  }
+  if (extraSettings.autoWorklogEnabled !== undefined) {
+    projectData.auto_worklog_enabled = extraSettings.autoWorklogEnabled;
+  }
+  if (extraSettings.nonWorkThreshold !== undefined) {
+    projectData.non_work_threshold = extraSettings.nonWorkThreshold;
+  }
 
   // Check if settings already exist for this project
   const existingSettings = await supabaseRequest(

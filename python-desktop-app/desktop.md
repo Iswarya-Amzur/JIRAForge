@@ -35,11 +35,6 @@ from dotenv import load_dotenv
 # SQLite for offline storage
 import sqlite3
 import socket
-import fnmatch
-
-# OCR for text extraction
-from ocr import extract_text_from_image
-
 
 # Secure credential storage
 try:
@@ -1568,6 +1563,7 @@ class AtlassianAuthManager:
         if os.path.exists(self.store_path):
             os.remove(self.store_path)
 
+
 # ============================================================================
 # OFFLINE DATA MANAGER
 # ============================================================================
@@ -1653,55 +1649,6 @@ class OfflineManager:
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_project_settings_org 
             ON project_settings_cache(organization_id)
-        ''')
-
-        # ====================================================================
-        # App classifications cache (synced from Supabase)
-        # ====================================================================
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS app_classifications_cache (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                organization_id TEXT,
-                project_key TEXT,
-                identifier TEXT NOT NULL,
-                display_name TEXT,
-                classification TEXT NOT NULL,
-                match_by TEXT NOT NULL,
-                cached_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(organization_id, project_key, identifier, match_by)
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_app_class_cache_identifier
-            ON app_classifications_cache(identifier)
-        ''')
-
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_app_class_cache_match_by
-            ON app_classifications_cache(match_by)
-        ''')
-
-        # ====================================================================
-        # Active sessions (real-time activity tracking between batches)
-        # ====================================================================
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS active_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                window_title TEXT,
-                application_name TEXT,
-                classification TEXT,
-                ocr_text TEXT,
-                ocr_method TEXT,
-                ocr_confidence REAL,
-                ocr_error_message TEXT,
-                total_time_seconds REAL DEFAULT 0,
-                visit_count INTEGER DEFAULT 1,
-                first_seen TEXT,
-                last_seen TEXT,
-                timer_started_at TEXT,
-                UNIQUE(window_title, application_name)
-            )
         ''')
         
         conn.commit()
@@ -2956,353 +2903,6 @@ class PausePopupWindow:
 
 
 # ============================================================================
-# APPLICATION CLASSIFICATION MANAGER
-# ============================================================================
-
-# Browser process names — when one of these is the active process,
-# we check the window title against URL-based entries instead of process-based.
-BROWSER_PROCESSES = {
-    'chrome.exe', 'msedge.exe', 'firefox.exe', 'brave.exe',
-    'opera.exe', 'vivaldi.exe', 'arc.exe',
-}
-
-
-class AppClassificationManager:
-    """Manages application classification lookups using local SQLite cache.
-
-    Classifications are synced from Supabase and stored in SQLite.
-    In-memory dicts provide O(1) lookup during tracking.
-    """
-
-    def __init__(self, db_path):
-        self.db_path = db_path
-        # In-memory lookup dicts (populated from SQLite)
-        self.process_classifications = {}  # identifier (lower) -> classification
-        self.url_classifications = {}      # identifier (lower) -> classification
-        self.url_wildcard_patterns = []    # [(pattern, classification)] for fnmatch
-        self.reload_from_cache()
-
-    def reload_from_cache(self):
-        """Load classifications from SQLite into memory for fast lookup."""
-        self.process_classifications = {}
-        self.url_classifications = {}
-        self.url_wildcard_patterns = []
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('SELECT identifier, classification, match_by FROM app_classifications_cache')
-            for identifier, classification, match_by in cursor.fetchall():
-                key = identifier.lower()
-                if match_by == 'process':
-                    self.process_classifications[key] = classification
-                elif match_by == 'url':
-                    if '*' in identifier:
-                        self.url_wildcard_patterns.append((key, classification))
-                    else:
-                        self.url_classifications[key] = classification
-            conn.close()
-            total = len(self.process_classifications) + len(self.url_classifications) + len(self.url_wildcard_patterns)
-            if total > 0:
-                print(f"[OK] Loaded {total} app classifications into memory")
-        except Exception as e:
-            print(f"[WARN] Failed to load classifications from cache: {e}")
-
-    def classify(self, app_name, window_title=''):
-        """Classify an application based on process name and window title.
-
-        Returns:
-            tuple: (classification: str, match_type: str or None)
-                classification: 'productive', 'non_productive', 'private', or 'unknown'
-                match_type: 'process', 'url', 'browser_default', or None
-        """
-        app_lower = app_name.lower() if app_name else ''
-
-        # Check if it's a browser
-        if app_lower in BROWSER_PROCESSES:
-            # Browser: check window title against URL entries
-            title_lower = window_title.lower() if window_title else ''
-
-            # Check exact URL matches first
-            for url_key, classification in self.url_classifications.items():
-                if url_key in title_lower:
-                    return (classification, 'url')
-
-            # Check wildcard patterns (e.g., *.atlassian.net, *.bank.*)
-            for pattern, classification in self.url_wildcard_patterns:
-                if fnmatch.fnmatch(title_lower, pattern):
-                    return (classification, 'url')
-                # Also check if any word in the title matches
-                for word in title_lower.split():
-                    if fnmatch.fnmatch(word, pattern):
-                        return (classification, 'url')
-
-            # No URL match — browser is unknown until admin classifies
-            # OCR + AI will still capture data; admin decides productive/non_productive
-            return ('unknown', 'browser_default')
-
-        # Non-browser: check process name
-        if app_lower in self.process_classifications:
-            return (self.process_classifications[app_lower], 'process')
-
-        # No match found
-        return ('unknown', None)
-
-
-class ActiveSessionManager:
-    """Manages active_sessions SQLite table for real-time activity tracking.
-
-    Tracks time accumulated per unique (window_title, application_name) pair.
-    Thread-safe with a lock.
-    """
-
-    def __init__(self, db_path):
-        self.db_path = db_path
-        self._lock = threading.Lock()
-        self._current_key = None  # (window_title, application_name)
-
-    def on_window_switch(self, title, app_name, classification, ocr_result=None):
-        """Handle a window switch event.
-
-        Stops timer on previous session, creates or resumes session for new window.
-        
-        Args:
-            title: Window title
-            app_name: Application name
-            classification: Activity classification (productive, non_productive, private, unknown)
-            ocr_result: Optional dict with keys: text, method, confidence, error_message
-        """
-        with self._lock:
-            now = datetime.now(timezone.utc).isoformat()
-            new_key = (title, app_name)
-
-            # Extract OCR data from result dict
-            ocr_text = None
-            ocr_method = None
-            ocr_confidence = None
-            ocr_error_message = None
-            
-            if ocr_result:
-                if isinstance(ocr_result, dict):
-                    ocr_text = ocr_result.get('text')
-                    ocr_method = ocr_result.get('method')
-                    ocr_confidence = ocr_result.get('confidence')
-                    ocr_error_message = ocr_result.get('error_message')
-                else:
-                    # Backward compatibility: if string is passed, treat as text only
-                    ocr_text = ocr_result
-
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-
-            try:
-                # Stop timer on current active session (if any)
-                if self._current_key is not None:
-                    self._stop_timer_internal(cursor, now)
-
-                # Check if this window was seen before in this batch cycle
-                cursor.execute(
-                    'SELECT id, total_time_seconds, visit_count FROM active_sessions WHERE window_title = ? AND application_name = ?',
-                    (title, app_name)
-                )
-                existing = cursor.fetchone()
-
-                if existing:
-                    # Resume existing session — increment visit_count, start timer
-                    session_id, total_time, visit_count = existing
-                    cursor.execute(
-                        'UPDATE active_sessions SET visit_count = ?, timer_started_at = ?, last_seen = ?, classification = ? WHERE id = ?',
-                        (visit_count + 1, now, now, classification, session_id)
-                    )
-                    # Update OCR data if new data is provided (latest snapshot)
-                    if ocr_text or ocr_method:
-                        cursor.execute(
-                            'UPDATE active_sessions SET ocr_text = ?, ocr_method = ?, ocr_confidence = ?, ocr_error_message = ? WHERE id = ?',
-                            (ocr_text, ocr_method, ocr_confidence, ocr_error_message, session_id)
-                        )
-                else:
-                    # Create new session
-                    cursor.execute(
-                        '''INSERT INTO active_sessions
-                        (window_title, application_name, classification, ocr_text, ocr_method, ocr_confidence, ocr_error_message, total_time_seconds, visit_count, first_seen, last_seen, timer_started_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?)''',
-                        (title, app_name, classification, ocr_text, ocr_method, ocr_confidence, ocr_error_message, now, now, now)
-                    )
-
-                self._current_key = new_key
-                conn.commit()
-            except Exception as e:
-                print(f"[ERROR] ActiveSessionManager.on_window_switch: {e}")
-                conn.rollback()
-            finally:
-                conn.close()
-
-    def _stop_timer_internal(self, cursor, now):
-        """Stop the timer on the currently active session (internal, must hold lock)."""
-        if self._current_key is None:
-            return
-
-        title, app_name = self._current_key
-        cursor.execute(
-            'SELECT id, total_time_seconds, timer_started_at FROM active_sessions WHERE window_title = ? AND application_name = ?',
-            (title, app_name)
-        )
-        row = cursor.fetchone()
-        if row and row[2]:  # timer_started_at is not None
-            session_id, total_time, timer_started = row
-            try:
-                started = datetime.fromisoformat(timer_started)
-                ended = datetime.fromisoformat(now)
-                elapsed = max(0, (ended - started).total_seconds())
-                new_total = (total_time or 0) + elapsed
-                cursor.execute(
-                    'UPDATE active_sessions SET total_time_seconds = ?, timer_started_at = NULL, last_seen = ? WHERE id = ?',
-                    (new_total, now, session_id)
-                )
-            except Exception as e:
-                print(f"[WARN] Error stopping timer: {e}")
-
-    def stop_current_timer(self):
-        """Stop timer on the current session (public, acquires lock)."""
-        with self._lock:
-            now = datetime.now(timezone.utc).isoformat()
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            try:
-                self._stop_timer_internal(cursor, now)
-                conn.commit()
-            finally:
-                conn.close()
-
-    def get_all_sessions(self):
-        """Get all sessions for batch upload."""
-        with self._lock:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM active_sessions')
-            columns = [desc[0] for desc in cursor.description]
-            rows = cursor.fetchall()
-            conn.close()
-            return [dict(zip(columns, row)) for row in rows]
-
-    def clear_all(self):
-        """Clear all sessions after successful batch upload."""
-        with self._lock:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('DELETE FROM active_sessions')
-            conn.commit()
-            conn.close()
-            self._current_key = None
-
-    def update_classification(self, app_name, old_classification, new_classification):
-        """Thread-safe update of classification for an app (called from async classify thread)."""
-        with self._lock:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            try:
-                cursor.execute(
-                    'UPDATE active_sessions SET classification = ? WHERE application_name = ? AND classification = ?',
-                    (new_classification, app_name, old_classification)
-                )
-                conn.commit()
-            except Exception as e:
-                print(f"[WARN] Failed to update classification: {e}")
-            finally:
-                conn.close()
-
-
-class LocalOCRProcessor:
-    """Handles local OCR processing using the dynamic OCR facade.
-
-    Uses the OCR facade which respects environment configuration:
-    - OCR_PRIMARY_ENGINE (paddle, tesseract, easyocr, etc.)
-    - OCR_FALLBACK_ENGINES (comma-separated list)
-    - Engine-specific settings (OCR_PADDLE_MIN_CONFIDENCE, etc.)
-
-    Captures screenshot in memory, extracts text via configured engines, discards image.
-    Throttled to max once per 3 seconds to limit CPU spikes on rapid switching.
-    """
-
-    def __init__(self):
-        self._last_ocr_time = 0
-        self._min_interval = 3  # seconds between OCR calls
-        print("[OCR] LocalOCRProcessor initialized - using dynamic engine selection")
-        
-        # Log which OCR engines are configured
-        primary = os.getenv('OCR_PRIMARY_ENGINE', 'paddle')
-        fallback = os.getenv('OCR_FALLBACK_ENGINES', 'tesseract')
-        print(f"[OCR] Primary engine: {primary}, Fallback: {fallback}")
-
-    def capture_and_ocr(self):
-        """Capture screenshot in memory and extract text via OCR facade.
-
-        Uses the dynamic OCR system configured via environment variables.
-        Automatically falls back to alternative engines if primary fails.
-
-        Returns:
-            dict: OCR result with keys:
-                - text (str or None): Extracted text
-                - method (str): OCR engine used (e.g., 'paddle', 'tesseract', 'metadata')
-                - confidence (float): Confidence score (0.0 to 1.0)
-                - error_message (str or None): Error message if OCR failed
-            Returns None if throttled.
-        """
-        # Throttle: skip if called too recently
-        now = time.time()
-        if (now - self._last_ocr_time) < self._min_interval:
-            return None
-
-        try:
-            # Capture screenshot in memory
-            screenshot = ImageGrab.grab()
-
-            # Use OCR facade for text extraction
-            # This respects OCR_PRIMARY_ENGINE and OCR_FALLBACK_ENGINES from .env
-            ocr_result = extract_text_from_image(
-                screenshot,
-                window_title='',  # Not available in event-based capture
-                app_name='',
-                use_preprocessing=True
-            )
-
-            # Clean up screenshot from memory
-            del screenshot
-
-            self._last_ocr_time = time.time()
-
-            # Extract text and metadata from result
-            text = ocr_result.get('text', '')
-            method = ocr_result.get('method', 'unknown')
-            confidence = ocr_result.get('confidence', 0.0)
-            success = ocr_result.get('success', False)
-            
-            # Log which engine was used (useful for debugging)
-            if success and text:
-                print(f"[OCR] Event-based capture: {method} (confidence: {confidence:.2f})")
-            
-            # Truncate very long text to save memory/bandwidth
-            if text and len(text) > 2000:
-                text = text[:2000]
-            
-            return {
-                'text': text.strip() if text else None,
-                'method': method,
-                'confidence': confidence,
-                'error_message': None if success else f"OCR failed with method: {method}"
-            }
-
-        except Exception as e:
-            error_msg = str(e)
-            print(f"[WARN] Local OCR failed: {error_msg}")
-            return {
-                'text': None,
-                'method': 'error',
-                'confidence': 0.0,
-                'error_message': error_msg
-            }
-
-
-# ============================================================================
 # MAIN APPLICATION
 # ============================================================================
 
@@ -3444,19 +3044,6 @@ class TimeTracker:
 
         # Consent management (GDPR/Privacy compliance)
         self.consent_manager = ConsentManager()
-
-        # ====================================================================
-        # NEW: Event-based activity tracking components
-        # ====================================================================
-        self.classification_manager = AppClassificationManager(self.offline_manager.db_path)
-        self.session_manager = ActiveSessionManager(self.offline_manager.db_path)
-        self.ocr_processor = LocalOCRProcessor()
-        self.batch_upload_interval = 300  # 5 min default (overridden by project settings)
-        self.last_batch_upload_time = time.time()
-        self.batch_start_time = datetime.now(timezone.utc)
-        self.last_classification_sync = 0
-        self.classification_sync_interval = 1800  # 30 minutes
-        self._unknown_apps_classified = set()  # Debounce: track apps already sent to AI this session
 
         # AI analysis is handled by the separate AI server
         # Desktop app only captures and uploads screenshots
@@ -5494,12 +5081,7 @@ class TimeTracker:
         return False
     
     def is_in_whitelist(self, app_name):
-        """DEPRECATED: Use is_app_whitelisted() which uses database-driven classification
-        
-        This method checks hardcoded whitelist arrays and should not be used.
-        Use database-driven classification via application_classifications table instead.
-        """
-        print("[WARN] is_in_whitelist() is deprecated. Use is_app_whitelisted() instead.")
+        """Check if app exists in whitelist (using alias-aware matching)"""
         whitelisted_apps = self.tracking_settings.get('whitelisted_apps', [])
         if not whitelisted_apps:
             return False
@@ -5511,12 +5093,7 @@ class TimeTracker:
         return False
 
     def is_in_blacklist(self, app_name):
-        """DEPRECATED: Use is_app_blacklisted() which uses database-driven classification
-        
-        This method checks hardcoded blacklist arrays and should not be used.
-        Use database-driven classification via application_classifications table instead.
-        """
-        print("[WARN] is_in_blacklist() is deprecated. Use is_app_blacklisted() instead.")
+        """Check if app exists in blacklist (using alias-aware matching)"""
         blacklisted_apps = self.tracking_settings.get('blacklisted_apps', [])
         if not blacklisted_apps:
             return False
@@ -5527,29 +5104,37 @@ class TimeTracker:
 
         return False
 
-    def is_app_whitelisted(self, app_name, window_title=''):
-        """Check if application is productive (database-driven classification)
-        
-        REPLACES hardcoded whitelist with database lookups from application_classifications table.
-        Uses AppClassificationManager to check if app is classified as 'productive'.
-        """
-        # Use database-driven classification instead of hardcoded whitelist
-        classification, match_type = self.classification_manager.classify(app_name, window_title)
-        
-        # 'productive' apps are considered whitelisted (work apps)
-        return classification == 'productive'
+    def is_app_whitelisted(self, app_name):
+        """Check if application is in whitelist (work apps) - uses alias-aware matching"""
+        if not self.tracking_settings.get('whitelist_enabled', True):
+            return True  # If whitelist disabled, allow all
 
-    def is_app_blacklisted(self, app_name, window_title=''):
-        """Check if application is non-productive (database-driven classification)
-        
-        REPLACES hardcoded blacklist with database lookups from application_classifications table.
-        Uses AppClassificationManager to check if app is classified as 'non_productive'.
-        """
-        # Use database-driven classification instead of hardcoded blacklist
-        classification, match_type = self.classification_manager.classify(app_name, window_title)
-        
-        # 'non_productive' apps are considered blacklisted (non-work apps)
-        return classification == 'non_productive'
+        whitelisted_apps = self.tracking_settings.get('whitelisted_apps', [])
+        if not whitelisted_apps:
+            return True  # Empty whitelist means allow all
+
+        # Check if any whitelist entry matches (with alias support)
+        for whitelist_entry in whitelisted_apps:
+            if self.app_matches(app_name, whitelist_entry):
+                return True
+
+        return False
+
+    def is_app_blacklisted(self, app_name):
+        """Check if application is in blacklist (non-work apps) - uses alias-aware matching"""
+        if not self.tracking_settings.get('blacklist_enabled', True):
+            return False  # If blacklist disabled, nothing is blacklisted
+
+        blacklisted_apps = self.tracking_settings.get('blacklisted_apps', [])
+        if not blacklisted_apps:
+            return False  # Empty blacklist means nothing blocked
+
+        # Check if any blacklist entry matches (with alias support)
+        for blacklist_entry in blacklisted_apps:
+            if self.app_matches(app_name, blacklist_entry):
+                return True
+
+        return False
     
     def is_private_app(self, app_name, window_title=''):
         """Check if application/window is private (should not be tracked/recorded)"""
@@ -5572,23 +5157,18 @@ class TimeTracker:
         return False
     
     def get_app_work_type(self, app_name, window_title=''):
-        """Determine work type based on database-driven classification
+        """Determine work type based on app whitelist/blacklist
         
         Returns:
-            str: 'office' for productive apps, 'non-office' for non-productive apps,
-                 'office' as default for unknown/private apps
+            str: 'office' for whitelisted apps, 'non-office' for blacklisted apps, 
+                 'office' as default if not in any list
         """
-        # Use database-driven classification
-        classification, match_type = self.classification_manager.classify(app_name, window_title)
-        
-        if classification == 'non_productive':
+        if self.is_app_blacklisted(app_name):
             return 'non-office'
-        elif classification == 'productive':
+        elif self.is_app_whitelisted(app_name):
             return 'office'
-        elif classification == 'private':
-            return 'office'  # Private apps treated as work by default to avoid tracking issues
         else:
-            # Unknown apps default to 'office' (will be classified by admin later)
+            # Default to office if not in any list
             return 'office'
     
     def should_skip_screenshot(self, app_name, window_title=''):
@@ -5623,194 +5203,6 @@ class TimeTracker:
         #             return (True, 'not_whitelisted')
 
         return (False, None)
-
-    def upload_activity_batch(self):
-        """Upload accumulated activity records to Supabase as a single batch.
-        Called every 5 minutes (batch_upload_interval).
-        """
-        try:
-            # Stop current timer so accumulated time is accurate
-            self.session_manager.stop_current_timer()
-
-            # Harvest all sessions
-            sessions = self.session_manager.get_all_sessions()
-            if not sessions:
-                print("[BATCH] No activity records to upload")
-                self.last_batch_upload_time = time.time()
-                return
-
-            db_client = self.supabase_service if self.supabase_service else self.supabase
-            if not db_client:
-                print("[BATCH] No Supabase client — records stay in SQLite")
-                return
-
-            # Check connectivity
-            if not self.offline_manager.check_connectivity():
-                print(f"[BATCH] Offline — {len(sessions)} records stay in SQLite for retry")
-                return
-
-            batch_timestamp = datetime.now(timezone.utc).isoformat()
-            batch_end = datetime.now(timezone.utc)
-            batch_start = self.batch_start_time
-
-            # Build activity_records payload
-            records = []
-            for s in sessions:
-                classification = s.get('classification', 'unknown')
-
-                # Determine status based on classification
-                if classification in ('non_productive', 'private'):
-                    status = 'analyzed'  # No AI needed
-                else:
-                    status = 'pending'  # AI server will analyze
-
-                # Get project key from cached issues
-                project_key = self.get_user_project_key()
-
-                record = {
-                    'user_id': self.current_user_id,
-                    'organization_id': self.organization_id,
-                    'window_title': s.get('window_title', ''),
-                    'application_name': s.get('application_name', ''),
-                    'classification': classification,
-                    'ocr_text': s.get('ocr_text'),
-                    'ocr_method': s.get('ocr_method'),
-                    'ocr_confidence': s.get('ocr_confidence'),
-                    'ocr_error_message': s.get('ocr_error_message'),
-                    'total_time_seconds': int(s.get('total_time_seconds', 0)),
-                    'visit_count': s.get('visit_count', 1),
-                    'start_time': s.get('first_seen'),
-                    'end_time': s.get('last_seen'),
-                    'duration_seconds': int(s.get('total_time_seconds', 0)),
-                    'batch_timestamp': batch_timestamp,
-                    'batch_start': batch_start.isoformat(),
-                    'batch_end': batch_end.isoformat(),
-                    'work_date': s.get('first_seen', '')[:10] if s.get('first_seen') else datetime.now().date().isoformat(),
-                    'user_timezone': get_local_timezone_name(),
-                    'project_key': project_key,
-                    'user_assigned_issues': json.dumps(self.user_issues) if self.user_issues else None,
-                    'status': status,
-                    'metadata': json.dumps({
-                        'tracking_mode': 'event_based',
-                        'app_version': self.app_version
-                    })
-                }
-                records.append(record)
-
-            # Single batch insert to Supabase
-            result = db_client.table('activity_records').insert(records).execute()
-
-            if result.data:
-                productive_count = sum(1 for r in records if r['status'] == 'pending')
-                analyzed_count = sum(1 for r in records if r['status'] == 'analyzed')
-                print(f"[BATCH] Uploaded {len(records)} activity records ({productive_count} pending AI, {analyzed_count} pre-analyzed)")
-
-                # Success — clear local sessions and reset batch timer
-                self.session_manager.clear_all()
-                self.batch_start_time = datetime.now(timezone.utc)
-            else:
-                print(f"[WARN] Batch upload returned no data — records stay in SQLite")
-
-            self.last_batch_upload_time = time.time()
-
-        except Exception as e:
-            print(f"[ERROR] Activity batch upload failed: {e}")
-            print(f"     Records remain in SQLite for retry on next cycle")
-            self.last_batch_upload_time = time.time()
-
-    def process_window_event(self, window_info):
-        """Core event handler for event-based activity tracking.
-        Called on every window switch.
-
-        1. Classify app (productive, non_productive, private, unknown)
-        2. If productive/unknown: run OCR to capture screen text
-        3. If private: redact window title
-        4. If non_productive: no OCR, just metadata
-        5. If unknown: async classify via AI server
-        6. Update session manager with OCR result (text, method, confidence, error)
-        """
-        app_name = window_info.get('app', '')
-        window_title = window_info.get('title', '')
-
-        # Classify the application
-        classification, match_type = self.classification_manager.classify(app_name, window_title)
-
-        ocr_result = None
-        display_title = window_title
-
-        if classification == 'private':
-            # Private app: redact window title, no OCR
-            display_title = '[PRIVATE]'
-            print(f"[PRIVATE] {app_name} — window title redacted")
-
-        elif classification == 'non_productive':
-            # Non-productive: no OCR, just metadata
-            print(f"[NON-PROD] {app_name} — {window_title[:50]}")
-
-        elif classification in ('productive', 'unknown'):
-            # Productive or unknown: capture OCR (returns dict with text, method, confidence, error_message)
-            ocr_result = self.ocr_processor.capture_and_ocr()
-            ocr_text = ocr_result.get('text') if ocr_result else None
-            
-            if classification == 'unknown':
-                app_key = app_name.lower()
-                if app_key not in self._unknown_apps_classified:
-                    # First time seeing this app — send to AI for classification suggestion
-                    self._unknown_apps_classified.add(app_key)
-                    print(f"[UNKNOWN] {app_name} — sending to AI server for classification")
-                    threading.Thread(
-                        target=self._classify_unknown_app_async,
-                        args=(app_name, window_title, ocr_text),
-                        daemon=True
-                    ).start()
-                else:
-                    print(f"[UNKNOWN] {app_name} — already sent to AI server, skipping")
-            else:
-                print(f"[PROD] {app_name} — {window_title[:50]}")
-
-        # Update session manager with OCR result (includes text, method, confidence, error_message)
-        self.session_manager.on_window_switch(display_title, app_name, classification, ocr_result)
-
-    def _classify_unknown_app_async(self, app_name, window_title, ocr_text):
-        """Background thread: calls POST /api/classify-app on AI server."""
-        try:
-            ai_server_url = get_env_var('AI_SERVER_URL', '')
-            if not ai_server_url:
-                return
-
-            response = requests.post(
-                f"{ai_server_url}/api/classify-app",
-                json={
-                    'application_name': app_name,
-                    'window_title': window_title,
-                    'ocr_text': ocr_text or ''
-                },
-                headers=self._get_auth_headers(),
-                timeout=10
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                new_classification = data.get('classification', 'unknown')
-                reasoning = data.get('reasoning', '')
-
-                print(f"[AI] Classification for {app_name}: {new_classification}")
-                if reasoning:
-                    print(f"     Reasoning: {reasoning[:80]}")
-
-                # Update the session's classification via thread-safe method
-                self.session_manager.update_classification(app_name, 'unknown', new_classification)
-        except Exception as e:
-            print(f"[WARN] Failed to classify unknown app {app_name}: {e}")
-
-    def _get_auth_headers(self):
-        """Get authentication headers for AI server requests."""
-        headers = {'Content-Type': 'application/json'}
-        if hasattr(self, 'auth_manager') and self.auth_manager:
-            token = self.auth_manager.get_access_token()
-            if token:
-                headers['Authorization'] = f'Bearer {token}'
-        return headers
 
     def capture_screenshot(self):
         """Capture screenshot and return PIL Image"""
@@ -5924,28 +5316,6 @@ class TimeTracker:
             thumbnail.save(thumb_buffer, format='JPEG', quality=70)
             thumb_bytes = thumb_buffer.getvalue()
             
-            # Extract text using OCR (dynamic engine selection based on OCR_PRIMARY_ENGINE)
-            # Automatically falls back to configured fallback engines if primary fails
-            print("[OCR] Extracting text from screenshot...")
-            ocr_result = extract_text_from_image(
-                screenshot, 
-                window_title=window_info['title'], 
-                app_name=window_info['app'],
-                use_preprocessing=True
-            )
-            
-            extracted_text = ocr_result.get('text', '')
-            ocr_confidence = ocr_result.get('confidence', 0.0)
-            ocr_method = ocr_result.get('method', 'unknown')
-            ocr_line_count = ocr_result.get('line_count', 0)
-            
-            if ocr_result.get('success'):
-                print(f"[OCR] ✓ Text extracted via {ocr_method} (confidence: {ocr_confidence:.2f}, lines: {ocr_line_count})")
-                if extracted_text:
-                    print(f"[OCR] Preview: {extracted_text[:100]}...")
-            else:
-                print(f"[OCR] ✗ Failed - will use metadata analysis (title: {window_info['title']}, app: {window_info['app']})")
-            
             # Generate filenames
             timestamp = datetime.now(timezone.utc)
             filename = f"screenshot_{int(timestamp.timestamp())}.png"
@@ -6027,11 +5397,6 @@ class TimeTracker:
                 'duration_seconds': duration_seconds,
                 'project_key': project_key,  # Project from user's assigned issues
                 'user_assigned_issues': self.user_issues,
-                # OCR extracted text
-                'extracted_text': extracted_text,
-                'ocr_confidence': ocr_confidence,
-                'ocr_method': ocr_method,
-                'ocr_line_count': ocr_line_count,
                 # Timezone support for correct date grouping
                 'user_timezone': get_local_timezone_name(),  # e.g., 'Asia/Kolkata'
                 'work_date': datetime.now().date().isoformat(),   # Local date: 'YYYY-MM-DD'
@@ -6634,10 +5999,6 @@ class TimeTracker:
                     if time.time() - last_notification_check > notification_check_interval:
                         self.check_and_notify_unassigned_work()
                         last_notification_check = time.time()
-
-                    # Periodically upload activity batch (event-based tracking)
-                    if time.time() - self.last_batch_upload_time >= self.batch_upload_interval:
-                        self.upload_activity_batch()
                 
                 # Check if screenshot monitoring is enabled
                 if not self.tracking_settings.get('screenshot_monitoring_enabled', True):
@@ -6725,7 +6086,7 @@ class TimeTracker:
                 # Determine work type based on whitelist/blacklist
                 work_type = self.get_app_work_type(app_name, window_title)
                 window_info['work_type'] = work_type
-                window_info['is_blacklisted'] = self.is_app_blacklisted(app_name, window_title)
+                window_info['is_blacklisted'] = self.is_app_blacklisted(app_name)
                 
                 # Check if window switched
                 window_switched = window_info.get('is_new_window', False)
@@ -6741,12 +6102,6 @@ class TimeTracker:
                 # IMPORTANT: Always update the previous window record when switching, regardless of interval
                 # The interval check only applies to creating NEW screenshots, not updating existing ones
                 if window_switched:
-                    # Process window event for event-based activity tracking (OCR capture and session management)
-                    tracking_mode = self.tracking_settings.get('tracking_mode', 'interval')
-                    event_enabled = self.tracking_settings.get('event_tracking_enabled', False)
-                    if event_enabled or tracking_mode == 'event':
-                        self.process_window_event(window_info)
-                    
                     # Update existing record of previous window with actual time spent
                     # This ensures we update the screenshot record with the actual duration
                     # Only update if there's actually a screenshot ID to update

@@ -55,15 +55,43 @@ export const DEFAULT_TRACKING_SETTINGS = {
   trackWindowChanges: true,
   trackIdleTime: true,
   idleThresholdSeconds: 300, // 5 minutes
-  whitelistEnabled: true,
-  whitelistedApps: ['code', 'cursor', 'chrome', 'slack', 'jira', 'github', 'zoom', 'teams', 'postman', 'msedge', 'firefox'],
-  blacklistEnabled: true,
-  blacklistedApps: ['netflix', 'youtube', 'spotify', 'facebook', 'instagram', 'twitter', 'tiktok'],
+  // DEPRECATED: whitelist/blacklist now use database-driven classification
+  // See application_classifications table in Supabase
+  whitelistEnabled: false, // DEPRECATED: Use classification_manager instead
+  whitelistedApps: [], // DEPRECATED: Manage via application_classifications table
+  blacklistEnabled: false, // DEPRECATED: Use classification_manager instead
+  blacklistedApps: [], // DEPRECATED: Manage via application_classifications table
   nonWorkThresholdPercent: 30,
   flagExcessiveNonWork: true,
   privateSitesEnabled: true,
   privateSites: [],
   jiraWorklogSyncEnabled: false
+};
+
+// Application Classification Types
+export const CLASSIFICATION_TYPES = {
+  PRODUCTIVE: 'productive',
+  NON_PRODUCTIVE: 'non_productive',
+  PRIVATE: 'private'
+};
+
+// Match By Types (how an app is identified)
+export const MATCH_BY_TYPES = {
+  PROCESS: 'process',   // Match by Windows process name (e.g., code.exe)
+  URL: 'url'            // Match by domain pattern in browser window title (e.g., github.com)
+};
+
+// Browser process names (used to determine if URL-based matching should be used)
+export const BROWSER_PROCESSES = [
+  'chrome.exe', 'msedge.exe', 'firefox.exe', 'brave.exe',
+  'opera.exe', 'vivaldi.exe', 'arc.exe'
+];
+
+// Default Classification Settings
+export const DEFAULT_CLASSIFICATION_SETTINGS = {
+  batchUploadInterval: 300,      // 5 minutes in seconds
+  autoWorklogEnabled: false,
+  nonWorkThreshold: 30           // 30% non-work threshold
 };
 
 // Pagination

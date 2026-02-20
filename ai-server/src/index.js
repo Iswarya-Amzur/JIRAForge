@@ -19,6 +19,8 @@ const clusteringPollingService = require('./services/clustering-polling-service'
 const cleanupService = require('./services/cleanup-service');
 const aiService = require('./services/ai');
 const { initializeSheetsLogger } = require('./services/sheets-logger');
+const activityController = require('./controllers/activity-controller');
+const activityPollingService = require('./services/activity-polling-service');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -242,6 +244,10 @@ app.post('/api/forge/feedback/session', forgeLimiter, forgeAuthMiddleware, forge
 app.post('/api/analyze-screenshot', authMiddleware, screenshotController.analyzeScreenshot);
 app.post('/api/process-brd', authMiddleware, brdController.processBRD);
 
+// Activity tracking endpoints (new event-based pipeline)
+app.post('/api/analyze-batch', authMiddleware, activityController.analyzeBatch);
+app.post('/api/classify-app', authMiddleware, activityController.classifyApp);
+
 // Manual trigger for clustering - called by organization admins from Forge app
 app.post('/api/trigger-clustering', authMiddleware, async (req, res, next) => {
   try {
@@ -442,6 +448,11 @@ async function startServer() {
       await cleanupService.start();
       logger.info('Cleanup service started - monthly cleanup scheduled');
 
+      // Step 4: Start activity polling service for new event-based pipeline
+      // Processes pending activity_records (text-only AI analysis)
+      activityPollingService.start();
+      logger.info('Activity polling service started - will process pending activity records');
+
       resolve();
     });
   });
@@ -459,6 +470,7 @@ process.on('SIGTERM', () => {
   pollingService.stop();
   clusteringPollingService.stop();
   cleanupService.stop();
+  activityPollingService.stop();
   process.exit(0);
 });
 
@@ -467,5 +479,6 @@ process.on('SIGINT', () => {
   pollingService.stop();
   clusteringPollingService.stop();
   cleanupService.stop();
+  activityPollingService.stop();
   process.exit(0);
 });

@@ -36,8 +36,17 @@ else:
 a = Analysis(
     ['desktop_app.py'],
     pathex=[],
-    binaries=[],
-    datas=ocr_datas + paddleocr_models,  # Include OCR module and models
+    binaries=[
+        # Tesseract OCR binary (for local OCR processing)
+        # Adjust path based on Tesseract installation location
+        (r'C:\Program Files\Tesseract-OCR\tesseract.exe', 'tesseract'),
+        (r'C:\Program Files\Tesseract-OCR\*.dll', 'tesseract'),
+    ],
+    datas=[
+        # Tesseract language data files
+        (r'C:\Program Files\Tesseract-OCR\tessdata\eng.traineddata', 'tesseract/tessdata'), ocr_datas + paddleocr_models
+    ],
+   
     hiddenimports=[
         # Flask and web
         'flask',

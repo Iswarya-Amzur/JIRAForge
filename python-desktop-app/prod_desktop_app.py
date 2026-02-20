@@ -2849,10 +2849,12 @@ class TimeTracker:
             'track_window_changes': True,
             'track_idle_time': True,
             'idle_threshold_seconds': 300,  # 5 minutes
-            'whitelist_enabled': True,
-            'whitelisted_apps': ['vscode', 'code', 'chrome', 'slack', 'jira', 'github', 'zoom', 'teams'],
-            'blacklist_enabled': True,
-            'blacklisted_apps': ['netflix', 'youtube', 'spotify', 'facebook', 'instagram', 'twitter', 'tiktok'],
+            # DEPRECATED: whitelist/blacklist now use database-driven classification
+            # See application_classifications table in Supabase and app_classifications_cache in SQLite
+            'whitelist_enabled': False,  # DEPRECATED: Use classification_manager instead
+            'whitelisted_apps': [],  # DEPRECATED: Manage via application_classifications table
+            'blacklist_enabled': False,  # DEPRECATED: Use classification_manager instead
+            'blacklisted_apps': [],  # DEPRECATED: Manage via application_classifications table
             'non_work_threshold_percent': 30,
             'flag_excessive_non_work': True,
             'private_sites_enabled': True,
