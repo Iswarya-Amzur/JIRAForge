@@ -54,6 +54,12 @@ function TimesheetSettings() {
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
   
+  // Project selection for project-level settings
+  const [selectedProject, setSelectedProject] = useState(null); // null = organization-wide
+  const [availableProjects, setAvailableProjects] = useState([]);
+  const [loadingProjects, setLoadingProjects] = useState(true);
+  const [settingsSource, setSettingsSource] = useState('organization'); // 'project', 'organization', or 'global'
+  
   // Classifications fetched from database
   const [productiveApps, setProductiveApps] = useState([]);
   const [nonProductiveApps, setNonProductiveApps] = useState([]);
@@ -65,15 +71,31 @@ function TimesheetSettings() {
   const [customBlacklistApp, setCustomBlacklistApp] = useState('');
   const [customPrivateSite, setCustomPrivateSite] = useState('');
 
-  const loadSettings = async () => {
+  const loadProjects = async () => {
+    setLoadingProjects(true);
+    try {
+      const result = await invoke('getAllProjects');
+      if (result.success && result.projects) {
+        setAvailableProjects(result.projects);
+      }
+    } catch (err) {
+      console.error('Failed to load projects:', err);
+      // Don't show error - just use empty list
+    } finally {
+      setLoadingProjects(false);
+    }
+  };
+
+  const loadSettings = async (projectKey = null) => {
     setLoading(true);
     try {
-      const result = await invoke('getTrackingSettings');
+      const result = await invoke('getTrackingSettings', { projectKey });
       if (result.success && result.settings) {
         setSettings(prev => ({
           ...prev,
           ...result.settings
         }));
+        setSettingsSource(result.settings.settingsSource || 'organization');
       }
     } catch (err) {
       console.error('Failed to load tracking settings:', err);
@@ -116,19 +138,32 @@ function TimesheetSettings() {
   };
 
   useEffect(() => {
-    loadSettings();
+    loadProjects();
+    loadSettings(selectedProject);
     loadClassifications();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Reload settings when project changes
+  useEffect(() => {
+    if (!loadingProjects) {
+      loadSettings(selectedProject);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProject]);
 
   const handleSave = async () => {
     setSaving(true);
     setMessage({ type: '', text: '' });
 
     try {
-      const result = await invoke('saveTrackingSettings', { settings });
+      const result = await invoke('saveTrackingSettings', { 
+        settings,
+        projectKey: selectedProject 
+      });
       if (result.success) {
-        setMessage({ type: 'success', text: 'Timesheet settings saved successfully!' });
+        const level = selectedProject ? `project ${selectedProject}` : 'organization';
+        setMessage({ type: 'success', text: `Timesheet settings saved successfully for ${level}!` });
       } else {
         setMessage({ type: 'error', text: result.error || 'Failed to save settings' });
       }
@@ -240,6 +275,67 @@ function TimesheetSettings() {
           Configure time tracking, screenshots, and monitoring preferences
         </p>
       </div>
+
+      {/* Project Selector - Choose between org-wide or project-specific settings */}
+      <section className="settings-section project-selector-section">
+        <div className="section-header">
+          <div className="section-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M22 19C22 19.5304 21.7893 20.0391 21.4142 20.4142C21.0391 20.7893 20.5304 21 20 21H4C3.46957 21 2.96086 20.7893 2.58579 20.4142C2.21071 20.0391 2 19.5304 2 19V5C2 4.46957 2.21071 3.96086 2.58579 3.58579C2.96086 3.21071 3.46957 3 4 3H9L11 6H20C20.5304 6 21.0391 6.21071 21.4142 6.58579C21.7893 6.96086 22 7.46957 22 8V19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+          <h2>Settings Level</h2>
+        </div>
+        <div className="section-content">
+          <p className="field-description">
+            Choose whether to configure settings for the entire organization or for a specific project. 
+            Project-specific settings override organization defaults.
+          </p>
+          <div className="form-group">
+            <label>Configuration Level</label>
+            {loadingProjects ? (
+              <p className="loading-text">Loading projects...</p>
+            ) : (
+              <select 
+                value={selectedProject || ''} 
+                onChange={(e) => setSelectedProject(e.target.value || null)}
+                className="project-select"
+              >
+                <option value="">Organization-Wide (Default for all projects)</option>
+                {availableProjects.map(project => (
+                  <option key={project.key} value={project.key}>
+                    {project.name} ({project.key})
+                  </option>
+                ))}
+              </select>
+            )}
+            {settingsSource && (
+              <p className="field-hint">
+                {settingsSource === 'project' && selectedProject && (
+                  <span style={{color: '#36B37E', fontWeight: 'bold'}}>
+                    ✓ Viewing project-specific settings for {selectedProject}
+                  </span>
+                )}
+                {settingsSource === 'organization' && selectedProject && (
+                  <span style={{color: '#FF991F'}}>
+                    ⚠ No project-specific settings found. Showing organization defaults. Save to create project-specific settings.
+                  </span>
+                )}
+                {settingsSource === 'organization' && !selectedProject && (
+                  <span style={{color: '#36B37E', fontWeight: 'bold'}}>
+                    ✓ Viewing organization-wide default settings
+                  </span>
+                )}
+                {settingsSource === 'global' && (
+                  <span style={{color: '#6B778C'}}>
+                    Showing global default settings
+                  </span>
+                )}
+              </p>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* Screenshot Monitoring Section */}
       <section className="settings-section">

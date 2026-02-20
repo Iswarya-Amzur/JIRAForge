@@ -3332,7 +3332,19 @@ class TimeTracker:
         # ============================================================================
         # TRACKING SETTINGS (loaded from Supabase, configurable by admins)
         # ============================================================================
-        self.tracking_settings = {
+        # ============================================================================
+        # TRACKING SETTINGS (Per-Project Configuration)
+        # ============================================================================
+        # Tracking settings are now cached per-project since different projects
+        # may have different productivity rules (e.g., Twitter = productive for
+        # social media projects, but non-productive for internal tools)
+        self.tracking_settings_cache = {}  # Dict: {project_key: settings_dict}
+        self.tracking_settings_last_fetch = {}  # Dict: {project_key: timestamp}
+        self.tracking_settings_cache_ttl = 300  # Refresh settings every 5 minutes
+        self.current_project_key = None  # Track current project for settings
+        
+        # Default settings (used as fallback)
+        self.default_tracking_settings = {
             'screenshot_monitoring_enabled': True,
             'screenshot_interval_seconds': 900,  # 15 minutes default
             'tracking_mode': 'interval',  # 'interval' or 'event'
@@ -3349,10 +3361,10 @@ class TimeTracker:
             'non_work_threshold_percent': 30,
             'flag_excessive_non_work': True,
             'private_sites_enabled': True,
-            'private_sites': []
+            'private_sites': [],
+            'project_key': None,
+            'settings_source': 'default'
         }
-        self.tracking_settings_last_fetch = None
-        self.tracking_settings_cache_ttl = 300  # Refresh settings every 5 minutes
         
         # ============================================================================
         # UNASSIGNED WORK NOTIFICATION SETTINGS
@@ -4985,34 +4997,126 @@ class TimeTracker:
     # TRACKING SETTINGS MANAGEMENT
     # ============================================================================
     
-    def fetch_tracking_settings(self):
-        """Fetch tracking settings from Supabase (configured by admins in Forge app)"""
-        try:
-            # Check if we need to refresh settings
-            if self.tracking_settings_last_fetch is not None:
-                time_since_fetch = time.time() - self.tracking_settings_last_fetch
+    def get_tracking_settings_for_project(self, project_key=None):
+        """Get tracking settings for a specific project
+        
+        This method handles the project-specific settings cache and fallback.
+        Priority: project-specific → organization-wide → defaults
+        
+        Args:
+            project_key: Jira project key (e.g., 'PROJ'). If None, returns org-wide settings.
+            
+        Returns:
+            dict: Tracking settings for the project
+        """
+        # Use project key or default to current
+        pk = project_key or self.current_project_key
+        
+        # Check if we have cached settings for this project
+        if pk and pk in self.tracking_settings_cache:
+            # Check if cache is still valid
+            last_fetch = self.tracking_settings_last_fetch.get(pk)
+            if last_fetch:
+                time_since_fetch = time.time() - last_fetch
                 if time_since_fetch < self.tracking_settings_cache_ttl:
-                    return  # Use cached settings
+                    return self.tracking_settings_cache[pk]
+        
+        # If no cache or expired, fetch fresh settings
+        self.fetch_tracking_settings(pk)
+        
+        # Return cached settings or defaults
+        return self.tracking_settings_cache.get(pk, self.default_tracking_settings.copy())
+    
+    @property
+    def tracking_settings(self):
+        """Backward compatible property - returns settings for current project"""
+        return self.get_tracking_settings_for_project(self.current_project_key)
+    
+    def update_current_project(self):
+        """Check if project has changed and reload settings if needed"""
+        new_project_key = self.get_user_project_key()
+        
+        if new_project_key != self.current_project_key:
+            old_project = self.current_project_key
+            self.current_project_key = new_project_key
+            
+            if old_project:
+                print(f"[PROJECT] Changed from {old_project} → {new_project_key}")
+            else:
+                print(f"[PROJECT] Set to {new_project_key}")
+            
+            # Fetch settings for new project
+            self.fetch_tracking_settings(new_project_key)
+            
+            # Update capture interval and idle timeout based on new settings
+            settings = self.get_tracking_settings_for_project(new_project_key)
+            self.capture_interval = settings.get('screenshot_interval_seconds', self.capture_interval)
+            self.idle_timeout = settings.get('idle_threshold_seconds', self.idle_timeout)
+            
+            return True  # Project changed
+        
+        return False  # No change
+
+    def fetch_tracking_settings(self, project_key=None):
+        """
+        Fetch tracking settings from Supabase (configured by admins in Forge app)
+        
+        Args:
+            project_key (str, optional): Project key to fetch settings for. If None, fetches org-wide settings.
+        
+        Returns:
+            dict: The fetched settings
+        """
+        try:
+            # Check if we need to refresh settings for this project
+            cache_key = project_key if project_key else '_org_default'
+            if cache_key in self.tracking_settings_last_fetch:
+                time_since_fetch = time.time() - self.tracking_settings_last_fetch[cache_key]
+                if time_since_fetch < self.tracking_settings_cache_ttl:
+                    return self.tracking_settings_cache.get(cache_key, self.default_tracking_settings)
             
             client = self.supabase_service if self.supabase_service else self.supabase
+            settings = None
+            settings_source = 'default'
             
-            # Fetch settings for current organization (or global settings)
-            query = client.table('tracking_settings').select('*')
-
-            # If we have an organization_id, filter by it
-            if self.organization_id:
+            # 3-tier fallback: project-specific → org-wide → global defaults
+            
+            # Tier 1: Try project-specific settings (if project_key provided)
+            if project_key and self.organization_id:
+                query = client.table('tracking_settings').select('*')
                 query = query.eq('organization_id', self.organization_id)
-            else:
-                # Try to get global settings (organization_id is null)
-                query = query.is_('organization_id', 'null')
-            
-            result = query.limit(1).execute()
-
-            if result.data and len(result.data) > 0:
-                settings = result.data[0]
+                query = query.eq('project_key', project_key)
+                result = query.limit(1).execute()
                 
-                # Map database columns to local settings
-                self.tracking_settings = {
+                if result.data and len(result.data) > 0:
+                    settings = result.data[0]
+                    settings_source = 'project'
+            
+            # Tier 2: Try organization-wide settings (project_key IS NULL)
+            if not settings and self.organization_id:
+                query = client.table('tracking_settings').select('*')
+                query = query.eq('organization_id', self.organization_id)
+                query = query.is_('project_key', 'null')
+                result = query.limit(1).execute()
+                
+                if result.data and len(result.data) > 0:
+                    settings = result.data[0]
+                    settings_source = 'organization'
+            
+            # Tier 3: Try global defaults (organization_id IS NULL, project_key IS NULL)
+            if not settings:
+                query = client.table('tracking_settings').select('*')
+                query = query.is_('organization_id', 'null')
+                query = query.is_('project_key', 'null')
+                result = query.limit(1).execute()
+                
+                if result.data and len(result.data) > 0:
+                    settings = result.data[0]
+                    settings_source = 'global'
+
+            if settings:
+                # Map database columns to local settings format
+                fetched_settings = {
                     'screenshot_monitoring_enabled': settings.get('screenshot_monitoring_enabled', True),
                     'screenshot_interval_seconds': settings.get('screenshot_interval_seconds', 900),
                     'tracking_mode': settings.get('tracking_mode', 'interval'),
@@ -5021,73 +5125,46 @@ class TimeTracker:
                     'track_idle_time': settings.get('track_idle_time', True),
                     'idle_threshold_seconds': settings.get('idle_threshold_seconds', 300),
                     'whitelist_enabled': settings.get('whitelist_enabled', True),
-                    'whitelisted_apps': settings.get('whitelisted_apps') or [],  # Handle None values
+                    'whitelisted_apps': settings.get('whitelisted_apps') or [],
                     'blacklist_enabled': settings.get('blacklist_enabled', True),
-                    'blacklisted_apps': settings.get('blacklisted_apps') or [],  # Handle None values
+                    'blacklisted_apps': settings.get('blacklisted_apps') or [],
                     'non_work_threshold_percent': settings.get('non_work_threshold_percent', 30),
                     'flag_excessive_non_work': settings.get('flag_excessive_non_work', True),
                     'private_sites_enabled': settings.get('private_sites_enabled', True),
-                    'private_sites': settings.get('private_sites') or []  # Handle None values
+                    'private_sites': settings.get('private_sites') or []
                 }
                 
-                # Update capture interval from settings
-                self.capture_interval = self.tracking_settings['screenshot_interval_seconds']
-                self.idle_timeout = self.tracking_settings['idle_threshold_seconds']
+                # Cache the settings
+                self.tracking_settings_cache[cache_key] = fetched_settings
+                self.tracking_settings_last_fetch[cache_key] = time.time()
                 
-                self.tracking_settings_last_fetch = time.time()
-                tracking_mode = self.tracking_settings.get('tracking_mode', 'interval')
-                event_enabled = self.tracking_settings.get('event_tracking_enabled', False)
+                # Update capture interval from settings (for backward compatibility)
+                self.capture_interval = fetched_settings['screenshot_interval_seconds']
+                self.idle_timeout = fetched_settings['idle_threshold_seconds']
+                
+                tracking_mode = fetched_settings.get('tracking_mode', 'interval')
+                event_enabled = fetched_settings.get('event_tracking_enabled', False)
                 mode_str = "interval + event" if (event_enabled or tracking_mode == 'event') else "interval-only"
-                print(f"[OK] Tracking settings loaded - mode: {mode_str}, interval: {self.capture_interval}s")
-                print(f"     - Whitelist enabled: {self.tracking_settings['whitelist_enabled']}, apps: {self.tracking_settings['whitelisted_apps']}")
-                print(f"     - Blacklist enabled: {self.tracking_settings['blacklist_enabled']}, apps: {self.tracking_settings['blacklisted_apps']}")
-                self.add_admin_log('INFO', f'Settings loaded: interval={self.capture_interval}s, mode={mode_str}')
-
+                
+                project_info = f" for project '{project_key}'" if project_key else ""
+                print(f"[OK] Tracking settings loaded{project_info} (source: {settings_source}) - mode: {mode_str}, interval: {self.capture_interval}s")
+                print(f"     - Whitelist enabled: {fetched_settings['whitelist_enabled']}, apps: {fetched_settings['whitelisted_apps']}")
+                print(f"     - Blacklist enabled: {fetched_settings['blacklist_enabled']}, apps: {fetched_settings['blacklisted_apps']}")
+                self.add_admin_log('INFO', f'Settings loaded{project_info} (source: {settings_source}): interval={self.capture_interval}s, mode={mode_str}')
+                
+                return fetched_settings
+            
             else:
-                # Fallback: try global settings (organization_id IS NULL)
-                # This matches the Forge app's getTrackingSettings fallback behavior
-                if self.organization_id:
-                    fallback_result = client.table('tracking_settings').select('*').is_('organization_id', 'null').limit(1).execute()
-                    if fallback_result.data and len(fallback_result.data) > 0:
-                        result = fallback_result
-                        settings = result.data[0]
-
-                        # Map database columns to local settings
-                        self.tracking_settings = {
-                            'screenshot_monitoring_enabled': settings.get('screenshot_monitoring_enabled', True),
-                            'screenshot_interval_seconds': settings.get('screenshot_interval_seconds', 900),
-                            'tracking_mode': settings.get('tracking_mode', 'interval'),
-                            'event_tracking_enabled': settings.get('event_tracking_enabled', False),
-                            'track_window_changes': settings.get('track_window_changes', True),
-                            'track_idle_time': settings.get('track_idle_time', True),
-                            'idle_threshold_seconds': settings.get('idle_threshold_seconds', 300),
-                            'whitelist_enabled': settings.get('whitelist_enabled', True),
-                            'whitelisted_apps': settings.get('whitelisted_apps') or [],
-                            'blacklist_enabled': settings.get('blacklist_enabled', True),
-                            'blacklisted_apps': settings.get('blacklisted_apps') or [],
-                            'non_work_threshold_percent': settings.get('non_work_threshold_percent', 30),
-                            'flag_excessive_non_work': settings.get('flag_excessive_non_work', True),
-                            'private_sites_enabled': settings.get('private_sites_enabled', True),
-                            'private_sites': settings.get('private_sites') or []
-                        }
-
-                        self.capture_interval = self.tracking_settings['screenshot_interval_seconds']
-                        self.idle_timeout = self.tracking_settings['idle_threshold_seconds']
-
-                        self.tracking_settings_last_fetch = time.time()
-                        tracking_mode = self.tracking_settings.get('tracking_mode', 'interval')
-                        event_enabled = self.tracking_settings.get('event_tracking_enabled', False)
-                        mode_str = "interval + event" if (event_enabled or tracking_mode == 'event') else "interval-only"
-                        print(f"[OK] Tracking settings loaded (global fallback) - mode: {mode_str}, interval: {self.capture_interval}s")
-                        self.add_admin_log('INFO', f'Settings loaded (global): interval={self.capture_interval}s, mode={mode_str}')
-                        return
-
-                print("[INFO] No tracking settings found in Supabase, using defaults")
-                self.tracking_settings_last_fetch = time.time()
+                # No settings found, use defaults
+                print(f"[INFO] No tracking settings found in Supabase, using defaults")
+                self.tracking_settings_cache[cache_key] = self.default_tracking_settings.copy()
+                self.tracking_settings_last_fetch[cache_key] = time.time()
+                return self.default_tracking_settings
 
         except Exception as e:
             print(f"[WARN] Failed to fetch tracking settings: {e}")
-            # Continue with default settings
+            # Return defaults on error
+            return self.default_tracking_settings
 
     # ============================================================================
     # PAUSE SETTINGS MANAGEMENT (Local Storage)
@@ -6518,8 +6595,10 @@ class TimeTracker:
 
     def tracking_loop(self):
         """Main tracking loop with idle detection and event-based window switch capture"""
-        # Fetch initial tracking settings from Supabase
-        self.fetch_tracking_settings()
+        # Detect current project and fetch initial tracking settings from Supabase
+        self.update_current_project()
+        project_key = self.current_project_key
+        self.fetch_tracking_settings(project_key=project_key)
         
         # Log actual tracking mode from settings
         tracking_mode = self.tracking_settings.get('tracking_mode', 'interval')
@@ -6621,8 +6700,15 @@ class TimeTracker:
                 # Skip periodic checks while idle — no need to hit APIs when user is away
                 if not self.is_idle:
                     # Periodically refresh tracking settings from Supabase
+                    # Also check if user switched projects (e.g., from issue reassignment)
                     if time.time() - last_settings_refresh > settings_refresh_interval:
-                        self.fetch_tracking_settings()
+                        # Check if project changed (automatically reloads settings if it did)
+                        project_changed = self.update_current_project()
+                        
+                        # Refresh settings even if project didn't change (settings might have been updated)
+                        if not project_changed:
+                            self.fetch_tracking_settings(project_key=self.current_project_key)
+                        
                         last_settings_refresh = time.time()
 
                     # Periodically check for app updates (every 4 hours by default)

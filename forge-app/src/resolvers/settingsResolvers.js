@@ -72,14 +72,16 @@ export function registerSettingsResolvers(resolver) {
   /**
    * Resolver for getting tracking/timesheet settings
    * These settings control screenshot monitoring, whitelisted/blacklisted apps, etc.
+   * Can fetch project-level or organization-level settings
    */
   resolver.define('getTrackingSettings', async (req) => {
-    const { context } = req;
+    const { payload, context } = req;
+    const { projectKey } = payload || {};
     const accountId = context.accountId;
     const cloudId = context.cloudId;  // Multi-tenancy: Get Jira Cloud ID from context
 
     try {
-      const settings = await getTrackingSettings(accountId, cloudId);
+      const settings = await getTrackingSettings(accountId, cloudId, projectKey);
       return {
         success: true,
         settings
@@ -96,18 +98,20 @@ export function registerSettingsResolvers(resolver) {
   /**
    * Resolver for saving tracking/timesheet settings
    * Only admins/project admins can save these settings
+   * Can save at project-level or organization-level
    */
   resolver.define('saveTrackingSettings', async (req) => {
     const { payload, context } = req;
-    const { settings } = payload;
+    const { settings, projectKey } = payload;
     const accountId = context.accountId;
     const cloudId = context.cloudId;  // Multi-tenancy: Get Jira Cloud ID from context
 
     try {
-      await saveTrackingSettings(accountId, cloudId, settings);
+      await saveTrackingSettings(accountId, cloudId, settings, projectKey);
+      const level = projectKey ? `project ${projectKey}` : 'organization';
       return {
         success: true,
-        message: 'Tracking settings saved successfully'
+        message: `Tracking settings saved successfully for ${level}`
       };
     } catch (error) {
       console.error('Error saving tracking settings:', error);

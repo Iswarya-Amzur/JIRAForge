@@ -47,17 +47,18 @@ export async function saveUserSettings(accountId, settings) {
 
 /**
  * Get tracking/timesheet settings from Supabase
- * These are organization-level settings for screenshot monitoring, app lists, etc.
+ * These can be project-level or organization-level settings for screenshot monitoring, app lists, etc.
  * @param {string} accountId - Atlassian account ID
  * @param {string} cloudId - Jira Cloud ID for multi-tenancy
- * @returns {Promise<Object>} Tracking settings
+ * @param {string} projectKey - Optional Jira project key for project-specific settings
+ * @returns {Promise<Object>} Tracking settings with settingsSource indicating level
  */
-export async function getTrackingSettings(accountId, cloudId) {
+export async function getTrackingSettings(accountId, cloudId, projectKey = null) {
   try {
     const supabaseConfig = await getSupabaseConfig(accountId);
     if (!supabaseConfig) {
       console.log('[TrackingSettings] Supabase not configured, returning defaults');
-      return DEFAULT_TRACKING_SETTINGS;
+      return { ...DEFAULT_TRACKING_SETTINGS, settingsSource: 'default' };
     }
 
     // Get organization for multi-tenancy
@@ -71,21 +72,41 @@ export async function getTrackingSettings(accountId, cloudId) {
       }
     }
 
-    // Try to get org-specific settings first, then fall back to global (organization_id = NULL)
     let response;
-    if (organizationId) {
+    let settingsSource = 'global';
+
+    // Priority: project-specific → org-level → global defaults
+    if (organizationId && projectKey) {
+      // Try project-specific settings first
       response = await supabaseRequest(
         supabaseConfig,
-        `tracking_settings?organization_id=eq.${organizationId}&limit=1`
+        `tracking_settings?organization_id=eq.${organizationId}&project_key=eq.${projectKey}&limit=1`
       );
+      if (response && response.length > 0) {
+        settingsSource = 'project';
+      }
     }
 
-    // If no org-specific settings, get global defaults
+    // Fall back to org-level settings
+    if (organizationId && (!response || response.length === 0)) {
+      response = await supabaseRequest(
+        supabaseConfig,
+        `tracking_settings?organization_id=eq.${organizationId}&project_key=is.null&limit=1`
+      );
+      if (response && response.length > 0) {
+        settingsSource = 'organization';
+      }
+    }
+
+    // Fall back to global defaults
     if (!response || response.length === 0) {
       response = await supabaseRequest(
         supabaseConfig,
-        'tracking_settings?organization_id=is.null&limit=1'
+        'tracking_settings?organization_id=is.null&project_key=is.null&limit=1'
       );
+      if (response && response.length > 0) {
+        settingsSource = 'global';
+      }
     }
 
     if (response && response.length > 0) {
@@ -106,26 +127,30 @@ export async function getTrackingSettings(accountId, cloudId) {
         flagExcessiveNonWork: settings.flag_excessive_non_work,
         privateSitesEnabled: settings.private_sites_enabled,
         privateSites: settings.private_sites || [],
-        jiraWorklogSyncEnabled: settings.jira_worklog_sync_enabled ?? false
+        jiraWorklogSyncEnabled: settings.jira_worklog_sync_enabled ?? false,
+        projectKey: settings.project_key || null,
+        settingsSource: settingsSource
       };
     }
 
-    return DEFAULT_TRACKING_SETTINGS;
+    return { ...DEFAULT_TRACKING_SETTINGS, settingsSource: 'default' };
   } catch (error) {
     console.error('[TrackingSettings] Error fetching settings:', error);
-    return DEFAULT_TRACKING_SETTINGS;
+    return { ...DEFAULT_TRACKING_SETTINGS, settingsSource: 'default' };
   }
 }
 
 /**
  * Save tracking/timesheet settings to Supabase
+ * Can save at project-level or organization-level
  * Only admins/project admins can save these settings
  * @param {string} accountId - Atlassian account ID
  * @param {string} cloudId - Jira Cloud ID for multi-tenancy
  * @param {Object} settings - Tracking settings object
+ * @param {string} projectKey - Optional Jira project key for project-specific settings
  * @returns {Promise<void>}
  */
-export async function saveTrackingSettings(accountId, cloudId, settings) {
+export async function saveTrackingSettings(accountId, cloudId, settings, projectKey = null) {
   // Check if user is Jira Administrator or Project Admin
   const isAdmin = await isJiraAdmin();
   const permissions = await checkUserPermissions(['ADMINISTER_PROJECTS']);
@@ -173,6 +198,7 @@ export async function saveTrackingSettings(accountId, cloudId, settings) {
   // Prepare data for Supabase
   const trackingData = {
     organization_id: organizationId,
+    project_key: projectKey || null,  // NULL for org-wide settings
     screenshot_monitoring_enabled: settings.screenshotMonitoringEnabled,
     screenshot_interval_seconds: settings.screenshotIntervalSeconds,
     tracking_mode: settings.intervalTrackingEnabled ? 'interval' : 'event',
@@ -193,12 +219,19 @@ export async function saveTrackingSettings(accountId, cloudId, settings) {
     updated_at: new Date().toISOString()
   };
 
-  // Check if settings already exist for this organization
+  // Check if settings already exist for this organization/project
   let existingSettings;
-  if (organizationId) {
+  if (organizationId && projectKey) {
+    // Project-specific settings
     existingSettings = await supabaseRequest(
       supabaseConfig,
-      `tracking_settings?organization_id=eq.${organizationId}&limit=1`
+      `tracking_settings?organization_id=eq.${organizationId}&project_key=eq.${projectKey}&limit=1`
+    );
+  } else if (organizationId) {
+    // Organization-level settings
+    existingSettings = await supabaseRequest(
+      supabaseConfig,
+      `tracking_settings?organization_id=eq.${organizationId}&project_key=is.null&limit=1`
     );
   } else {
     existingSettings = await supabaseRequest(
@@ -226,5 +259,6 @@ export async function saveTrackingSettings(accountId, cloudId, settings) {
     );
   }
 
-  console.log('[TrackingSettings] Settings saved successfully for org:', organizationId);
+  const settingsLevel = projectKey ? `project ${projectKey}` : `org ${organizationId}`;
+  console.log(`[TrackingSettings] Settings saved successfully for ${settingsLevel}`);
 }

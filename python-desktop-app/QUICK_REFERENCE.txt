@@ -1,0 +1,217 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                    BATCH PROCESSING TEST - QUICK REFERENCE                 ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ PREREQUISITES                                                             │
+└──────────────────────────────────────────────────────────────────────────┘
+
+  1. Install dependencies:
+     pip install supabase python-dotenv psutil
+
+  2. Start desktop app:
+     python desktop_app.py
+
+  3. Login and start tracking (not paused)
+
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ QUICK COMMANDS                                                            │
+└──────────────────────────────────────────────────────────────────────────┘
+
+  ⚡ INSTANT CHECK (1 second)
+     python inspect_databases.py
+
+  🔄 WATCH MODE (auto-refresh)
+     python inspect_databases.py --watch
+
+  ⏱️  QUICK TEST (5 minutes)
+     python test_batch_quick.py
+
+  🎯 FULL TEST (15 minutes)
+     python test_batch_processing_real.py --manual
+
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ TOOL SELECTION GUIDE                                                      │
+└──────────────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────┬────────────┬─────────────────────────────────┐
+  │ Tool                │ Duration   │ Use When                        │
+  ├─────────────────────┼────────────┼─────────────────────────────────┤
+  │ inspect_databases   │ Instant    │ - Check current state           │
+  │                     │            │ - Debug issues                  │
+  │                     │            │ - Verify setup                  │
+  ├─────────────────────┼────────────┼─────────────────────────────────┤
+  │ test_batch_quick    │ 5 min      │ - Daily smoke test              │
+  │                     │            │ - Quick validation              │
+  │                     │            │ - After small changes           │
+  ├─────────────────────┼────────────┼─────────────────────────────────┤
+  │ test_batch_real     │ 15 min     │ - Before releases               │
+  │                     │            │ - Comprehensive test            │
+  │                     │            │ - After major changes           │
+  └─────────────────────┴────────────┴─────────────────────────────────┘
+
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ WHAT GETS TESTED                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+
+  ✓ SQLite active_sessions table (real-time tracking)
+  ✓ Batch upload every 5 minutes
+  ✓ Supabase activity_records (permanent storage)
+  ✓ JSON record structure validation
+  ✓ Window switching detection
+  ✓ Visit count tracking
+  ✓ OCR text capture
+  ✓ Classification system
+  ✓ Jira context injection
+  ✓ SQLite clearing after upload
+
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ EXPECTED DATA FLOW                                                        │
+└──────────────────────────────────────────────────────────────────────────┘
+
+  Time      SQLite                  Supabase
+  ─────────────────────────────────────────────────────────────────────────
+  0:00      (empty)                 (old records)
+  1:00      3 sessions              (no new records)
+  2:00      5 sessions              (no new records)
+  3:00      7 sessions              (no new records)
+  4:00      8 sessions              (no new records)
+  5:00      CLEARED!                +8 NEW RECORDS ← BATCH UPLOAD
+  6:00      2 sessions              (8 records)
+  7:00      4 sessions              (8 records)
+  8:00      5 sessions              (8 records)
+  9:00      6 sessions              (8 records)
+  10:00     CLEARED!                +6 NEW RECORDS ← BATCH UPLOAD
+
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ SUCCESS INDICATORS                                                        │
+└──────────────────────────────────────────────────────────────────────────┘
+
+  ✅ SQLite accumulates sessions between batches
+  ✅ SQLite clears at 5-minute mark
+  ✅ New records appear in Supabase after each batch
+  ✅ Visit count increments when returning to same window
+  ✅ OCR text captured for productive apps
+  ✅ Correct classification (productive/non-productive)
+  ✅ Jira issues included in records
+
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ COMMON ISSUES & QUICK FIXES                                               │
+└──────────────────────────────────────────────────────────────────────────┘
+
+  Issue: "SQLite database not found"
+  Fix:   Start desktop app and begin tracking
+
+  Issue: "No batch uploads"
+  Fix:   Check tracking is active (not paused) and user not idle
+
+  Issue: "Supabase connection failed"
+  Fix:   Check .env file has SUPABASE_URL and SUPABASE_SERVICE_KEY
+
+  Issue: "Empty SQLite"
+  Fix:   Switch windows 2-3 times to generate activity
+
+  Issue: "No OCR text"
+  Fix:   Only productive apps get OCR (non-productive apps don't)
+
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ TEST WORKFLOW (15-MINUTE COMPLETE TEST)                                   │
+└──────────────────────────────────────────────────────────────────────────┘
+
+  Step 1: Run test
+          python test_batch_processing_real.py --manual
+
+  Step 2: Switch between windows (30-60 seconds each):
+          - VS Code → Chrome (Jira) → Slack → VS Code → Stack Overflow
+
+  Step 3: Return to previous windows to test visit_count
+
+  Step 4: Wait for automated checks at:
+          - 1 min:  First status (sessions accumulating)
+          - 5 min:  BATCH 1 upload (SQLite clears)
+          - 6 min:  Status (new sessions start)
+          - 10 min: BATCH 2 upload (SQLite clears)
+          - 11 min: Status (new sessions start)
+          - 15 min: BATCH 3 upload (SQLite clears)
+          - Final report displayed
+
+  Step 5: Review results
+          ✓ All 3 batches detected
+          ✓ Records in Supabase
+          ✓ Data integrity validated
+
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ INSPECTOR WATCH MODE (REAL-TIME MONITORING)                               │
+└──────────────────────────────────────────────────────────────────────────┘
+
+  Command: python inspect_databases.py --watch
+
+  Use for:
+    ✓ Watching SQLite sessions accumulate in real-time
+    ✓ Seeing exact moment of batch upload (SQLite clears)
+    ✓ Monitoring visit counts increment
+    ✓ Debugging why batches aren't uploading
+
+  Tip: Open in split screen next to your work to watch tracking live
+
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ RECORD STRUCTURE EXAMPLE                                                  │
+└──────────────────────────────────────────────────────────────────────────┘
+
+  {
+    "window_title": "main.py - Visual Studio Code",
+    "application_name": "Code.exe",
+    "classification": "productive",
+    "ocr_text": "def authenticate_user(code):\n    ...",
+    "ocr_method": "paddleocr",
+    "ocr_confidence": 0.95,
+    "total_time_seconds": 180,
+    "visit_count": 2,
+    "status": "pending",
+    "user_assigned_issues": "[{\"key\":\"PROJ-123\",...}]",
+    "project_key": "PROJ",
+    "batch_timestamp": "2026-02-20T10:05:00Z"
+  }
+
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ FILES CREATED                                                             │
+└──────────────────────────────────────────────────────────────────────────┘
+
+  📄 test_batch_processing_real.py    - 15-minute comprehensive test
+  📄 test_batch_quick.py               - 5-minute quick validation
+  📄 inspect_databases.py              - Database viewer/monitor
+  📄 README_TESTING.md                 - Complete testing guide
+  📄 TEST_BATCH_PROCESSING_GUIDE.md    - Detailed test scenarios
+  📄 QUICK_REFERENCE.txt               - This file
+
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ DOCUMENTATION                                                             │
+└──────────────────────────────────────────────────────────────────────────┘
+
+  📚 README_TESTING.md - START HERE
+     Complete guide to all testing tools
+
+  📚 TEST_BATCH_PROCESSING_GUIDE.md
+     Detailed test scenarios and troubleshooting
+
+  📚 ../docs/JSON_RECORD_STRUCTURE_AND_FLOW.md
+     System architecture and data flow
+
+  📚 ../docs/BATCH_PROCESS_VERIFICATION.md
+     Technical verification report
+
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║ QUICK START: python test_batch_quick.py                                   ║
+╚════════════════════════════════════════════════════════════════════════════╝
