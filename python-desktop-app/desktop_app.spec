@@ -16,7 +16,8 @@ ocr_dir = os.path.join(os.path.dirname(os.path.abspath('desktop_app.py')), 'ocr'
 if os.path.exists(ocr_dir):
     for root, dirs, files in os.walk(ocr_dir):
         for file in files:
-            if file.endswith('.py'):
+            # Only include Python files, exclude config and env files
+            if file.endswith('.py') and not file.startswith('.env'):
                 src = os.path.join(root, file)
                 # Preserve directory structure in ocr/
                 rel_path = os.path.relpath(root, os.path.dirname(ocr_dir))
@@ -185,6 +186,10 @@ a = Analysis(
         'test',
         'unittest',
         'xmlrpc',
+        # SECURITY: Exclude .env file to prevent credential leaks
+        '.env',
+        '.env.local',
+        '.env.production',
     ],
     noarchive=False,
     cipher=block_cipher,

@@ -239,6 +239,9 @@ def set_runtime_ocr_config(config_dict):
     Converts the nested config dict from AI server into flat OCR_* environment-style keys.
     This allows OCRConfig.from_env() to work seamlessly with runtime config.
     
+    IMPORTANT: This function sets BOTH RUNTIME_OCR_CONFIG dict AND os.environ
+    to ensure the OCR module (which calls os.getenv() directly) picks up the config.
+    
     Args:
         config_dict: Dict from AI server with structure:
             {
@@ -252,30 +255,59 @@ def set_runtime_ocr_config(config_dict):
     RUNTIME_OCR_CONFIG = {}
     
     # Set primary engine
-    RUNTIME_OCR_CONFIG['OCR_PRIMARY_ENGINE'] = config_dict.get('primary_engine', 'paddle')
+    key = 'OCR_PRIMARY_ENGINE'
+    value = config_dict.get('primary_engine', 'paddle')
+    RUNTIME_OCR_CONFIG[key] = value
+    os.environ[key] = value  # CRITICAL: Also set os.environ for OCR module
     
     # Set fallback engines as comma-separated string
+    key = 'OCR_FALLBACK_ENGINES'
     fallbacks = config_dict.get('fallback_engines', ['tesseract'])
-    RUNTIME_OCR_CONFIG['OCR_FALLBACK_ENGINES'] = ','.join(fallbacks)
+    value = ','.join(fallbacks)
+    RUNTIME_OCR_CONFIG[key] = value
+    os.environ[key] = value  # CRITICAL: Also set os.environ
     
     # Set global settings
-    RUNTIME_OCR_CONFIG['OCR_USE_PREPROCESSING'] = str(config_dict.get('use_preprocessing', True)).lower()
-    RUNTIME_OCR_CONFIG['OCR_MAX_IMAGE_DIMENSION'] = str(config_dict.get('max_image_dimension', 4096))
-    RUNTIME_OCR_CONFIG['OCR_PREPROCESSING_TARGET_DPI'] = str(config_dict.get('preprocessing_target_dpi', 300))
+    for setting_key, setting_value, default in [
+        ('OCR_USE_PREPROCESSING', 'use_preprocessing', True),
+        ('OCR_MAX_IMAGE_DIMENSION', 'max_image_dimension', 4096),
+        ('OCR_PREPROCESSING_TARGET_DPI', 'preprocessing_target_dpi', 300),
+    ]:
+        value = str(config_dict.get(setting_value, default)).lower() if isinstance(default, bool) else str(config_dict.get(setting_value, default))
+        RUNTIME_OCR_CONFIG[setting_key] = value
+        os.environ[setting_key] = value  # CRITICAL: Also set os.environ
     
     # Set per-engine configurations
     engines = config_dict.get('engines', {})
     for engine_name, engine_config in engines.items():
         prefix = f'OCR_{engine_name.upper()}_'
-        RUNTIME_OCR_CONFIG[f'{prefix}ENABLED'] = str(engine_config.get('enabled', True)).lower()
-        RUNTIME_OCR_CONFIG[f'{prefix}MIN_CONFIDENCE'] = str(engine_config.get('min_confidence', 0.5))
-        RUNTIME_OCR_CONFIG[f'{prefix}USE_GPU'] = str(engine_config.get('use_gpu', False)).lower()
-        RUNTIME_OCR_CONFIG[f'{prefix}LANGUAGE'] = engine_config.get('language', 'en')
+        
+        # Standard settings
+        for setting, key_name in [
+            ('enabled', 'ENABLED'),
+            ('min_confidence', 'MIN_CONFIDENCE'),
+            ('use_gpu', 'USE_GPU'),
+            ('language', 'LANGUAGE'),
+        ]:
+            full_key = f'{prefix}{key_name}'
+            value = engine_config.get(setting)
+            
+            # Handle type conversion
+            if isinstance(value, bool):
+                value = str(value).lower()
+            else:
+                value = str(value) if value is not None else ('true' if setting == 'enabled' else '0.5' if setting == 'min_confidence' else 'false' if setting == 'use_gpu' else 'en')
+            
+            RUNTIME_OCR_CONFIG[full_key] = value
+            os.environ[full_key] = value  # CRITICAL: Also set os.environ
         
         # Set extra params
         extra_params = engine_config.get('extra_params', {})
         for param_name, param_value in extra_params.items():
-            RUNTIME_OCR_CONFIG[f'{prefix}{param_name.upper()}'] = str(param_value)
+            full_key = f'{prefix}{param_name.upper()}'
+            value = str(param_value)
+            RUNTIME_OCR_CONFIG[full_key] = value
+            os.environ[full_key] = value  # CRITICAL: Also set os.environ
     
     print(f"[OK] OCR config loaded from AI server (engines: {', '.join(engines.keys())})")
 
