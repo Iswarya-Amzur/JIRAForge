@@ -105,25 +105,22 @@ function TimesheetSettings() {
     }
   };
 
-  const loadClassifications = async () => {
+  const loadClassifications = async (projectKey = null) => {
     setLoadingClassifications(true);
     try {
-      // Fetch all classifications from database (no projectKey = org-level)
-      const result = await invoke('getClassifications', { projectKey: null });
+      const result = await invoke('getClassifications', { projectKey });
       if (result.success && result.classifications) {
-        // Filter by classification type and match_by = 'process' (for process-based apps)
         const productive = result.classifications
           .filter(c => c.classification === 'productive' && c.match_by === 'process')
-          .map(c => ({ name: c.display_name || c.identifier, value: c.identifier.toLowerCase() }));
+          .map(c => ({ name: c.display_name || c.identifier, value: c.identifier.toLowerCase(), source: c.source }));
         
         const nonProductive = result.classifications
           .filter(c => c.classification === 'non_productive' && c.match_by === 'process')
-          .map(c => ({ name: c.display_name || c.identifier, value: c.identifier.toLowerCase() }));
+          .map(c => ({ name: c.display_name || c.identifier, value: c.identifier.toLowerCase(), source: c.source }));
         
-        // Private sites can be both process and URL-based
         const privateSites = result.classifications
           .filter(c => c.classification === 'private')
-          .map(c => ({ name: c.display_name || c.identifier, value: c.identifier.toLowerCase() }));
+          .map(c => ({ name: c.display_name || c.identifier, value: c.identifier.toLowerCase(), source: c.source }));
         
         setProductiveApps(productive);
         setNonProductiveApps(nonProductive);
@@ -131,7 +128,6 @@ function TimesheetSettings() {
       }
     } catch (err) {
       console.error('Failed to load classifications:', err);
-      // Don't show error to user - just use empty lists
     } finally {
       setLoadingClassifications(false);
     }
@@ -140,14 +136,15 @@ function TimesheetSettings() {
   useEffect(() => {
     loadProjects();
     loadSettings(selectedProject);
-    loadClassifications();
+    loadClassifications(selectedProject);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reload settings when project changes
+  // Reload settings and classifications when project changes
   useEffect(() => {
     if (!loadingProjects) {
       loadSettings(selectedProject);
+      loadClassifications(selectedProject);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject]);
