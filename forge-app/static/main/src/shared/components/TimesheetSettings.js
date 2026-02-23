@@ -31,20 +31,6 @@ function TimesheetSettings() {
     trackIdleTime: true,
     idleThresholdSeconds: 300,
 
-    // Productive Apps (formerly whitelist)
-    whitelistEnabled: true,
-    whitelistedApps: [],  // Loaded from application_classifications table
-
-    // Non-Productive Apps (formerly blacklist)
-    blacklistEnabled: true,
-    blacklistedApps: [],  // Loaded from application_classifications table,
-    nonWorkThresholdPercent: 30,
-    flagExcessiveNonWork: true,
-
-    // Private Sites
-    privateSitesEnabled: true,
-    privateSites: [],
-
     // Jira Worklog Sync
     jiraWorklogSyncEnabled: false
   });
@@ -53,23 +39,12 @@ function TimesheetSettings() {
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
-  
+
   // Project selection for project-level settings
   const [selectedProject, setSelectedProject] = useState(null); // null = organization-wide
   const [availableProjects, setAvailableProjects] = useState([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [settingsSource, setSettingsSource] = useState('organization'); // 'project', 'organization', or 'global'
-  
-  // Classifications fetched from database
-  const [productiveApps, setProductiveApps] = useState([]);
-  const [nonProductiveApps, setNonProductiveApps] = useState([]);
-  const [privateApps, setPrivateApps] = useState([]);
-  const [loadingClassifications, setLoadingClassifications] = useState(true);
-
-  // Input states for adding custom items
-  const [customWhitelistApp, setCustomWhitelistApp] = useState('');
-  const [customBlacklistApp, setCustomBlacklistApp] = useState('');
-  const [customPrivateSite, setCustomPrivateSite] = useState('');
 
   const loadProjects = async () => {
     setLoadingProjects(true);
@@ -105,46 +80,16 @@ function TimesheetSettings() {
     }
   };
 
-  const loadClassifications = async (projectKey = null) => {
-    setLoadingClassifications(true);
-    try {
-      const result = await invoke('getClassifications', { projectKey });
-      if (result.success && result.classifications) {
-        const productive = result.classifications
-          .filter(c => c.classification === 'productive' && c.match_by === 'process')
-          .map(c => ({ name: c.display_name || c.identifier, value: c.identifier.toLowerCase(), source: c.source }));
-        
-        const nonProductive = result.classifications
-          .filter(c => c.classification === 'non_productive' && c.match_by === 'process')
-          .map(c => ({ name: c.display_name || c.identifier, value: c.identifier.toLowerCase(), source: c.source }));
-        
-        const privateSites = result.classifications
-          .filter(c => c.classification === 'private')
-          .map(c => ({ name: c.display_name || c.identifier, value: c.identifier.toLowerCase(), source: c.source }));
-        
-        setProductiveApps(productive);
-        setNonProductiveApps(nonProductive);
-        setPrivateApps(privateSites);
-      }
-    } catch (err) {
-      console.error('Failed to load classifications:', err);
-    } finally {
-      setLoadingClassifications(false);
-    }
-  };
-
   useEffect(() => {
     loadProjects();
     loadSettings(selectedProject);
-    loadClassifications(selectedProject);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reload settings and classifications when project changes
+  // Reload settings when project changes
   useEffect(() => {
     if (!loadingProjects) {
       loadSettings(selectedProject);
-      loadClassifications(selectedProject);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject]);
@@ -154,9 +99,9 @@ function TimesheetSettings() {
     setMessage({ type: '', text: '' });
 
     try {
-      const result = await invoke('saveTrackingSettings', { 
+      const result = await invoke('saveTrackingSettings', {
         settings,
-        projectKey: selectedProject 
+        projectKey: selectedProject
       });
       if (result.success) {
         const level = selectedProject ? `project ${selectedProject}` : 'organization';
@@ -199,60 +144,11 @@ function TimesheetSettings() {
     setSettings(prev => ({ ...prev, [field]: value }));
   };
 
-  // App list handlers
-  const addToList = (listField, value) => {
-    if (!value.trim()) return;
-    const normalizedValue = value.toLowerCase().trim().replace(/\s+/g, '');
-    if (!settings[listField].includes(normalizedValue)) {
-      setSettings(prev => ({
-        ...prev,
-        [listField]: [...prev[listField], normalizedValue]
-      }));
-    }
-  };
-
-  const removeFromList = (listField, value) => {
-    setSettings(prev => ({
-      ...prev,
-      [listField]: prev[listField].filter(item => item !== value)
-    }));
-  };
-
-  const toggleCommonApp = (listField, value) => {
-    if (settings[listField].includes(value)) {
-      removeFromList(listField, value);
-    } else {
-      addToList(listField, value);
-    }
-  };
-
-  const handleAddCustomWhitelist = () => {
-    addToList('whitelistedApps', customWhitelistApp);
-    setCustomWhitelistApp('');
-  };
-
-  const handleAddCustomBlacklist = () => {
-    addToList('blacklistedApps', customBlacklistApp);
-    setCustomBlacklistApp('');
-  };
-
-  const handleAddPrivateSite = () => {
-    addToList('privateSites', customPrivateSite);
-    setCustomPrivateSite('');
-  };
-
   // Format interval for display
   const formatInterval = (seconds) => {
     if (seconds < 60) return `${seconds}s`;
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
     return `${Math.floor(seconds / 3600)}h`;
-  };
-
-  // Get threshold color class
-  const getThresholdColorClass = (value) => {
-    if (value <= 30) return 'threshold-normal';
-    if (value <= 50) return 'threshold-moderate';
-    return 'threshold-high';
   };
 
   if (loading) {
@@ -285,7 +181,7 @@ function TimesheetSettings() {
         </div>
         <div className="section-content">
           <p className="field-description">
-            Choose whether to configure settings for the entire organization or for a specific project. 
+            Choose whether to configure settings for the entire organization or for a specific project.
             Project-specific settings override organization defaults.
           </p>
           <div className="form-group">
@@ -293,8 +189,8 @@ function TimesheetSettings() {
             {loadingProjects ? (
               <p className="loading-text">Loading projects...</p>
             ) : (
-              <select 
-                value={selectedProject || ''} 
+              <select
+                value={selectedProject || ''}
                 onChange={(e) => setSelectedProject(e.target.value || null)}
                 className="project-select"
               >
@@ -466,327 +362,6 @@ function TimesheetSettings() {
         )}
       </section>
 
-      {/* Productive Applications Section */}
-      <section className="settings-section">
-        <div className="section-header">
-          <div className="section-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M22 11.08V12C21.9988 14.1564 21.3005 16.2547 20.0093 17.9818C18.7182 19.709 16.9033 20.9725 14.8354 21.5839C12.7674 22.1953 10.5573 22.1219 8.53447 21.3746C6.51168 20.6273 4.78465 19.2461 3.61096 17.4371C2.43727 15.628 1.87979 13.4881 2.02168 11.3363C2.16356 9.18455 2.99721 7.13631 4.39828 5.49706C5.79935 3.85781 7.69279 2.71537 9.79619 2.24013C11.8996 1.7649 14.1003 1.98232 16.07 2.85999" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M22 4L12 14.01L9 11.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-          <h2>Productive Applications</h2>
-          <label className="toggle-switch">
-            <input
-              type="checkbox"
-              checked={settings.whitelistEnabled}
-              onChange={() => handleToggle('whitelistEnabled')}
-            />
-            <span className="toggle-slider"></span>
-            <span className="toggle-label">Enable Productive Apps</span>
-          </label>
-        </div>
-
-        {settings.whitelistEnabled && (
-          <div className="section-content">
-            <p className="field-description">
-              Applications classified as productive work apps (managed via Application Classifications)
-            </p>
-
-            {/* Applications from Database */}
-            <div className="common-apps-container">
-              <label className="common-apps-label">Classified Productive Applications</label>
-              {loadingClassifications ? (
-                <p className="loading-text">Loading classifications...</p>
-              ) : productiveApps.length > 0 ? (
-                <div className="common-apps-grid">
-                  {productiveApps.map(app => (
-                    <button
-                      key={app.value}
-                      className={`app-chip ${settings.whitelistedApps.includes(app.value) ? 'selected' : ''}`}
-                      onClick={() => toggleCommonApp('whitelistedApps', app.value)}
-                    >
-                      {app.name}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="field-hint">No productive applications classified yet. Add them via Application Classifications page.</p>
-              )}
-            </div>
-
-            {/* Custom Application Input */}
-            <div className="custom-input-container">
-              <label>Add Custom Application</label>
-              <div className="input-with-button">
-                <input
-                  type="text"
-                  placeholder="e.g., figma, notion, custom-app"
-                  value={customWhitelistApp}
-                  onChange={(e) => setCustomWhitelistApp(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleAddCustomWhitelist()}
-                />
-                <button
-                  className="add-button"
-                  onClick={handleAddCustomWhitelist}
-                  disabled={!customWhitelistApp.trim()}
-                >
-                  +
-                </button>
-              </div>
-            </div>
-
-            {/* Current Productive Apps List */}
-            <div className="current-list">
-              <label>Current Productive Apps ({settings.whitelistedApps.length})</label>
-              <div className="tags-container">
-                {settings.whitelistedApps.length > 0 ? (
-                  settings.whitelistedApps.map(app => (
-                    <span key={app} className="tag whitelist-tag">
-                      {app}
-                      <button
-                        className="tag-remove"
-                        onClick={() => removeFromList('whitelistedApps', app)}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))
-                ) : (
-                  <p className="field-hint">No productive apps selected. Use Application Classifications to manage apps.</p>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* Non-Productive Applications Section */}
-      <section className="settings-section">
-        <div className="section-header">
-          <div className="section-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M4.93 4.93L19.07 19.07" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-          <h2>Non-Productive Applications</h2>
-          <label className="toggle-switch">
-            <input
-              type="checkbox"
-              checked={settings.blacklistEnabled}
-              onChange={() => handleToggle('blacklistEnabled')}
-            />
-            <span className="toggle-slider"></span>
-            <span className="toggle-label">Enable Non-Productive Apps</span>
-          </label>
-        </div>
-
-        {settings.blacklistEnabled && (
-          <div className="section-content">
-            <p className="field-description">
-              Applications classified as non-productive (e.g., entertainment, social media - managed via Application Classifications)
-            </p>
-
-            {/* Applications from Database */}
-            <div className="common-apps-container">
-              <label className="common-apps-label">Classified Non-Productive Applications</label>
-              {loadingClassifications ? (
-                <p className="loading-text">Loading classifications...</p>
-              ) : nonProductiveApps.length > 0 ? (
-                <div className="common-apps-grid">
-                  {nonProductiveApps.map(app => (
-                    <button
-                      key={app.value}
-                      className={`app-chip blacklist-chip ${settings.blacklistedApps.includes(app.value) ? 'selected' : ''}`}
-                      onClick={() => toggleCommonApp('blacklistedApps', app.value)}
-                    >
-                      {app.name}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="field-hint">No non-productive applications classified yet. Add them via Application Classifications page.</p>
-              )}
-            </div>
-
-            {/* Custom Application Input */}
-            <div className="custom-input-container">
-              <label>Add Custom Application</label>
-              <div className="input-with-button">
-                <input
-                  type="text"
-                  placeholder="e.g., custom-game, entertainment-app"
-                  value={customBlacklistApp}
-                  onChange={(e) => setCustomBlacklistApp(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleAddCustomBlacklist()}
-                />
-                <button
-                  className="add-button blacklist-add"
-                  onClick={handleAddCustomBlacklist}
-                  disabled={!customBlacklistApp.trim()}
-                >
-                  +
-                </button>
-              </div>
-            </div>
-
-            {/* Current Non-Productive Apps List */}
-            <div className="current-list">
-              <label>Current Non-Productive Apps ({settings.blacklistedApps.length})</label>
-              <div className="tags-container">
-                {settings.blacklistedApps.length > 0 ? (
-                  settings.blacklistedApps.map(app => (
-                    <span key={app} className="tag blacklist-tag">
-                      {app}
-                      <button
-                        className="tag-remove"
-                        onClick={() => removeFromList('blacklistedApps', app)}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))
-                ) : (
-                  <p className="field-hint">No non-productive apps selected. Use Application Classifications to manage apps.</p>
-                )}
-              </div>
-            </div>
-
-            {/* Flag Excessive Non-Work Activity */}
-            <div className="threshold-section">
-              <div className="threshold-header">
-                <span className="threshold-icon">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M4 15C4 15 5 14 8 14C11 14 13 16 16 16C19 16 20 15 20 15V3C20 3 19 4 16 4C13 4 11 2 8 2C5 2 4 3 4 3V15Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M4 22V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </span>
-                <h3>Flag Users for Excessive Non-Productive Activity</h3>
-              </div>
-              <p className="field-description">
-                Set the percentage threshold for weekly non-productive app usage that will flag users for excessive non-work activities.
-                Users exceeding this threshold will be highlighted with a red indicator.
-              </p>
-              <div className="threshold-slider-container">
-                <span className="threshold-value">
-                  Threshold: {settings.nonWorkThresholdPercent}% of weekly time
-                </span>
-                <input
-                  type="range"
-                  min="10"
-                  max="100"
-                  step="5"
-                  value={settings.nonWorkThresholdPercent}
-                  onChange={(e) => handleChange('nonWorkThresholdPercent', parseInt(e.target.value))}
-                  className={`threshold-slider ${getThresholdColorClass(settings.nonWorkThresholdPercent)}`}
-                />
-                <div className="threshold-legend">
-                  <span className="legend-item normal">● 10-30%: Normal usage</span>
-                  <span className="legend-item moderate">● 40-50%: Moderate usage</span>
-                  <span className="legend-item high">● 60%+: High usage (flagged)</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* Private Work Sites Section */}
-      <section className="settings-section">
-        <div className="section-header">
-          <div className="section-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M7 11V7C7 5.67392 7.52678 4.40215 8.46447 3.46447C9.40215 2.52678 10.6739 2 12 2C13.3261 2 14.5979 2.52678 15.5355 3.46447C16.4732 4.40215 17 5.67392 17 7V11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-          <h2>Private Work Sites</h2>
-          <label className="toggle-switch">
-            <input
-              type="checkbox"
-              checked={settings.privateSitesEnabled}
-              onChange={() => handleToggle('privateSitesEnabled')}
-            />
-            <span className="toggle-slider"></span>
-            <span className="toggle-label">Enable Private Sites</span>
-          </label>
-        </div>
-
-        {settings.privateSitesEnabled && (
-          <div className="section-content">
-            <p className="field-description">
-              Websites and applications that should be omitted from tracking (e.g., banking, personal, healthcare - managed via Application Classifications)
-            </p>
-
-            {/* Applications from Database */}
-            <div className="common-apps-container">
-              <label className="common-apps-label">Classified Private Sites/Applications</label>
-              {loadingClassifications ? (
-                <p className="loading-text">Loading classifications...</p>
-              ) : privateApps.length > 0 ? (
-                <div className="common-apps-grid">
-                  {privateApps.map(app => (
-                    <button
-                      key={app.value}
-                      className={`app-chip private-chip ${settings.privateSites.includes(app.value) ? 'selected' : ''}`}
-                      onClick={() => toggleCommonApp('privateSites', app.value)}
-                    >
-                      {app.name}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="field-hint">No private sites/applications classified yet. Add them via Application Classifications page.</p>
-              )}
-            </div>
-
-            {/* Custom Private Site Input */}
-            <div className="custom-input-container">
-              <label>Add Custom Private Site/Domain</label>
-              <div className="input-with-button">
-                <input
-                  type="text"
-                  placeholder="e.g., banking, personal, healthcare"
-                  value={customPrivateSite}
-                  onChange={(e) => setCustomPrivateSite(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleAddPrivateSite()}
-                />
-                <button
-                  className="add-button private-add"
-                  onClick={handleAddPrivateSite}
-                  disabled={!customPrivateSite.trim()}
-                >
-                  +
-                </button>
-              </div>
-            </div>
-
-            {/* Current Private List */}
-            <div className="current-list">
-              <label>Current Private List ({settings.privateSites.length})</label>
-              <div className="tags-container">
-                {settings.privateSites.length > 0 ? (
-                  settings.privateSites.map(site => (
-                    <span key={site} className="tag private-tag">
-                      {site}
-                      <button
-                        className="tag-remove"
-                        onClick={() => removeFromList('privateSites', site)}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))
-                ) : (
-                  <p className="field-hint">No private sites configured. Use Application Classifications to manage private sites.</p>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-
       {/* Jira Worklog Auto-Sync Section */}
       <section className="settings-section">
         <div className="section-header">
@@ -864,7 +439,7 @@ function TimesheetSettings() {
             </>
           ) : (
             <>
-             
+
               Save Settings
             </>
           )}

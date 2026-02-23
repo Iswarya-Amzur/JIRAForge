@@ -79,7 +79,32 @@ export async function getClassifications(projectKey, cloudId, accountId) {
       merged.set(key, { ...entry, source: 'project' });
     }
 
-    const result = Array.from(merged.values());
+    // Deduplicate entries that refer to the same real-world application
+    // (e.g., "code.exe", "vscode", "Visual Studio Code" are all VS Code)
+    const deduped = new Map();
+    for (const entry of merged.values()) {
+      const normalized = entry.identifier
+        .toLowerCase()
+        .replace(/\.(exe|app|dmg|msi|deb|rpm|snap|flatpak)$/i, '')
+        .replace(/[\s\-_\.]+/g, '');
+      const dedupeKey = `${normalized}|${entry.match_by}|${entry.classification}`;
+      const existing = deduped.get(dedupeKey);
+      if (!existing) {
+        deduped.set(dedupeKey, entry);
+      } else {
+        // Prefer higher-priority source; if equal, prefer one with display_name
+        const sourcePriority = { project: 3, organization: 2, default: 1 };
+        const existingPriority = sourcePriority[existing.source] || 0;
+        const newPriority = sourcePriority[entry.source] || 0;
+        if (newPriority > existingPriority) {
+          deduped.set(dedupeKey, entry);
+        } else if (newPriority === existingPriority && entry.display_name && !existing.display_name) {
+          deduped.set(dedupeKey, entry);
+        }
+      }
+    }
+
+    const result = Array.from(deduped.values());
     console.log(`[Classification] Fetched ${result.length} classifications (${(defaults || []).length} defaults, ${(orgOverrides || []).length} org, ${(projectOverrides || []).length} project)`);
     return result;
   } catch (error) {
