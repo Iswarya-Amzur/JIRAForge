@@ -58,6 +58,10 @@ class OCRFacade:
         self.config = config or OCRConfig.from_env()
         self._primary_engine: Optional[BaseOCREngine] = None
         self._fallback_engines: List[BaseOCREngine] = []
+        # Auto-heal guardrails for unstable engines (e.g., intermittent Paddle CPU primitive failures).
+        self._engine_failure_counts: Dict[str, int] = {}
+        self._engine_backoff_until: Dict[str, float] = {}
+        self._engine_backoff_seconds: float = 120.0
         
         # Initialize engines
         self._initialize_engines()
@@ -153,6 +157,13 @@ class OCRFacade:
             
             for engine in engines_to_try:
                 engine_name = engine.get_name()
+                backoff_until = self._engine_backoff_until.get(engine_name, 0.0)
+                if backoff_until > time.time():
+                    logger.warning(
+                        f"Skipping OCR engine '{engine_name}' due to temporary backoff "
+                        f"({backoff_until - time.time():.0f}s remaining)"
+                    )
+                    continue
                 engine_config = self.config.get_engine_config(engine_name)
                 min_confidence = engine_config.min_confidence
                 
@@ -186,6 +197,8 @@ class OCRFacade:
                             text = '\n'.join(text_lines)
                             line_count = len(text_lines)
 
+                        self._engine_failure_counts[engine_name] = 0
+                        self._engine_backoff_until.pop(engine_name, None)
                         logger.info(
                             f"OCR succeeded with {engine_name} "
                             f"(confidence: {result['confidence']:.2f}, lines: {line_count}, "
@@ -214,6 +227,20 @@ class OCRFacade:
                         
                 except Exception as e:
                     logger.warning(f"Engine {engine_name} failed: {e}")
+                    self._engine_failure_counts[engine_name] = self._engine_failure_counts.get(engine_name, 0) + 1
+                    err_text = str(e).lower()
+                    # Paddle-specific auto-heal: temporarily route to fallback engines
+                    # when low-level primitive execution repeatedly fails.
+                    if (
+                        engine_name == 'paddle' and
+                        'could not execute a primitive' in err_text and
+                        self._engine_failure_counts.get(engine_name, 0) >= 1
+                    ):
+                        self._engine_backoff_until[engine_name] = time.time() + self._engine_backoff_seconds
+                        logger.warning(
+                            f"Temporarily backing off Paddle OCR for "
+                            f"{int(self._engine_backoff_seconds)}s due to primitive execution failure"
+                        )
                     continue
             
             logger.warning("All OCR engines failed or below threshold, using metadata fallback")
