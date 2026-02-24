@@ -108,6 +108,41 @@ Return ONLY valid JSON (no markdown, no extra text):
 }
 
 // ============================================================================
+// HELPERS
+// ============================================================================
+
+/**
+ * Attempt to salvage a truncated JSON array by extracting complete objects.
+ * When max_tokens cuts off the LLM response mid-JSON, this recovers
+ * any fully-formed objects from the partial output.
+ */
+function salvageTruncatedJsonArray(truncatedJson) {
+  // Find all complete JSON objects in the array
+  const objectPattern = /\{[^{}]*"recordIndex"\s*:\s*\d+[^{}]*\}/g;
+  const matches = truncatedJson.match(objectPattern);
+
+  if (!matches || matches.length === 0) {
+    throw new Error('Failed to parse AI response — no complete records found in truncated JSON');
+  }
+
+  const salvaged = [];
+  for (const match of matches) {
+    try {
+      salvaged.push(JSON.parse(match));
+    } catch {
+      // Skip malformed individual objects
+    }
+  }
+
+  if (salvaged.length === 0) {
+    throw new Error('Failed to parse AI response — could not salvage any records from truncated JSON');
+  }
+
+  logger.warn(`[ActivityService] Salvaged ${salvaged.length} records from truncated JSON response`);
+  return salvaged;
+}
+
+// ============================================================================
 // SERVICE METHODS
 // ============================================================================
 
@@ -138,10 +173,14 @@ async function analyzeBatch(records, userAssignedIssues, userId, organizationId)
   ];
 
   try {
+    // Each record needs ~150 tokens for JSON output; add buffer for array structure
+    const estimatedTokensPerRecord = 150;
+    const maxTokens = Math.max(1500, records.length * estimatedTokensPerRecord + 200);
+
     const { response, provider, model } = await chatCompletionWithFallback({
       messages,
       temperature: 0.3,
-      max_tokens: 1500,
+      max_tokens: maxTokens,
       isVision: false,
       reasoningEffort: 'none',
       userId,
@@ -160,7 +199,12 @@ async function analyzeBatch(records, userAssignedIssues, userId, organizationId)
       // Try extracting JSON from markdown code block
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
-        analyses = JSON.parse(jsonMatch[0]);
+        try {
+          analyses = JSON.parse(jsonMatch[0]);
+        } catch (e2) {
+          // JSON may be truncated by max_tokens — try to salvage complete entries
+          analyses = salvageTruncatedJsonArray(jsonMatch[0]);
+        }
       } else {
         logger.error('[ActivityService] Failed to parse batch analysis response:', content.substring(0, 200));
         throw new Error('Failed to parse AI response as JSON array');
