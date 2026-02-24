@@ -93,12 +93,13 @@ export function registerClassificationResolvers(resolver) {
    * Get unknown apps that need admin classification
    */
   resolver.define('getUnknownApps', async (req) => {
-    const { context } = req;
+    const { payload, context } = req;
+    const { projectKey } = payload || {};
     const accountId = context.accountId;
     const cloudId = context.cloudId;
 
     try {
-      const unknownApps = await getUnknownApps(cloudId, accountId);
+      const unknownApps = await getUnknownApps(projectKey || null, cloudId, accountId);
       return {
         success: true,
         unknownApps

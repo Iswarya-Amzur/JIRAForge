@@ -7,6 +7,13 @@
 import { isJiraAdmin, checkUserPermissions } from '../utils/jira.js';
 import { getSupabaseConfig, supabaseRequest, getOrCreateOrganization, getOrCreateUser } from '../utils/supabase.js';
 
+function normalizeIdentifier(identifier) {
+  return (identifier || '')
+    .toLowerCase()
+    .replace(/\.(exe|app|dmg|msi|deb|rpm|snap|flatpak)$/i, '')
+    .replace(/[\s\-_\.]+/g, '');
+}
+
 /**
  * Get all application classifications for an organization/project
  * Returns global defaults + org overrides + project overrides
@@ -204,7 +211,52 @@ export async function saveClassification(classification, projectKey, cloudId, ac
     console.log(`[Classification] Created: ${data.identifier} → ${data.classification}`);
   }
 
-  return { success: true, message: `Classification saved for ${data.identifier}` };
+  // Reflect manual admin classification in existing unknown activity rows too.
+  // This keeps activity_records consistent with the newly saved app rule.
+  let updatedUnknownRecords = 0;
+  try {
+    const statusForClassification = data.classification === 'productive' ? 'pending' : 'analyzed';
+    let activityBaseQuery =
+      `activity_records?organization_id=eq.${organizationId}` +
+      `&classification=eq.unknown` +
+      `&application_name=eq.${encodeURIComponent(data.identifier)}`;
+
+    if (projectKey) {
+      activityBaseQuery += `&project_key=eq.${projectKey}`;
+    }
+
+    // Count affected rows before PATCH so UI can show a useful result.
+    const unknownRows = await supabaseRequest(
+      supabaseConfig,
+      `${activityBaseQuery}&select=id&limit=1000`
+    );
+    updatedUnknownRecords = Array.isArray(unknownRows) ? unknownRows.length : 0;
+
+    await supabaseRequest(
+      supabaseConfig,
+      activityBaseQuery,
+      {
+        method: 'PATCH',
+        body: {
+          classification: data.classification,
+          status: statusForClassification
+        }
+      }
+    );
+    console.log(`[Classification] Updated unknown activity_records for ${data.identifier} → ${data.classification}`);
+  } catch (updateErr) {
+    // Don't fail the main save path if activity backfill update fails.
+    console.warn(
+      `[Classification] Saved classification but failed to update existing unknown activity records for ${data.identifier}:`,
+      updateErr.message
+    );
+  }
+
+  return {
+    success: true,
+    message: `Classification saved for ${data.identifier}`,
+    updatedUnknownRecords
+  };
 }
 
 /**
@@ -255,11 +307,12 @@ export async function deleteClassification(classificationId, cloudId, accountId)
 /**
  * Get unknown apps (apps that have been flagged by desktop clients but not yet classified by admin)
  * These show up as activity_records with classification = 'unknown'
+ * @param {string} projectKey - Jira project key (optional)
  * @param {string} cloudId - Jira Cloud ID
  * @param {string} accountId - Atlassian account ID
  * @returns {Promise<Array>} Array of unique unknown app entries
  */
-export async function getUnknownApps(cloudId, accountId) {
+export async function getUnknownApps(projectKey, cloudId, accountId) {
   try {
     const supabaseConfig = await getSupabaseConfig(accountId);
     if (!supabaseConfig) return [];
@@ -270,6 +323,15 @@ export async function getUnknownApps(cloudId, accountId) {
       organizationId = org?.id;
     }
     if (!organizationId) return [];
+
+    // Build a set of already-classified process identifiers (defaults + org + project).
+    // Unknown queue should only show apps that are still unclassified.
+    const classifications = await getClassifications(projectKey, cloudId, accountId);
+    const classifiedProcessKeys = new Set(
+      (classifications || [])
+        .filter(c => c.match_by === 'process')
+        .map(c => normalizeIdentifier(c.identifier))
+    );
 
     // Get distinct unknown apps from activity_records
     const records = await supabaseRequest(
@@ -282,9 +344,14 @@ export async function getUnknownApps(cloudId, accountId) {
     // Deduplicate by application_name
     const seen = new Map();
     for (const record of records) {
-      if (!seen.has(record.application_name)) {
+      const appName = record.application_name || '';
+      const normalizedApp = normalizeIdentifier(appName);
+      if (!normalizedApp || classifiedProcessKeys.has(normalizedApp)) {
+        continue;
+      }
+      if (!seen.has(appName)) {
         seen.set(record.application_name, {
-          applicationName: record.application_name,
+          applicationName: appName,
           lastWindowTitle: record.window_title,
           suggestedClassification: record.metadata?.suggestedClassification || null,
           confidence: record.metadata?.classificationConfidence || null,

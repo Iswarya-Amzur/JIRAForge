@@ -8,6 +8,7 @@ This is the main entry point for OCR operations in the application.
 Maintains backward compatibility with existing extract_text_from_image() function.
 """
 import logging
+import time
 from typing import Dict, Any, Optional, List
 import numpy as np
 from PIL import Image
@@ -140,6 +141,7 @@ class OCRFacade:
         effective_max_lines = max_lines or self.MAX_OCR_LINES
 
         try:
+            total_start = time.perf_counter()
             # Convert image to PIL once; preprocessing is done per-engine
             # because different engines need different formats
             pil_image = self._load_image(image)
@@ -158,13 +160,22 @@ class OCRFacade:
 
                 # Preprocess per-engine: Tesseract needs grayscale+CLAHE,
                 # PaddleOCR works best with raw RGB
+                prep_start = time.perf_counter()
                 img_array = self._prepare_image(
                     pil_image, use_preprocessing, screenshot_mode,
                     engine_hint=engine_name
                 )
+                prep_ms = (time.perf_counter() - prep_start) * 1000.0
                 
                 try:
-                    result = engine.extract_text(img_array)
+                    infer_start = time.perf_counter()
+                    # Skip angle classification for screenshot-mode PaddleOCR.
+                    # This removes unnecessary per-line overhead for horizontal screen text.
+                    if screenshot_mode and engine_name == 'paddle':
+                        result = engine.extract_text(img_array, skip_angle_cls=True)
+                    else:
+                        result = engine.extract_text(img_array)
+                    infer_ms = (time.perf_counter() - infer_start) * 1000.0
                     
                     if result.get('success') and result.get('confidence', 0) >= min_confidence:
                         text = result.get('text', '')
@@ -177,13 +188,18 @@ class OCRFacade:
 
                         logger.info(
                             f"OCR succeeded with {engine_name} "
-                            f"(confidence: {result['confidence']:.2f}, lines: {line_count})"
+                            f"(confidence: {result['confidence']:.2f}, lines: {line_count}, "
+                            f"prep: {prep_ms:.1f}ms, infer: {infer_ms:.1f}ms, "
+                            f"total: {(time.perf_counter() - total_start) * 1000.0:.1f}ms)"
                         )
                         return {
                             'text': text,
                             'confidence': result.get('confidence', 0.0),
                             'method': engine_name,
                             'success': True,
+                            'prep_ms': prep_ms,
+                            'infer_ms': infer_ms,
+                            'total_ms': (time.perf_counter() - total_start) * 1000.0,
                             'window_title': window_title,
                             'app_name': app_name,
                             'line_count': line_count,
@@ -192,7 +208,8 @@ class OCRFacade:
                     else:
                         logger.debug(
                             f"{engine_name} below threshold "
-                            f"(conf: {result.get('confidence', 0):.2f} < {min_confidence})"
+                            f"(conf: {result.get('confidence', 0):.2f} < {min_confidence}, "
+                            f"prep: {prep_ms:.1f}ms, infer: {infer_ms:.1f}ms)"
                         )
                         
                 except Exception as e:
@@ -200,7 +217,9 @@ class OCRFacade:
                     continue
             
             logger.warning("All OCR engines failed or below threshold, using metadata fallback")
-            return self._create_metadata_fallback(window_title, app_name)
+            fallback = self._create_metadata_fallback(window_title, app_name)
+            fallback['total_ms'] = (time.perf_counter() - total_start) * 1000.0
+            return fallback
             
         except Exception as e:
             logger.error(f"Text extraction failed: {e}")
@@ -210,6 +229,7 @@ class OCRFacade:
                 'method': 'error',
                 'success': False,
                 'error': str(e),
+                'total_ms': (time.perf_counter() - total_start) * 1000.0 if 'total_start' in locals() else None,
                 'window_title': window_title,
                 'app_name': app_name,
                 'line_count': 0

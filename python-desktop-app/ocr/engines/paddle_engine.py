@@ -87,21 +87,38 @@ class PaddleOCREngine(BaseOCREngine):
             try:
                 # Detect PaddleOCR version and use appropriate parameters
                 major_version = int(_PADDLEOCR_VERSION.split('.')[0]) if _PADDLEOCR_VERSION else 2
-                
+                init_kwargs = {'lang': language}
+
                 if major_version >= 3:
                     # PaddleOCR 3.x: uses use_textline_orientation
-                    self._ocr = PaddleOCR(
-                        use_textline_orientation=True,
-                        lang=language
-                    )
+                    init_kwargs['use_textline_orientation'] = True
                 else:
                     # PaddleOCR 2.x: uses use_angle_cls
-                    self._ocr = PaddleOCR(
-                        use_angle_cls=True,
-                        lang=language,
-                        show_log=False
-                    )
-                logger.info(f"PaddleOCR initialized (Lang: {language}, Version: {_PADDLEOCR_VERSION})")
+                    init_kwargs['use_angle_cls'] = True
+                    init_kwargs['show_log'] = False
+
+                # Respect configuration: GPU can significantly reduce inference time.
+                # Some PaddleOCR versions may not accept use_gpu, so retry safely.
+                if use_gpu:
+                    init_kwargs['use_gpu'] = True
+
+                try:
+                    self._ocr = PaddleOCR(**init_kwargs)
+                except TypeError as param_error:
+                    if 'use_gpu' in init_kwargs:
+                        logger.warning(
+                            f"PaddleOCR init does not accept use_gpu on this version "
+                            f"({_PADDLEOCR_VERSION}); retrying on CPU. Error: {param_error}"
+                        )
+                        init_kwargs.pop('use_gpu', None)
+                        self._ocr = PaddleOCR(**init_kwargs)
+                    else:
+                        raise
+
+                logger.info(
+                    f"PaddleOCR initialized (Lang: {language}, GPU: {use_gpu}, "
+                    f"Version: {_PADDLEOCR_VERSION})"
+                )
             except Exception as e:
                 logger.error(f"Failed to initialize PaddleOCR: {e}")
                 self._ocr = None

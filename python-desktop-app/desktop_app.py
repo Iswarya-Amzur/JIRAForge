@@ -4,6 +4,7 @@ Desktop app for automatic time tracking via screenshot capture with Atlassian OA
 """
 
 import os
+import re
 import sys
 import time
 import json
@@ -3468,7 +3469,7 @@ class LocalOCRProcessor:
         fallback = os.getenv('OCR_FALLBACK_ENGINES', 'tesseract')
         print(f"[OCR] Primary engine: {primary}, Fallback: {fallback}")
 
-    def capture_and_ocr(self):
+    def capture_and_ocr(self, force=False):
         """Capture screenshot in memory and extract text via OCR facade.
 
         Uses the dynamic OCR system configured via environment variables.
@@ -3485,7 +3486,7 @@ class LocalOCRProcessor:
                   so callers can save it for later OCR backfill instead of losing the image
         """
         now = time.time()
-        if (now - self._last_ocr_time) < self._min_interval:
+        if not force and (now - self._last_ocr_time) < self._min_interval:
             # Throttled: still capture the screenshot so the caller can save it
             # for later backfill with the ORIGINAL image, not a new one
             try:
@@ -3518,16 +3519,25 @@ class LocalOCRProcessor:
             method = ocr_result.get('method', 'unknown')
             confidence = ocr_result.get('confidence', 0.0)
             success = ocr_result.get('success', False)
+            prep_ms = ocr_result.get('prep_ms')
+            infer_ms = ocr_result.get('infer_ms')
+            total_ms = ocr_result.get('total_ms')
             
             if success and text:
                 print(
                     f"[OCR] Event-based capture: {method} "
-                    f"(confidence: {confidence:.2f}, took: {ocr_elapsed_ms:.1f}ms)"
+                    f"(confidence: {confidence:.2f}, took: {ocr_elapsed_ms:.1f}ms, "
+                    f"prep: {prep_ms if prep_ms is not None else 'NA'}ms, "
+                    f"infer: {infer_ms if infer_ms is not None else 'NA'}ms, "
+                    f"total: {total_ms if total_ms is not None else 'NA'}ms)"
                 )
             else:
                 print(
                     f"[OCR] Event-based capture failed ({method}) "
-                    f"(took: {ocr_elapsed_ms:.1f}ms)"
+                    f"(took: {ocr_elapsed_ms:.1f}ms, "
+                    f"prep: {prep_ms if prep_ms is not None else 'NA'}ms, "
+                    f"infer: {infer_ms if infer_ms is not None else 'NA'}ms, "
+                    f"total: {total_ms if total_ms is not None else 'NA'}ms)"
                 )
             
             if text and len(text) > 2000:
@@ -3538,6 +3548,9 @@ class LocalOCRProcessor:
                 'method': method,
                 'confidence': confidence,
                 'error_message': None if success else f"OCR failed with method: {method}",
+                'prep_ms': prep_ms,
+                'infer_ms': infer_ms,
+                'total_ms': total_ms,
                 'screenshot': None
             }
 
@@ -3577,20 +3590,29 @@ class LocalOCRProcessor:
             method = ocr_result.get('method', 'unknown')
             confidence = ocr_result.get('confidence', 0.0)
             success = ocr_result.get('success', False)
+            prep_ms = ocr_result.get('prep_ms')
+            infer_ms = ocr_result.get('infer_ms')
+            total_ms = ocr_result.get('total_ms')
 
             if text and len(text) > 2000:
                 text = text[:2000]
 
             print(
                 f"[OCR] Backfill OCR: {method} "
-                f"(confidence: {confidence:.2f}, took: {ocr_elapsed_ms:.1f}ms)"
+                f"(confidence: {confidence:.2f}, took: {ocr_elapsed_ms:.1f}ms, "
+                f"prep: {prep_ms if prep_ms is not None else 'NA'}ms, "
+                f"infer: {infer_ms if infer_ms is not None else 'NA'}ms, "
+                f"total: {total_ms if total_ms is not None else 'NA'}ms)"
             )
 
             return {
                 'text': text.strip() if text else None,
                 'method': method,
                 'confidence': confidence,
-                'error_message': None if success else f"OCR failed with method: {method}"
+                'error_message': None if success else f"OCR failed with method: {method}",
+                'prep_ms': prep_ms,
+                'infer_ms': infer_ms,
+                'total_ms': total_ms
             }
 
         except Exception as e:
@@ -5945,7 +5967,11 @@ class TimeTracker:
 
             # Build activity_records payload
             records = []
-            project_key = self.get_user_project_key()
+            # Prefer the already-resolved current project used by tracking settings/classifications.
+            # Falling back to get_user_project_key() can drift when issue ordering/cache changes.
+            project_key = self.current_project_key or self.get_user_project_key()
+            project_key_source = "current_project_key" if self.current_project_key else "derived_from_issues_or_projects"
+            print(f"[BATCH] Using project_key: {project_key} (source: {project_key_source})")
 
             for s in sessions:
                 classification = s.get('classification', 'unknown')
@@ -6070,7 +6096,12 @@ class TimeTracker:
 
         elif classification in ('productive', 'unknown'):
             # Productive or unknown: capture OCR (returns dict with text, method, confidence, error_message)
-            ocr_result = self.ocr_processor.capture_and_ocr()
+            # If window title contains Jira issue key (e.g., SCRUM-123), force OCR
+            # and bypass short throttling so issue-context windows always get text.
+            issue_key_in_title = bool(re.search(r'\b[A-Z][A-Z0-9]+-\d+\b', window_title or ''))
+            spreadsheet_processes = {'excel.exe', 'libreofficecalc.exe', 'soffice.bin'}
+            force_ocr = issue_key_in_title or (app_name.lower() in spreadsheet_processes)
+            ocr_result = self.ocr_processor.capture_and_ocr(force=force_ocr)
             ocr_text = ocr_result.get('text') if ocr_result else None
             
             if classification == 'unknown':
@@ -6121,6 +6152,31 @@ class TimeTracker:
 
                 # Update the session's classification via thread-safe method
                 self.session_manager.update_classification(app_name, 'unknown', new_classification)
+
+                # Also update already-uploaded activity_records that are still unknown
+                # for this app/user/org so DB reflects the latest AI classification.
+                try:
+                    if self.supabase_service and self.current_user_id and self.organization_id:
+                        new_status = 'pending' if new_classification == 'productive' else 'analyzed'
+                        update_query = self.supabase_service.table('activity_records').update({
+                            'classification': new_classification,
+                            'status': new_status
+                        }).eq('user_id', self.current_user_id) \
+                          .eq('organization_id', self.organization_id) \
+                          .eq('application_name', app_name) \
+                          .eq('classification', 'unknown')
+
+                        if self.current_project_key:
+                            update_query = update_query.eq('project_key', self.current_project_key)
+
+                        update_result = update_query.execute()
+                        updated_count = len(update_result.data) if getattr(update_result, 'data', None) else 0
+                        print(
+                            f"[AI] Updated {updated_count} activity_records rows for "
+                            f"{app_name}: unknown → {new_classification}"
+                        )
+                except Exception as db_err:
+                    print(f"[WARN] Failed to update unknown activity_records for {app_name}: {db_err}")
         except Exception as e:
             print(f"[WARN] Failed to classify unknown app {app_name}: {e}")
 
@@ -6265,18 +6321,27 @@ class TimeTracker:
             ocr_confidence = ocr_result.get('confidence', 0.0)
             ocr_method = ocr_result.get('method', 'unknown')
             ocr_line_count = ocr_result.get('line_count', 0)
+            ocr_prep_ms = ocr_result.get('prep_ms')
+            ocr_infer_ms = ocr_result.get('infer_ms')
+            ocr_total_ms = ocr_result.get('total_ms')
             
             if ocr_result.get('success'):
                 print(
                     f"[OCR] ✓ Text extracted via {ocr_method} "
-                    f"(confidence: {ocr_confidence:.2f}, lines: {ocr_line_count}, took: {ocr_elapsed_ms:.1f}ms)"
+                    f"(confidence: {ocr_confidence:.2f}, lines: {ocr_line_count}, took: {ocr_elapsed_ms:.1f}ms, "
+                    f"prep: {ocr_prep_ms if ocr_prep_ms is not None else 'NA'}ms, "
+                    f"infer: {ocr_infer_ms if ocr_infer_ms is not None else 'NA'}ms, "
+                    f"total: {ocr_total_ms if ocr_total_ms is not None else 'NA'}ms)"
                 )
                 if extracted_text:
                     print(f"[OCR] Preview: {extracted_text[:100]}...")
             else:
                 print(
                     f"[OCR] ✗ Failed in {ocr_elapsed_ms:.1f}ms - will use metadata analysis "
-                    f"(title: {window_info['title']}, app: {window_info['app']})"
+                    f"(title: {window_info['title']}, app: {window_info['app']}, "
+                    f"prep: {ocr_prep_ms if ocr_prep_ms is not None else 'NA'}ms, "
+                    f"infer: {ocr_infer_ms if ocr_infer_ms is not None else 'NA'}ms, "
+                    f"total: {ocr_total_ms if ocr_total_ms is not None else 'NA'}ms)"
                 )
             
             # Generate filenames

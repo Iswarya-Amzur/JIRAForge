@@ -122,6 +122,9 @@ function AppClassificationSettings({ projectKey }) {
   const [loadingClassifications, setLoadingClassifications] = useState(true);
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadingUnknownApps, setLoadingUnknownApps] = useState(false);
+  const [unknownApps, setUnknownApps] = useState([]);
+  const [savingUnknownApp, setSavingUnknownApp] = useState({});
 
   const [customWhitelistApp, setCustomWhitelistApp] = useState('');
   const [customBlacklistApp, setCustomBlacklistApp] = useState('');
@@ -206,10 +209,28 @@ function AppClassificationSettings({ projectKey }) {
     }
   }, [projectKey]);
 
+  const loadUnknownApps = useCallback(async () => {
+    setLoadingUnknownApps(true);
+    try {
+      const result = await invoke('getUnknownApps', { projectKey: projectKey || null });
+      if (result.success && Array.isArray(result.unknownApps)) {
+        setUnknownApps(result.unknownApps);
+      } else {
+        setUnknownApps([]);
+      }
+    } catch (err) {
+      console.error('Failed to load unknown apps:', err);
+      setUnknownApps([]);
+    } finally {
+      setLoadingUnknownApps(false);
+    }
+  }, [projectKey]);
+
   useEffect(() => {
     loadClassifications();
     loadSavedSettings();
-  }, [loadClassifications, loadSavedSettings]);
+    loadUnknownApps();
+  }, [loadClassifications, loadSavedSettings, loadUnknownApps]);
 
   const saveSettings = useCallback(async (updatedClassificationSettings) => {
     setSaving(true);
@@ -306,6 +327,44 @@ function AppClassificationSettings({ projectKey }) {
     if (value <= 30) return 'threshold-normal';
     if (value <= 50) return 'threshold-moderate';
     return 'threshold-high';
+  };
+
+  const classifyUnknownApp = async (unknownApp, classification) => {
+    const appId = unknownApp.applicationName;
+    setSavingUnknownApp(prev => ({ ...prev, [appId]: true }));
+    setMessage({ type: '', text: '' });
+
+    try {
+      const result = await invoke('saveClassification', {
+        classification: {
+          identifier: unknownApp.applicationName,
+          displayName: unknownApp.applicationName,
+          classification,
+          matchBy: 'process',
+        },
+        projectKey: projectKey || null,
+      });
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to save classification');
+      }
+
+      setMessage({
+        type: 'success',
+        text: `Saved classification for ${unknownApp.applicationName} as ${classification.replace('_', ' ')}. Updated ${result.updatedUnknownRecords ?? 0} unknown activity records.`,
+      });
+
+      await Promise.all([loadUnknownApps(), loadClassifications()]);
+    } catch (err) {
+      console.error('Failed to classify unknown app:', err);
+      setMessage({
+        type: 'error',
+        text: `Failed to classify ${unknownApp.applicationName}: ${err.message}`,
+      });
+    } finally {
+      setSavingUnknownApp(prev => ({ ...prev, [appId]: false }));
+      setTimeout(() => setMessage({ type: '', text: '' }), 3000);
+    }
   };
 
   if (loadingSettings || loadingClassifications) {
@@ -409,6 +468,83 @@ function AppClassificationSettings({ projectKey }) {
             </div>
           </div>
         )}
+      </section>
+
+      {/* Unknown Apps Review Section */}
+      <section className="classification-section">
+        <div className="section-header">
+          <div className="section-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
+              <path d="M12 8V12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <circle cx="12" cy="16" r="1" fill="currentColor" />
+            </svg>
+          </div>
+          <h2>Unknown Apps Review</h2>
+        </div>
+
+        <div className="section-content">
+          <p className="field-description">
+            Apps that are still unclassified in activity records. Project admins can classify them here.
+          </p>
+
+          {loadingUnknownApps ? (
+            <p className="loading-text">Loading unknown apps...</p>
+          ) : unknownApps.length === 0 ? (
+            <p className="field-hint">No unknown apps pending review.</p>
+          ) : (
+            <div className="current-list">
+              <label>Pending Unknown Apps ({unknownApps.length})</label>
+              <div className="tags-container unknown-apps-list">
+                {unknownApps.map((app) => {
+                  const appId = app.applicationName;
+                  const isSaving = !!savingUnknownApp[appId];
+
+                  return (
+                    <div key={appId} className="tag unknown-app-card">
+                      <div className="unknown-app-name">{app.applicationName}</div>
+                      {app.lastWindowTitle ? (
+                        <div className="field-hint unknown-app-meta">
+                          Last title: {app.lastWindowTitle}
+                        </div>
+                      ) : null}
+                      {app.suggestedClassification ? (
+                        <div className="field-hint unknown-app-meta">
+                          AI suggestion: {app.suggestedClassification}
+                          {app.confidence ? ` (${Math.round(app.confidence * 100)}%)` : ''}
+                        </div>
+                      ) : null}
+
+                      <div className="unknown-app-actions">
+                        <button
+                          className="add-button unknown-app-action-btn"
+                          disabled={isSaving}
+                          onClick={() => classifyUnknownApp(app, 'productive')}
+                        >
+                          Mark Productive
+                        </button>
+                        <button
+                          className="add-button blacklist-add unknown-app-action-btn"
+                          disabled={isSaving}
+                          onClick={() => classifyUnknownApp(app, 'non_productive')}
+                        >
+                          Mark Non-Productive
+                        </button>
+                        <button
+                          className="add-button private-add unknown-app-action-btn"
+                          disabled={isSaving}
+                          onClick={() => classifyUnknownApp(app, 'private')}
+                        >
+                          Mark Private
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
       </section>
 
       {/* Non-Productive Applications Section */}

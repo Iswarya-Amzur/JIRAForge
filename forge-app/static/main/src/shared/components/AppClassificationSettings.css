@@ -358,6 +358,42 @@
   background: rgba(0, 0, 0, 0.1);
 }
 
+/* Unknown Apps Review */
+.classification-section .unknown-apps-list {
+  display: block;
+}
+
+.classification-section .unknown-app-card {
+  display: block;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+}
+
+.classification-section .unknown-app-name {
+  font-weight: 600;
+  color: #172B4D;
+}
+
+.classification-section .unknown-app-meta {
+  margin-top: 4px;
+}
+
+.classification-section .unknown-app-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.classification-section .unknown-app-action-btn {
+  width: auto;
+  min-width: 140px;
+  height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 /* Threshold Section */
 .classification-section .threshold-section {
   margin-top: 28px;
