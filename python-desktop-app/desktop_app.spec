@@ -5,14 +5,49 @@ Generates a single-file Windows executable with all dependencies bundled.
 """
 
 import sys
+import os
+from pathlib import Path
 
 block_cipher = None
+
+# Collect OCR module files
+ocr_datas = []
+ocr_dir = os.path.join(os.path.dirname(os.path.abspath('desktop_app.py')), 'ocr')
+if os.path.exists(ocr_dir):
+    for root, dirs, files in os.walk(ocr_dir):
+        for file in files:
+            # Only include Python files, exclude config and env files
+            if file.endswith('.py') and not file.startswith('.env'):
+                src = os.path.join(root, file)
+                # Preserve directory structure in ocr/
+                rel_path = os.path.relpath(root, os.path.dirname(ocr_dir))
+                ocr_datas.append((src, rel_path))
+
+# Collect PaddleOCR models (if they exist in user's cache)
+paddleocr_models = []
+paddleocr_cache = os.path.join(os.path.expanduser('~'), '.paddleocr')
+if os.path.exists(paddleocr_cache):
+    print(f"[INFO] Found PaddleOCR models at: {paddleocr_cache}")
+    # Include the entire .paddleocr directory
+    paddleocr_models.append((paddleocr_cache, '.paddleocr'))
+else:
+    print(f"[WARN] PaddleOCR models not found at: {paddleocr_cache}")
+    print(f"[WARN] Models will be downloaded on first run")
 
 a = Analysis(
     ['desktop_app.py'],
     pathex=[],
-    binaries=[],
-    datas=[],
+    binaries=[
+        # Tesseract OCR binary (for local OCR processing)
+        # Adjust path based on Tesseract installation location
+        (r'C:\Program Files\Tesseract-OCR\tesseract.exe', 'tesseract'),
+        (r'C:\Program Files\Tesseract-OCR\*.dll', 'tesseract'),
+    ],
+    datas=[
+        # Tesseract language data files
+        (r'C:\Program Files\Tesseract-OCR\tessdata\eng.traineddata', 'tesseract/tessdata'), ocr_datas + paddleocr_models
+    ],
+   
     hiddenimports=[
         # Flask and web
         'flask',
@@ -92,6 +127,42 @@ a = Analysis(
         'jaraco.text',
         'jaraco.functools',
         'jaraco.context',
+        # OCR dependencies - New Facade Architecture v2.0
+        'ocr',
+        'ocr.facade',
+        'ocr.config',
+        'ocr.engine_factory',
+        'ocr.base_engine',
+        'ocr.image_processor',
+        'ocr.auto_installer',
+        # OCR Engines
+        'ocr.engines',
+        'ocr.engines.paddle_engine',
+        'ocr.engines.tesseract_engine',
+        'ocr.engines.easyocr_engine',
+        'ocr.engines.mock_engine',
+        'ocr.engines.demo_engine',
+        'ocr.engines.dynamic_engine',  # NEW: Dynamic engine for any OCR library
+        # Legacy OCR modules (backward compatibility)
+        'ocr.ocr_engine',
+        'ocr.text_extractor',
+        # PaddleOCR
+        'paddleocr',
+        'paddleocr.ppocr',
+        'paddleocr.ppocr.utils',
+        'paddleocr.ppocr.data',
+        'paddlepaddle',
+        'paddle',
+        'paddle.inference',
+        # Tesseract
+        'pytesseract',
+        # EasyOCR (optional - large dependency)
+        'easyocr',
+        # Image/Math
+        'cv2',
+        'numpy',
+        'numpy.core',
+        'numpy.core.multiarray',
         # Standard library
         'ctypes',
         'json',
@@ -108,13 +179,17 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        'matplotlib',
-        'numpy',
+        # Exclude unnecessary packages to reduce size
+        'matplotlib',  # Not needed for OCR (PaddleOCR imports it but doesn't require it)
         'pandas',
         'scipy',
         'test',
         'unittest',
         'xmlrpc',
+        # SECURITY: Exclude .env file to prevent credential leaks
+        '.env',
+        '.env.local',
+        '.env.production',
     ],
     noarchive=False,
     cipher=block_cipher,

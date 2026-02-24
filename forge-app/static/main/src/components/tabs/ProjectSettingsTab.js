@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 import ProjectStatusSettings from '../../shared/components/ProjectStatusSettings';
 import '../../shared/components/ProjectStatusSettings.css';
+import AppClassificationSettings from '../../shared/components/AppClassificationSettings';
 import './ProjectSettingsTab.css';
 
 /**
@@ -214,11 +215,14 @@ function ProjectSettingsTab() {
         {/* Settings Panel */}
         <div className="settings-panel">
           {selectedProject ? (
-            <ProjectStatusSettings
-              projectKey={selectedProject.key}
-              projectName={selectedProject.name}
-              onSave={handleSettingsSaved}
-            />
+            <>
+              <ProjectStatusSettings
+                projectKey={selectedProject.key}
+                projectName={selectedProject.name}
+                onSave={handleSettingsSaved}
+              />
+              <AppClassificationSettings projectKey={selectedProject.key} />
+            </>
           ) : (
             <div className="no-selection">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">

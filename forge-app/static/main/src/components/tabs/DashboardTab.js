@@ -191,7 +191,9 @@ function DashboardTab({ onOpenScreenshotPreview, onOpenReassignModal }) {
                                               const visibleApps = uniqueApps.slice(0, 3);
                                               const remainingApps = uniqueApps.slice(3);
 
-                                              // Simple heuristic for app classification (can be enhanced)
+                                              // DEPRECATED: Simple heuristic for app classification
+                                              // TODO: Replace with database lookup from application_classifications table
+                                              // These hardcoded lists do not reflect actual classifications used by the tracker
                                               const productiveApps = ['code', 'visual studio', 'vscode', 'intellij', 'webstorm', 'pycharm', 'sublime', 'atom', 'notepad++', 'postman', 'terminal', 'cmd', 'powershell', 'git', 'jira', 'confluence', 'slack', 'teams', 'zoom', 'figma', 'sketch', 'excel', 'word', 'outlook', 'notion', 'trello', 'asana'];
                                               const nonProductiveApps = ['netflix', 'youtube', 'spotify', 'facebook', 'instagram', 'twitter', 'tiktok', 'reddit', 'discord', 'twitch', 'game', 'steam'];
 

@@ -25,6 +25,7 @@
     "@forge/resolver": "^1.5.0"
   },
   "devDependencies": {
-    "@forge/cli": "^12.0.0"
+    "@forge/cli": "^12.0.0",
+    "react-scripts": "^5.0.1"
   }
 }

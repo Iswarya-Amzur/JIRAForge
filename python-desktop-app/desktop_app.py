@@ -4,6 +4,7 @@ Desktop app for automatic time tracking via screenshot capture with Atlassian OA
 """
 
 import os
+import re
 import sys
 import time
 import json
@@ -35,9 +36,15 @@ from dotenv import load_dotenv
 # SQLite for offline storage
 import sqlite3
 import socket
+import fnmatch
+
+# OCR for text extraction
+from ocr import extract_text_from_image
+
 
 # Secure credential storage
 try:
+    print("!!!DEBUG!!! About to execute main JQL query for Jira issues.")
     import keyring
     KEYRING_AVAILABLE = True
 except ImportError:
@@ -179,6 +186,10 @@ load_dotenv()
 # This is used for update checking and notifications
 APP_VERSION = "1.2.1"
 
+# Hard-disable screenshot monitoring/storage in desktop app.
+# OCR text extraction for activity records still runs via event-based flow.
+SCREENSHOT_MONITORING_HARD_DISABLED = True
+
 # Embedded credentials (for production builds - no .env file needed)
 # SECURITY: All sensitive keys moved to AI Server - fetched at runtime after authentication
 EMBEDDED_CONFIG = {
@@ -198,6 +209,9 @@ RUNTIME_SUPABASE_CONFIG = {
     'SUPABASE_SERVICE_ROLE_KEY': None
 }
 
+# Runtime OCR config (fetched from AI server after authentication)
+RUNTIME_OCR_CONFIG = {}
+
 def get_env_var(key, default=None):
     """Get environment variable with fallback to embedded/runtime values"""
     # First try environment variable (for development with .env)
@@ -207,6 +221,9 @@ def get_env_var(key, default=None):
     # Then try runtime Supabase config (fetched from AI server)
     if key in RUNTIME_SUPABASE_CONFIG and RUNTIME_SUPABASE_CONFIG[key]:
         return RUNTIME_SUPABASE_CONFIG[key]
+    # Then try runtime OCR config (fetched from AI server)
+    if key in RUNTIME_OCR_CONFIG and RUNTIME_OCR_CONFIG[key]:
+        return RUNTIME_OCR_CONFIG[key]
     # Then try embedded config (for production builds)
     if key in EMBEDDED_CONFIG:
         return EMBEDDED_CONFIG[key]
@@ -220,6 +237,54 @@ def set_runtime_supabase_config(url, anon_key, service_role_key):
     RUNTIME_SUPABASE_CONFIG['SUPABASE_ANON_KEY'] = anon_key
     RUNTIME_SUPABASE_CONFIG['SUPABASE_SERVICE_ROLE_KEY'] = service_role_key
     print(f"[OK] Supabase config loaded from AI server")
+
+def set_runtime_ocr_config(config_dict):
+    """
+    Set OCR config fetched from AI server.
+    
+    Converts the nested config dict from AI server into flat OCR_* environment-style keys.
+    This allows OCRConfig.from_env() to work seamlessly with runtime config.
+    
+    Args:
+        config_dict: Dict from AI server with structure:
+            {
+                'primary_engine': 'paddle',
+                'fallback_engines': ['tesseract'],
+                'use_preprocessing': True,
+                'engines': {'paddle': {'min_confidence': 0.5, ...}, ...}
+            }
+    """
+    global RUNTIME_OCR_CONFIG
+    RUNTIME_OCR_CONFIG = {}
+    
+    # Set primary engine
+    RUNTIME_OCR_CONFIG['OCR_PRIMARY_ENGINE'] = config_dict.get('primary_engine', 'paddle')
+    
+    # Set fallback engines as comma-separated string
+    fallbacks = config_dict.get('fallback_engines', ['tesseract'])
+    RUNTIME_OCR_CONFIG['OCR_FALLBACK_ENGINES'] = ','.join(fallbacks)
+    
+    # Set global settings
+    RUNTIME_OCR_CONFIG['OCR_USE_PREPROCESSING'] = str(config_dict.get('use_preprocessing', True)).lower()
+    RUNTIME_OCR_CONFIG['OCR_MAX_IMAGE_DIMENSION'] = str(config_dict.get('max_image_dimension', 4096))
+    RUNTIME_OCR_CONFIG['OCR_PREPROCESSING_TARGET_DPI'] = str(config_dict.get('preprocessing_target_dpi', 300))
+    
+    # Set per-engine configurations
+    engines = config_dict.get('engines', {})
+    for engine_name, engine_config in engines.items():
+        prefix = f'OCR_{engine_name.upper()}_'
+        RUNTIME_OCR_CONFIG[f'{prefix}ENABLED'] = str(engine_config.get('enabled', True)).lower()
+        RUNTIME_OCR_CONFIG[f'{prefix}MIN_CONFIDENCE'] = str(engine_config.get('min_confidence', 0.5))
+        RUNTIME_OCR_CONFIG[f'{prefix}USE_GPU'] = str(engine_config.get('use_gpu', False)).lower()
+        RUNTIME_OCR_CONFIG[f'{prefix}LANGUAGE'] = engine_config.get('language', 'en')
+        
+        # Set extra params
+        extra_params = engine_config.get('extra_params', {})
+        for param_name, param_value in extra_params.items():
+            RUNTIME_OCR_CONFIG[f'{prefix}{param_name.upper()}'] = str(param_value)
+    
+    print(f"[OK] OCR config loaded from AI server (engines: {', '.join(engines.keys())})")
+
 
 # ============================================================================
 # VERSION CHECKING UTILITIES
@@ -1549,6 +1614,60 @@ class AtlassianAuthManager:
         except Exception as e:
             print(f"[ERROR] Failed to fetch Supabase config: {e}")
             return False
+    
+    def get_ocr_config(self):
+        """
+        Fetch OCR configuration from AI Server (requires valid Atlassian token).
+        
+        This eliminates the need for OCR configuration in .env file.
+        All OCR settings are centralized on the AI server for easy updates.
+        
+        Returns:
+            bool: True if config fetched successfully, False otherwise
+        """
+        access_token = self.tokens.get('access_token')
+        if not access_token:
+            print("[ERROR] No valid Atlassian token - cannot fetch OCR config")
+            return False
+
+        ai_server_url = get_env_var('AI_SERVER_URL', 'http://216.48.190.255:3001')
+        
+        try:
+            print("[INFO] Fetching OCR config from AI Server...")
+            
+            response = requests.post(
+                f"{ai_server_url}/api/auth/ocr-config",
+                json={'atlassian_token': access_token},
+                timeout=(10, 60)
+            )
+            
+            if response.status_code == 401:
+                # Token might be expired, try refreshing
+                print("[WARN] Atlassian token rejected, attempting refresh...")
+                if self.refresh_access_token():
+                    return self.get_ocr_config()
+                else:
+                    print("[ERROR] Token refresh failed")
+                    return False
+            
+            if response.status_code != 200:
+                error = response.json().get('error', 'Unknown error')
+                print(f"[ERROR] Failed to get OCR config: {error}")
+                return False
+            
+            result = response.json()
+            if not result.get('success'):
+                print(f"[ERROR] Failed to get OCR config: {result.get('error', 'Unknown error')}")
+                return False
+            
+            # Store the OCR config in runtime config
+            ocr_config = result.get('config', {})
+            set_runtime_ocr_config(ocr_config)
+            return True
+        
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch OCR config: {e}")
+            return False
 
     def logout(self):
         """Clear authentication tokens from both keyring and JSON file"""
@@ -1562,7 +1681,6 @@ class AtlassianAuthManager:
         # Remove JSON file (contains metadata)
         if os.path.exists(self.store_path):
             os.remove(self.store_path)
-
 
 # ============================================================================
 # OFFLINE DATA MANAGER
@@ -1649,6 +1767,55 @@ class OfflineManager:
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_project_settings_org 
             ON project_settings_cache(organization_id)
+        ''')
+
+        # ====================================================================
+        # App classifications cache (synced from Supabase)
+        # ====================================================================
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS app_classifications_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id TEXT,
+                project_key TEXT,
+                identifier TEXT NOT NULL,
+                display_name TEXT,
+                classification TEXT NOT NULL,
+                match_by TEXT NOT NULL,
+                cached_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(organization_id, project_key, identifier, match_by)
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_app_class_cache_identifier
+            ON app_classifications_cache(identifier)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_app_class_cache_match_by
+            ON app_classifications_cache(match_by)
+        ''')
+
+        # ====================================================================
+        # Active sessions (real-time activity tracking between batches)
+        # ====================================================================
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS active_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                window_title TEXT,
+                application_name TEXT,
+                classification TEXT,
+                ocr_text TEXT,
+                ocr_method TEXT,
+                ocr_confidence REAL,
+                ocr_error_message TEXT,
+                total_time_seconds REAL DEFAULT 0,
+                visit_count INTEGER DEFAULT 1,
+                first_seen TEXT,
+                last_seen TEXT,
+                timer_started_at TEXT,
+                UNIQUE(window_title, application_name)
+            )
         ''')
         
         conn.commit()
@@ -1968,6 +2135,10 @@ class OfflineManager:
         Returns:
             tuple: (synced_count, failed_count)
         """
+        if SCREENSHOT_MONITORING_HARD_DISABLED:
+            print("[INFO] Screenshot sync is disabled by client configuration")
+            return (0, 0)
+
         if self._syncing:
             print("[INFO] Sync already in progress, skipping...")
             return (0, 0)
@@ -2903,6 +3074,559 @@ class PausePopupWindow:
 
 
 # ============================================================================
+# APPLICATION CLASSIFICATION MANAGER
+# ============================================================================
+
+# Browser process names — when one of these is the active process,
+# we check the window title against URL-based entries instead of process-based.
+BROWSER_PROCESSES = {
+    'chrome.exe', 'msedge.exe', 'firefox.exe', 'brave.exe',
+    'opera.exe', 'vivaldi.exe', 'arc.exe',
+}
+
+
+class AppClassificationManager:
+    """Manages application classification lookups using local SQLite cache.
+
+    Classifications are synced from Supabase and stored in SQLite.
+    In-memory dicts provide O(1) lookup during tracking.
+    """
+
+    def __init__(self, db_path):
+        self.db_path = db_path
+        # In-memory lookup dicts (populated from SQLite)
+        self.process_classifications = {}  # identifier (lower) -> classification
+        self.url_classifications = {}      # identifier (lower) -> classification
+        self.url_wildcard_patterns = []    # [(pattern, classification)] for fnmatch
+        self.reload_from_cache()
+
+    def reload_from_cache(self):
+        """Load classifications from SQLite into memory for fast lookup."""
+        self.process_classifications = {}
+        self.url_classifications = {}
+        self.url_wildcard_patterns = []
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('SELECT identifier, classification, match_by FROM app_classifications_cache')
+            for identifier, classification, match_by in cursor.fetchall():
+                key = identifier.lower()
+                if match_by == 'process':
+                    self.process_classifications[key] = classification
+                elif match_by == 'url':
+                    if '*' in identifier:
+                        self.url_wildcard_patterns.append((key, classification))
+                    else:
+                        self.url_classifications[key] = classification
+            conn.close()
+            total = len(self.process_classifications) + len(self.url_classifications) + len(self.url_wildcard_patterns)
+            if total > 0:
+                print(f"[OK] Loaded {total} app classifications into memory")
+        except Exception as e:
+            print(f"[WARN] Failed to load classifications from cache: {e}")
+
+    def classify(self, app_name, window_title=''):
+        """Classify an application based on process name and window title.
+
+        Returns:
+            tuple: (classification: str, match_type: str or None)
+                classification: 'productive', 'non_productive', 'private', or 'unknown'
+                match_type: 'process', 'url', 'browser_default', or None
+        """
+        app_lower = app_name.lower() if app_name else ''
+
+        # Check if it's a browser
+        if app_lower in BROWSER_PROCESSES:
+            # Browser: check window title against URL entries
+            title_lower = window_title.lower() if window_title else ''
+
+            # Check exact URL matches first
+            for url_key, classification in self.url_classifications.items():
+                if url_key in title_lower:
+                    return (classification, 'url')
+
+            # Check wildcard patterns (e.g., *.atlassian.net, *.bank.*)
+            for pattern, classification in self.url_wildcard_patterns:
+                if fnmatch.fnmatch(title_lower, pattern):
+                    return (classification, 'url')
+                # Also check if any word in the title matches
+                for word in title_lower.split():
+                    if fnmatch.fnmatch(word, pattern):
+                        return (classification, 'url')
+
+            # No URL match — browser is unknown until admin classifies
+            # OCR + AI will still capture data; admin decides productive/non_productive
+            return ('unknown', 'browser_default')
+
+        # Non-browser: check process name
+        if app_lower in self.process_classifications:
+            return (self.process_classifications[app_lower], 'process')
+
+        # No match found
+        return ('unknown', None)
+
+    def sync_classifications(self, supabase_client, organization_id, project_key=None):
+        """Fetch classifications from Supabase and write merged results to SQLite cache.
+
+        Uses 3-tier merge: global defaults < org overrides < project overrides.
+        """
+        try:
+            merged = {}  # key = (identifier_lower, match_by) -> row dict
+
+            # Tier 1: Global defaults (is_default = true, organization_id IS NULL)
+            result = supabase_client.table('application_classifications').select(
+                'identifier, display_name, classification, match_by'
+            ).eq('is_default', True).is_('organization_id', 'null').execute()
+            for row in (result.data or []):
+                key = (row['identifier'].lower(), row['match_by'])
+                merged[key] = row
+
+            # Tier 2: Organization overrides (organization_id = X, project_key IS NULL)
+            if organization_id:
+                result = supabase_client.table('application_classifications').select(
+                    'identifier, display_name, classification, match_by'
+                ).eq('organization_id', organization_id).is_('project_key', 'null').execute()
+                for row in (result.data or []):
+                    key = (row['identifier'].lower(), row['match_by'])
+                    merged[key] = row
+
+            # Tier 3: Project overrides (organization_id = X, project_key = Y)
+            if organization_id and project_key:
+                result = supabase_client.table('application_classifications').select(
+                    'identifier, display_name, classification, match_by'
+                ).eq('organization_id', organization_id).eq('project_key', project_key).execute()
+                for row in (result.data or []):
+                    key = (row['identifier'].lower(), row['match_by'])
+                    merged[key] = row
+
+            # Write merged results to SQLite cache
+            conn = sqlite3.connect(self.db_path)
+            try:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM app_classifications_cache')
+                for (identifier_lower, match_by), row in merged.items():
+                    cursor.execute('''
+                        INSERT OR REPLACE INTO app_classifications_cache
+                        (organization_id, identifier, display_name, classification, match_by, cached_at)
+                        VALUES (?, ?, ?, ?, ?, datetime('now'))
+                    ''', (
+                        organization_id,
+                        row['identifier'],
+                        row.get('display_name', ''),
+                        row['classification'],
+                        row['match_by']
+                    ))
+                conn.commit()
+            finally:
+                conn.close()
+
+            print(f"[OK] Synced {len(merged)} app classifications from Supabase")
+            self.reload_from_cache()
+
+        except Exception as e:
+            print(f"[WARN] Failed to sync classifications from Supabase: {e}")
+            traceback.print_exc()
+
+
+class ActiveSessionManager:
+    """Manages active_sessions SQLite table for real-time activity tracking.
+
+    Tracks time accumulated per unique (window_title, application_name) pair.
+    Thread-safe with a lock.
+    """
+
+    def __init__(self, db_path):
+        self.db_path = db_path
+        self._lock = threading.Lock()
+        self._current_key = None  # (window_title, application_name)
+        self._pending_ocr_keys = set()  # Sessions that need OCR backfill
+        self._pending_ocr_screenshots = {}  # (title, app) -> PIL.Image for throttled sessions
+
+    def get_pending_ocr_entries(self):
+        """Return and clear the dict of (title, app_name) -> PIL.Image awaiting OCR backfill."""
+        with self._lock:
+            entries = dict(self._pending_ocr_screenshots)
+            self._pending_ocr_screenshots.clear()
+            self._pending_ocr_keys.clear()
+            return entries
+
+    def get_pending_ocr_keys(self):
+        """Return and clear the set of (title, app_name) keys awaiting OCR backfill.
+        DEPRECATED: prefer get_pending_ocr_entries() which also returns saved screenshots.
+        """
+        with self._lock:
+            keys = self._pending_ocr_keys.copy()
+            self._pending_ocr_keys.clear()
+            return keys
+
+    def backfill_ocr(self, title, app_name, ocr_result):
+        """Fill in OCR data for a session that was previously throttled."""
+        if not ocr_result or ocr_result.get('throttled'):
+            return
+        with self._lock:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    'SELECT id, ocr_method FROM active_sessions WHERE window_title = ? AND application_name = ?',
+                    (title, app_name)
+                )
+                row = cursor.fetchone()
+                if row and not row[1]:
+                    ocr_text = ocr_result.get('text')
+                    ocr_method = ocr_result.get('method')
+                    ocr_confidence = ocr_result.get('confidence')
+                    ocr_error = ocr_result.get('error_message')
+                    cursor.execute(
+                        'UPDATE active_sessions SET ocr_text = ?, ocr_method = ?, ocr_confidence = ?, ocr_error_message = ? WHERE id = ?',
+                        (ocr_text, ocr_method, ocr_confidence, ocr_error, row[0])
+                    )
+                    conn.commit()
+            except Exception as e:
+                print(f"[WARN] OCR backfill failed: {e}")
+            finally:
+                conn.close()
+
+    def on_window_switch(self, title, app_name, classification, ocr_result=None):
+        """Handle a window switch event.
+
+        Stops timer on previous session, creates or resumes session for new window.
+        
+        Args:
+            title: Window title
+            app_name: Application name
+            classification: Activity classification (productive, non_productive, private, unknown)
+            ocr_result: Optional dict with keys: text, method, confidence, error_message,
+                        screenshot (PIL.Image, present when throttled)
+        """
+        with self._lock:
+            now = datetime.now(timezone.utc).isoformat()
+            new_key = (title, app_name)
+
+            ocr_text = None
+            ocr_method = None
+            ocr_confidence = None
+            ocr_error_message = None
+            ocr_was_throttled = False
+            throttled_screenshot = None
+            
+            if ocr_result:
+                if isinstance(ocr_result, dict):
+                    ocr_was_throttled = ocr_result.get('throttled', False)
+                    throttled_screenshot = ocr_result.get('screenshot')
+                    if not ocr_was_throttled:
+                        ocr_text = ocr_result.get('text')
+                        ocr_method = ocr_result.get('method')
+                        ocr_confidence = ocr_result.get('confidence')
+                        ocr_error_message = ocr_result.get('error_message')
+                else:
+                    ocr_text = ocr_result
+
+            has_ocr_data = ocr_text or ocr_method
+
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            try:
+                if self._current_key is not None:
+                    self._stop_timer_internal(cursor, now)
+
+                cursor.execute(
+                    'SELECT id, total_time_seconds, visit_count, ocr_method FROM active_sessions WHERE window_title = ? AND application_name = ?',
+                    (title, app_name)
+                )
+                existing = cursor.fetchone()
+
+                if existing:
+                    session_id, total_time, visit_count, existing_ocr_method = existing
+                    cursor.execute(
+                        'UPDATE active_sessions SET visit_count = ?, timer_started_at = ?, last_seen = ?, classification = ? WHERE id = ?',
+                        (visit_count + 1, now, now, classification, session_id)
+                    )
+                    if has_ocr_data:
+                        cursor.execute(
+                            'UPDATE active_sessions SET ocr_text = ?, ocr_method = ?, ocr_confidence = ?, ocr_error_message = ? WHERE id = ?',
+                            (ocr_text, ocr_method, ocr_confidence, ocr_error_message, session_id)
+                        )
+                    elif ocr_was_throttled and not existing_ocr_method:
+                        self._pending_ocr_keys.add(new_key)
+                        if throttled_screenshot is not None:
+                            self._pending_ocr_screenshots[new_key] = throttled_screenshot
+                else:
+                    if ocr_was_throttled:
+                        self._pending_ocr_keys.add(new_key)
+                        if throttled_screenshot is not None:
+                            self._pending_ocr_screenshots[new_key] = throttled_screenshot
+                    cursor.execute(
+                        '''INSERT INTO active_sessions
+                        (window_title, application_name, classification, ocr_text, ocr_method, ocr_confidence, ocr_error_message, total_time_seconds, visit_count, first_seen, last_seen, timer_started_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?)''',
+                        (title, app_name, classification, ocr_text, ocr_method, ocr_confidence, ocr_error_message, now, now, now)
+                    )
+
+                self._current_key = new_key
+                conn.commit()
+            except Exception as e:
+                print(f"[ERROR] ActiveSessionManager.on_window_switch: {e}")
+                conn.rollback()
+            finally:
+                conn.close()
+
+    def _stop_timer_internal(self, cursor, now):
+        """Stop the timer on the currently active session (internal, must hold lock)."""
+        if self._current_key is None:
+            return
+
+        title, app_name = self._current_key
+        cursor.execute(
+            'SELECT id, total_time_seconds, timer_started_at FROM active_sessions WHERE window_title = ? AND application_name = ?',
+            (title, app_name)
+        )
+        row = cursor.fetchone()
+        if row and row[2]:  # timer_started_at is not None
+            session_id, total_time, timer_started = row
+            try:
+                started = datetime.fromisoformat(timer_started)
+                ended = datetime.fromisoformat(now)
+                elapsed = max(0, (ended - started).total_seconds())
+                new_total = (total_time or 0) + elapsed
+                cursor.execute(
+                    'UPDATE active_sessions SET total_time_seconds = ?, timer_started_at = NULL, last_seen = ? WHERE id = ?',
+                    (new_total, now, session_id)
+                )
+            except Exception as e:
+                print(f"[WARN] Error stopping timer: {e}")
+
+    def stop_current_timer(self):
+        """Stop timer on the current session (public, acquires lock)."""
+        with self._lock:
+            now = datetime.now(timezone.utc).isoformat()
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            try:
+                self._stop_timer_internal(cursor, now)
+                conn.commit()
+            finally:
+                conn.close()
+
+    def get_all_sessions(self):
+        """Get all sessions for batch upload."""
+        with self._lock:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM active_sessions')
+            columns = [desc[0] for desc in cursor.description]
+            rows = cursor.fetchall()
+            conn.close()
+            return [dict(zip(columns, row)) for row in rows]
+
+    def clear_all(self):
+        """Clear all sessions after successful batch upload."""
+        with self._lock:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM active_sessions')
+            conn.commit()
+            conn.close()
+            self._current_key = None
+
+    def update_classification(self, app_name, old_classification, new_classification):
+        """Thread-safe update of classification for an app (called from async classify thread)."""
+        with self._lock:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    'UPDATE active_sessions SET classification = ? WHERE application_name = ? AND classification = ?',
+                    (new_classification, app_name, old_classification)
+                )
+                conn.commit()
+            except Exception as e:
+                print(f"[WARN] Failed to update classification: {e}")
+            finally:
+                conn.close()
+
+
+class LocalOCRProcessor:
+    """Handles local OCR processing using the dynamic OCR facade.
+
+    Uses the OCR facade which respects environment configuration:
+    - OCR_PRIMARY_ENGINE (paddle, tesseract, easyocr, etc.)
+    - OCR_FALLBACK_ENGINES (comma-separated list)
+    - Engine-specific settings (OCR_PADDLE_MIN_CONFIDENCE, etc.)
+
+    Captures screenshot in memory, extracts text via configured engines, discards image.
+    Throttled to max once per 3 seconds to limit CPU spikes on rapid switching.
+    """
+
+    def __init__(self):
+        self._last_ocr_time = 0
+        self._min_interval = 3  # seconds between OCR calls
+        print("[OCR] LocalOCRProcessor initialized - using dynamic engine selection")
+        
+        # Log which OCR engines are configured
+        primary = os.getenv('OCR_PRIMARY_ENGINE', 'paddle')
+        fallback = os.getenv('OCR_FALLBACK_ENGINES', 'tesseract')
+        print(f"[OCR] Primary engine: {primary}, Fallback: {fallback}")
+
+    def capture_and_ocr(self, force=False):
+        """Capture screenshot in memory and extract text via OCR facade.
+
+        Uses the dynamic OCR system configured via environment variables.
+        Automatically falls back to alternative engines if primary fails.
+
+        Returns:
+            dict: OCR result with keys:
+                - text (str or None): Extracted text
+                - method (str): OCR engine used (e.g., 'paddle', 'tesseract', 'metadata')
+                - confidence (float): Confidence score (0.0 to 1.0)
+                - error_message (str or None): Error message if OCR failed
+                - throttled (bool): True if OCR was skipped due to rate limiting
+                - screenshot (PIL.Image or None): The captured screenshot when throttled,
+                  so callers can save it for later OCR backfill instead of losing the image
+        """
+        now = time.time()
+        if not force and (now - self._last_ocr_time) < self._min_interval:
+            # Throttled: still capture the screenshot so the caller can save it
+            # for later backfill with the ORIGINAL image, not a new one
+            try:
+                screenshot = ImageGrab.grab()
+            except Exception:
+                screenshot = None
+            return {
+                'text': None, 'method': None, 'confidence': 0.0,
+                'error_message': None, 'throttled': True,
+                'screenshot': screenshot
+            }
+
+        try:
+            screenshot = ImageGrab.grab()
+            ocr_start = time.perf_counter()
+
+            ocr_result = extract_text_from_image(
+                screenshot,
+                window_title='',
+                app_name='',
+                screenshot_mode=True
+            )
+            ocr_elapsed_ms = (time.perf_counter() - ocr_start) * 1000.0
+
+            del screenshot
+
+            self._last_ocr_time = time.time()
+
+            text = ocr_result.get('text', '')
+            method = ocr_result.get('method', 'unknown')
+            confidence = ocr_result.get('confidence', 0.0)
+            success = ocr_result.get('success', False)
+            prep_ms = ocr_result.get('prep_ms')
+            infer_ms = ocr_result.get('infer_ms')
+            total_ms = ocr_result.get('total_ms')
+            
+            if success and text:
+                print(
+                    f"[OCR] Event-based capture: {method} "
+                    f"(confidence: {confidence:.2f}, took: {ocr_elapsed_ms:.1f}ms, "
+                    f"prep: {prep_ms if prep_ms is not None else 'NA'}ms, "
+                    f"infer: {infer_ms if infer_ms is not None else 'NA'}ms, "
+                    f"total: {total_ms if total_ms is not None else 'NA'}ms)"
+                )
+            else:
+                print(
+                    f"[OCR] Event-based capture failed ({method}) "
+                    f"(took: {ocr_elapsed_ms:.1f}ms, "
+                    f"prep: {prep_ms if prep_ms is not None else 'NA'}ms, "
+                    f"infer: {infer_ms if infer_ms is not None else 'NA'}ms, "
+                    f"total: {total_ms if total_ms is not None else 'NA'}ms)"
+                )
+            
+            if text and len(text) > 2000:
+                text = text[:2000]
+            
+            return {
+                'text': text.strip() if text else None,
+                'method': method,
+                'confidence': confidence,
+                'error_message': None if success else f"OCR failed with method: {method}",
+                'prep_ms': prep_ms,
+                'infer_ms': infer_ms,
+                'total_ms': total_ms,
+                'screenshot': None
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[WARN] Local OCR failed: {error_msg}")
+            return {
+                'text': None,
+                'method': 'error',
+                'confidence': 0.0,
+                'error_message': error_msg,
+                'screenshot': None
+            }
+
+    def ocr_from_image(self, screenshot):
+        """Run OCR on an already-captured PIL Image (for backfilling throttled sessions).
+
+        Args:
+            screenshot: PIL.Image to extract text from
+
+        Returns:
+            dict: OCR result with text, method, confidence, error_message keys
+        """
+        try:
+            ocr_start = time.perf_counter()
+            ocr_result = extract_text_from_image(
+                screenshot,
+                window_title='',
+                app_name='',
+                screenshot_mode=True
+            )
+            ocr_elapsed_ms = (time.perf_counter() - ocr_start) * 1000.0
+
+            self._last_ocr_time = time.time()
+
+            text = ocr_result.get('text', '')
+            method = ocr_result.get('method', 'unknown')
+            confidence = ocr_result.get('confidence', 0.0)
+            success = ocr_result.get('success', False)
+            prep_ms = ocr_result.get('prep_ms')
+            infer_ms = ocr_result.get('infer_ms')
+            total_ms = ocr_result.get('total_ms')
+
+            if text and len(text) > 2000:
+                text = text[:2000]
+
+            print(
+                f"[OCR] Backfill OCR: {method} "
+                f"(confidence: {confidence:.2f}, took: {ocr_elapsed_ms:.1f}ms, "
+                f"prep: {prep_ms if prep_ms is not None else 'NA'}ms, "
+                f"infer: {infer_ms if infer_ms is not None else 'NA'}ms, "
+                f"total: {total_ms if total_ms is not None else 'NA'}ms)"
+            )
+
+            return {
+                'text': text.strip() if text else None,
+                'method': method,
+                'confidence': confidence,
+                'error_message': None if success else f"OCR failed with method: {method}",
+                'prep_ms': prep_ms,
+                'infer_ms': infer_ms,
+                'total_ms': total_ms
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[WARN] OCR from saved image failed: {error_msg}")
+            return {
+                'text': None,
+                'method': 'error',
+                'confidence': 0.0,
+                'error_message': error_msg
+            }
+
+
+# ============================================================================
 # MAIN APPLICATION
 # ============================================================================
 
@@ -2932,25 +3656,29 @@ class TimeTracker:
         # ============================================================================
         # TRACKING SETTINGS (loaded from Supabase, configurable by admins)
         # ============================================================================
-        self.tracking_settings = {
-            'screenshot_monitoring_enabled': True,
+        # ============================================================================
+        # TRACKING SETTINGS (Per-Project Configuration)
+        # ============================================================================
+        # Tracking settings are now cached per-project since different projects
+        # may have different productivity rules (e.g., Twitter = productive for
+        # social media projects, but non-productive for internal tools)
+        self.tracking_settings_cache = {}  # Dict: {project_key: settings_dict}
+        self.tracking_settings_last_fetch = {}  # Dict: {project_key: timestamp}
+        self.tracking_settings_cache_ttl = 300  # Refresh settings every 5 minutes
+        self.current_project_key = None  # Track current project for settings
+        
+        # Default settings (used as fallback)
+        self.default_tracking_settings = {
+            'screenshot_monitoring_enabled': False,
             'screenshot_interval_seconds': 900,  # 15 minutes default
             'tracking_mode': 'interval',  # 'interval' or 'event'
             'event_tracking_enabled': False,
             'track_window_changes': True,
             'track_idle_time': True,
             'idle_threshold_seconds': 300,  # 5 minutes
-            'whitelist_enabled': True,
-            'whitelisted_apps': ['vscode', 'code', 'chrome', 'slack', 'jira', 'github', 'zoom', 'teams'],
-            'blacklist_enabled': True,
-            'blacklisted_apps': ['netflix', 'youtube', 'spotify', 'facebook', 'instagram', 'twitter', 'tiktok'],
-            'non_work_threshold_percent': 30,
-            'flag_excessive_non_work': True,
-            'private_sites_enabled': True,
-            'private_sites': []
+            'project_key': None,
+            'settings_source': 'default'
         }
-        self.tracking_settings_last_fetch = None
-        self.tracking_settings_cache_ttl = 300  # Refresh settings every 5 minutes
         
         # ============================================================================
         # UNASSIGNED WORK NOTIFICATION SETTINGS
@@ -3042,6 +3770,19 @@ class TimeTracker:
 
         # Consent management (GDPR/Privacy compliance)
         self.consent_manager = ConsentManager()
+
+        # ====================================================================
+        # NEW: Event-based activity tracking components
+        # ====================================================================
+        self.classification_manager = AppClassificationManager(self.offline_manager.db_path)
+        self.session_manager = ActiveSessionManager(self.offline_manager.db_path)
+        self.ocr_processor = LocalOCRProcessor()
+        self.batch_upload_interval = 300  # 5 min default (overridden by project settings)
+        self.last_batch_upload_time = time.time()
+        self.batch_start_time = datetime.now(timezone.utc)
+        self.last_classification_sync = 0
+        self.classification_sync_interval = 1800  # 30 minutes
+        self._unknown_apps_classified = set()  # Debounce: track apps already sent to AI this session
 
         # AI analysis is handled by the separate AI server
         # Desktop app only captures and uploads screenshots
@@ -3144,6 +3885,12 @@ class TimeTracker:
         if not self.auth_manager.get_supabase_config():
             print("[ERROR] Failed to get Supabase config from AI server")
             return False
+        
+        # Fetch OCR config from AI server (requires valid Atlassian token)
+        print("[INFO] Fetching OCR configuration from AI server...")
+        if not self.auth_manager.get_ocr_config():
+            print("[WARN] Failed to get OCR config from AI server, using defaults")
+            # OCR config is not critical - continue with defaults
 
         # Now initialize Supabase clients with runtime config
         try:
@@ -3241,6 +3988,15 @@ class TimeTracker:
 
                 # Update desktop app status to logged in
                 self._update_desktop_status(logged_in=True)
+
+                # Sync app classifications from Supabase
+                try:
+                    client = self.supabase_service if self.supabase_service else self.supabase
+                    self.classification_manager.sync_classifications(
+                        client, self.organization_id, self.current_project_key
+                    )
+                except Exception as e:
+                    print(f"[WARN] Classification sync failed during auth: {e}")
 
                 # Associate any anonymous offline records with this user
                 self._associate_offline_records()
@@ -4345,6 +5101,7 @@ class TimeTracker:
                     'Content-Type': 'application/json'
                 }
             )
+            print(f"!!!DEBUG!!! Main JQL query executed. Response status: {response.status_code}")
 
             # Handle 401 - token expired
             if response.status_code == 401:
@@ -4373,16 +5130,19 @@ class TimeTracker:
             if response.status_code == 200:
                 data = response.json()
                 issues = data.get('issues', [])
+                print(f"!!!DEBUG!!! Main JQL response issues: {[i['key'] for i in issues]}")
                 print(f"[OK] Jira API returned {len(issues)} issues")
 
                 # If project-level JQL returned 0 issues, try broader fallback so user_assigned_issues is populated
                 if not issues:
-                    fallback_jql = 'assignee = currentUser() AND Sprint in openSprints() AND statusCategory = "In Progress"'
-                    print(f"[INFO] Retrying with broader JQL for assigned issues")
-                    fallback_resp = requests.post(
+                    print("!!!DEBUG!!! Entering fallback JQL block for assigned issues.")
+                    # Option 1: Issues in open sprints
+                    fallback_jql_open = 'assignee = currentUser() AND Sprint in openSprints() AND statusCategory = "In Progress"'
+                    print(f"[INFO] Retrying with fallback JQL for open sprints")
+                    fallback_resp_open = requests.post(
                         f'https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/search/jql',
                         json={
-                            'jql': fallback_jql,
+                            'jql': fallback_jql_open,
                             'maxResults': 50,
                             'fields': ['summary', 'status', 'project', 'description', 'labels']
                         },
@@ -4392,11 +5152,48 @@ class TimeTracker:
                             'Content-Type': 'application/json'
                         }
                     )
-                    if fallback_resp.status_code == 200:
-                        fallback_data = fallback_resp.json()
-                        issues = fallback_data.get('issues', [])
-                        if issues:
-                            print(f"[OK] Fallback JQL returned {len(issues)} issues")
+                    issues = []
+                    if fallback_resp_open.status_code == 200:
+                        fallback_data_open = fallback_resp_open.json()
+                        open_issues = fallback_data_open.get('issues', [])
+                        issues.extend(open_issues)
+                        print(f"!!!DEBUG!!! Fallback JQL (open sprints) issues: {[i['key'] for i in open_issues]}")
+                        if open_issues:
+                            print(f"[OK] Fallback JQL (open sprints) returned {len(open_issues)} issues")
+                    else:
+                        print("!!!DEBUG!!! Fallback JQL (open sprints) query failed or returned no issues.")
+
+                    # Option 2: Issues not in any sprint
+                    fallback_jql_empty = 'assignee = currentUser() AND Sprint is EMPTY AND statusCategory = "In Progress"'
+                    print(f"[INFO] Retrying with fallback JQL for issues not in any sprint")
+                    fallback_resp_empty = requests.post(
+                        f'https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/search/jql',
+                        json={
+                            'jql': fallback_jql_empty,
+                            'maxResults': 50,
+                            'fields': ['summary', 'status', 'project', 'description', 'labels']
+                        },
+                        headers={
+                            'Authorization': f'Bearer {access_token}',
+                            'Accept': 'application/json',
+                            'Content-Type': 'application/json'
+                        }
+                    )
+                    if fallback_resp_empty.status_code == 200:
+                        fallback_data_empty = fallback_resp_empty.json()
+                        empty_issues = fallback_data_empty.get('issues', [])
+                        issues.extend(empty_issues)
+                        print(f"!!!DEBUG!!! Fallback JQL (no sprint) issues: {[i['key'] for i in empty_issues]}")
+                        if empty_issues:
+                            print(f"[OK] Fallback JQL (no sprint) returned {len(empty_issues)} issues")
+                    else:
+                        print("!!!DEBUG!!! Fallback JQL (no sprint) query failed or returned no issues.")
+
+                    # Debug: print all combined fallback issues
+                    print(f"!!!DEBUG!!! Combined fallback issues: {[i['key'] for i in issues]}")
+                    print("!!!DEBUG!!! Exiting fallback JQL block.")
+                    # Ensure self.user_issues is updated
+                    self.user_issues = issues
 
                 # Extract and format issue data with description and labels
                 formatted_issues = []
@@ -4437,6 +5234,7 @@ class TimeTracker:
             else:
                 print(f"[ERROR] Jira API failed: {response.status_code} - {response.text}")
         except Exception as e:
+            print(f"!!!DEBUG!!! Exception occurred in fetch_jira_issues: {e}")
             print(f"[ERROR] Failed to fetch Jira issues: {e}")
 
         return []
@@ -4542,7 +5340,11 @@ class TimeTracker:
         2. If no issues but has accessible projects, use first project
         3. Return None if no project can be determined
         """
-        # Try from issues first
+        # Try from issues first — refresh cache if stale or never fetched
+        if self.should_refresh_issues_cache():
+            self.user_issues = self.fetch_jira_issues()
+            self.issues_cache_time = time.time()
+
         if self.user_issues and len(self.user_issues) > 0:
             project_key = self.user_issues[0].get('project')
             if project_key:
@@ -4554,15 +5356,19 @@ class TimeTracker:
             self.projects_cache_time = time.time()
 
         if self.user_projects and len(self.user_projects) > 0:
-            # If user only has one project, definitely use it
-            # If multiple projects, use the first one (could be enhanced with user preference)
-            project_key = self.user_projects[0].get('key')
-            if project_key:
-                if len(self.user_projects) == 1:
+            if len(self.user_projects) == 1:
+                # Unambiguous — only one project available
+                project_key = self.user_projects[0].get('key')
+                if project_key:
                     print(f"[INFO] User has single project: {project_key}")
-                else:
-                    print(f"[INFO] Using first of {len(self.user_projects)} projects: {project_key}")
-                return project_key
+                    return project_key
+            else:
+                # Multiple projects and no assigned issues — cannot determine
+                # which project the user is working on. Return None instead
+                # of guessing (previously picked first alphabetically which
+                # could return irrelevant projects like "Jiraforge").
+                print(f"[INFO] User has {len(self.user_projects)} projects but no assigned issues — cannot determine project key")
+                return None
 
         return None
 
@@ -4570,109 +5376,185 @@ class TimeTracker:
     # TRACKING SETTINGS MANAGEMENT
     # ============================================================================
     
-    def fetch_tracking_settings(self):
-        """Fetch tracking settings from Supabase (configured by admins in Forge app)"""
-        try:
-            # Check if we need to refresh settings
-            if self.tracking_settings_last_fetch is not None:
-                time_since_fetch = time.time() - self.tracking_settings_last_fetch
+    def get_tracking_settings_for_project(self, project_key=None):
+        """Get tracking settings for a specific project
+        
+        This method handles the project-specific settings cache and fallback.
+        Priority: project-specific → organization-wide → defaults
+        
+        Args:
+            project_key: Jira project key (e.g., 'PROJ'). If None, returns org-wide settings.
+            
+        Returns:
+            dict: Tracking settings for the project
+        """
+        # Use project key or default to current
+        pk = project_key or self.current_project_key
+        
+        # Check if we have cached settings for this project
+        if pk and pk in self.tracking_settings_cache:
+            # Check if cache is still valid
+            last_fetch = self.tracking_settings_last_fetch.get(pk)
+            if last_fetch:
+                time_since_fetch = time.time() - last_fetch
                 if time_since_fetch < self.tracking_settings_cache_ttl:
-                    return  # Use cached settings
+                    return self.tracking_settings_cache[pk]
+        
+        # If no cache or expired, fetch fresh settings
+        self.fetch_tracking_settings(pk)
+        
+        # Return cached settings or defaults
+        return self.tracking_settings_cache.get(pk, self.default_tracking_settings.copy())
+    
+    @property
+    def tracking_settings(self):
+        """Backward compatible property - returns settings for current project"""
+        return self.get_tracking_settings_for_project(self.current_project_key)
+    
+    def update_current_project(self):
+        """Check if project has changed and reload settings if needed"""
+        new_project_key = self.get_user_project_key()
+        
+        if new_project_key != self.current_project_key:
+            old_project = self.current_project_key
+            self.current_project_key = new_project_key
+            
+            if old_project:
+                print(f"[PROJECT] Changed from {old_project} → {new_project_key}")
+            else:
+                print(f"[PROJECT] Set to {new_project_key}")
+            
+            # Fetch settings for new project
+            self.fetch_tracking_settings(new_project_key)
+            
+            # Re-sync app classifications with project-level overrides
+            try:
+                client = self.supabase_service if self.supabase_service else self.supabase
+                self.classification_manager.sync_classifications(
+                    client, self.organization_id, new_project_key
+                )
+            except Exception as e:
+                print(f"[WARN] Classification sync failed on project change: {e}")
+            
+            # Update capture interval and idle timeout based on new settings
+            settings = self.get_tracking_settings_for_project(new_project_key)
+            self.capture_interval = settings.get('screenshot_interval_seconds', self.capture_interval)
+            self.idle_timeout = settings.get('idle_threshold_seconds', self.idle_timeout)
+            
+            return True  # Project changed
+        
+        return False  # No change
+
+    def fetch_tracking_settings(self, project_key=None):
+        """
+        Fetch tracking settings from Supabase (configured by admins in Forge app)
+        
+        Args:
+            project_key (str, optional): Project key to fetch settings for. If None, fetches org-wide settings.
+        
+        Returns:
+            dict: The fetched settings
+        """
+        try:
+            # Check if we need to refresh settings for this project
+            cache_key = project_key if project_key else '_org_default'
+            if cache_key in self.tracking_settings_last_fetch:
+                time_since_fetch = time.time() - self.tracking_settings_last_fetch[cache_key]
+                if time_since_fetch < self.tracking_settings_cache_ttl:
+                    return self.tracking_settings_cache.get(cache_key, self.default_tracking_settings)
             
             client = self.supabase_service if self.supabase_service else self.supabase
+            settings = None
+            settings_source = 'default'
             
-            # Fetch settings for current organization (or global settings)
-            query = client.table('tracking_settings').select('*')
-
-            # If we have an organization_id, filter by it
-            if self.organization_id:
+            # 3-tier fallback: project-specific → org-wide → global defaults
+            
+            # Tier 1: Try project-specific settings (if project_key provided)
+            if project_key and self.organization_id:
+                query = client.table('tracking_settings').select('*')
                 query = query.eq('organization_id', self.organization_id)
-            else:
-                # Try to get global settings (organization_id is null)
-                query = query.is_('organization_id', 'null')
+                query = query.eq('project_key', project_key)
+                result = query.limit(1).execute()
+                
+                if result.data and len(result.data) > 0:
+                    settings = result.data[0]
+                    settings_source = 'project'
             
-            result = query.limit(1).execute()
-
-            if result.data and len(result.data) > 0:
-                settings = result.data[0]
+            # Tier 2: Try organization-wide settings (project_key IS NULL)
+            if not settings and self.organization_id:
+                query = client.table('tracking_settings').select('*')
+                query = query.eq('organization_id', self.organization_id)
+                query = query.is_('project_key', 'null')
+                result = query.limit(1).execute()
                 
-                # Map database columns to local settings
-                self.tracking_settings = {
-                    'screenshot_monitoring_enabled': settings.get('screenshot_monitoring_enabled', True),
-                    'screenshot_interval_seconds': settings.get('screenshot_interval_seconds', 900),
-                    'tracking_mode': settings.get('tracking_mode', 'interval'),
-                    'event_tracking_enabled': settings.get('event_tracking_enabled', False),
-                    'track_window_changes': settings.get('track_window_changes', True),
-                    'track_idle_time': settings.get('track_idle_time', True),
-                    'idle_threshold_seconds': settings.get('idle_threshold_seconds', 300),
-                    'whitelist_enabled': settings.get('whitelist_enabled', True),
-                    'whitelisted_apps': settings.get('whitelisted_apps') or [],  # Handle None values
-                    'blacklist_enabled': settings.get('blacklist_enabled', True),
-                    'blacklisted_apps': settings.get('blacklisted_apps') or [],  # Handle None values
-                    'non_work_threshold_percent': settings.get('non_work_threshold_percent', 30),
-                    'flag_excessive_non_work': settings.get('flag_excessive_non_work', True),
-                    'private_sites_enabled': settings.get('private_sites_enabled', True),
-                    'private_sites': settings.get('private_sites') or []  # Handle None values
+                if result.data and len(result.data) > 0:
+                    settings = result.data[0]
+                    settings_source = 'organization'
+            
+            # Tier 3: Try global defaults (organization_id IS NULL, project_key IS NULL)
+            if not settings:
+                query = client.table('tracking_settings').select('*')
+                query = query.is_('organization_id', 'null')
+                query = query.is_('project_key', 'null')
+                result = query.limit(1).execute()
+                
+                if result.data and len(result.data) > 0:
+                    settings = result.data[0]
+                    settings_source = 'global'
+
+            if settings:
+                # Map database columns to local settings format.
+                # IMPORTANT: Supabase returns NULL columns as None in Python.
+                # dict.get(key, default) only uses the default when the key is
+                # MISSING — if the key exists with value None, it returns None.
+                # We must explicitly coalesce None → default for every field,
+                # otherwise a NULL boolean like screenshot_monitoring_enabled
+                # would be treated as falsy and silently disable tracking.
+                _nvl = lambda val, default: default if val is None else val
+                fetched_settings = {
+                    'screenshot_monitoring_enabled': _nvl(settings.get('screenshot_monitoring_enabled'), True),
+                    'screenshot_interval_seconds': _nvl(settings.get('screenshot_interval_seconds'), 900),
+                    'tracking_mode': _nvl(settings.get('tracking_mode'), 'interval'),
+                    'event_tracking_enabled': _nvl(settings.get('event_tracking_enabled'), False),
+                    'track_window_changes': _nvl(settings.get('track_window_changes'), True),
+                    'track_idle_time': _nvl(settings.get('track_idle_time'), True),
+                    'idle_threshold_seconds': _nvl(settings.get('idle_threshold_seconds'), 300),
                 }
+
+                if SCREENSHOT_MONITORING_HARD_DISABLED:
+                    fetched_settings['screenshot_monitoring_enabled'] = False
                 
-                # Update capture interval from settings
-                self.capture_interval = self.tracking_settings['screenshot_interval_seconds']
-                self.idle_timeout = self.tracking_settings['idle_threshold_seconds']
+                # Cache the settings
+                self.tracking_settings_cache[cache_key] = fetched_settings
+                self.tracking_settings_last_fetch[cache_key] = time.time()
                 
-                self.tracking_settings_last_fetch = time.time()
-                tracking_mode = self.tracking_settings.get('tracking_mode', 'interval')
-                event_enabled = self.tracking_settings.get('event_tracking_enabled', False)
+                # Update capture interval from settings (for backward compatibility)
+                self.capture_interval = fetched_settings['screenshot_interval_seconds']
+                self.idle_timeout = fetched_settings['idle_threshold_seconds']
+                
+                tracking_mode = fetched_settings.get('tracking_mode', 'interval')
+                event_enabled = fetched_settings.get('event_tracking_enabled', False)
                 mode_str = "interval + event" if (event_enabled or tracking_mode == 'event') else "interval-only"
-                print(f"[OK] Tracking settings loaded - mode: {mode_str}, interval: {self.capture_interval}s")
-                print(f"     - Whitelist enabled: {self.tracking_settings['whitelist_enabled']}, apps: {self.tracking_settings['whitelisted_apps']}")
-                print(f"     - Blacklist enabled: {self.tracking_settings['blacklist_enabled']}, apps: {self.tracking_settings['blacklisted_apps']}")
-                self.add_admin_log('INFO', f'Settings loaded: interval={self.capture_interval}s, mode={mode_str}')
-
+                
+                project_info = f" for project '{project_key}'" if project_key else ""
+                total_classifications = len(self.classification_manager.process_classifications) + len(self.classification_manager.url_classifications) + len(self.classification_manager.url_wildcard_patterns)
+                print(f"[OK] Tracking settings loaded{project_info} (source: {settings_source}) - mode: {mode_str}, interval: {self.capture_interval}s")
+                print(f"     - App classifications loaded: {total_classifications}")
+                self.add_admin_log('INFO', f'Settings loaded{project_info} (source: {settings_source}): interval={self.capture_interval}s, mode={mode_str}')
+                
+                return fetched_settings
+            
             else:
-                # Fallback: try global settings (organization_id IS NULL)
-                # This matches the Forge app's getTrackingSettings fallback behavior
-                if self.organization_id:
-                    fallback_result = client.table('tracking_settings').select('*').is_('organization_id', 'null').limit(1).execute()
-                    if fallback_result.data and len(fallback_result.data) > 0:
-                        result = fallback_result
-                        settings = result.data[0]
-
-                        # Map database columns to local settings
-                        self.tracking_settings = {
-                            'screenshot_monitoring_enabled': settings.get('screenshot_monitoring_enabled', True),
-                            'screenshot_interval_seconds': settings.get('screenshot_interval_seconds', 900),
-                            'tracking_mode': settings.get('tracking_mode', 'interval'),
-                            'event_tracking_enabled': settings.get('event_tracking_enabled', False),
-                            'track_window_changes': settings.get('track_window_changes', True),
-                            'track_idle_time': settings.get('track_idle_time', True),
-                            'idle_threshold_seconds': settings.get('idle_threshold_seconds', 300),
-                            'whitelist_enabled': settings.get('whitelist_enabled', True),
-                            'whitelisted_apps': settings.get('whitelisted_apps') or [],
-                            'blacklist_enabled': settings.get('blacklist_enabled', True),
-                            'blacklisted_apps': settings.get('blacklisted_apps') or [],
-                            'non_work_threshold_percent': settings.get('non_work_threshold_percent', 30),
-                            'flag_excessive_non_work': settings.get('flag_excessive_non_work', True),
-                            'private_sites_enabled': settings.get('private_sites_enabled', True),
-                            'private_sites': settings.get('private_sites') or []
-                        }
-
-                        self.capture_interval = self.tracking_settings['screenshot_interval_seconds']
-                        self.idle_timeout = self.tracking_settings['idle_threshold_seconds']
-
-                        self.tracking_settings_last_fetch = time.time()
-                        tracking_mode = self.tracking_settings.get('tracking_mode', 'interval')
-                        event_enabled = self.tracking_settings.get('event_tracking_enabled', False)
-                        mode_str = "interval + event" if (event_enabled or tracking_mode == 'event') else "interval-only"
-                        print(f"[OK] Tracking settings loaded (global fallback) - mode: {mode_str}, interval: {self.capture_interval}s")
-                        self.add_admin_log('INFO', f'Settings loaded (global): interval={self.capture_interval}s, mode={mode_str}')
-                        return
-
-                print("[INFO] No tracking settings found in Supabase, using defaults")
-                self.tracking_settings_last_fetch = time.time()
+                # No settings found, use defaults
+                print(f"[INFO] No tracking settings found in Supabase, using defaults")
+                self.tracking_settings_cache[cache_key] = self.default_tracking_settings.copy()
+                self.tracking_settings_last_fetch[cache_key] = time.time()
+                return self.default_tracking_settings
 
         except Exception as e:
             print(f"[WARN] Failed to fetch tracking settings: {e}")
-            # Continue with default settings
+            # Return defaults on error
+            return self.default_tracking_settings
 
     # ============================================================================
     # PAUSE SETTINGS MANAGEMENT (Local Storage)
@@ -4951,222 +5833,53 @@ class TimeTracker:
         except Exception as e:
             print(f"[WARN] Error checking unassigned work: {e}")
     
-    # Common app name aliases - maps various names to their canonical form
-    # This allows users to add "VS Code" or "vscode" and it will still match "Code.exe"
-    APP_ALIASES = {
-        # VS Code variants
-        'vscode': ['code', 'visualstudiocode', 'visual studio code'],
-        'code': ['vscode', 'visualstudiocode'],
-        # Cursor IDE
-        'cursor': ['cursor'],
-        # Browsers
-        'chrome': ['chrome', 'googlechrome', 'google chrome'],
-        'googlechrome': ['chrome'],
-        'firefox': ['firefox', 'mozilla', 'mozilla firefox'],
-        'edge': ['msedge', 'microsoft edge', 'microsoftedge'],
-        'msedge': ['edge', 'microsoft edge'],
-        'brave': ['brave', 'bravebrowser'],
-        'opera': ['opera', 'operagx'],
-        # Communication
-        'slack': ['slack'],
-        'teams': ['teams', 'msteams', 'microsoft teams'],
-        'msteams': ['teams'],
-        'zoom': ['zoom'],
-        'discord': ['discord'],
-        'skype': ['skype'],
-        'webex': ['webex', 'ciscowebex'],
-        # Development
-        'intellij': ['idea', 'idea64', 'intellij', 'intellijidea'],
-        'idea': ['intellij', 'idea64'],
-        'pycharm': ['pycharm', 'pycharm64'],
-        'webstorm': ['webstorm', 'webstorm64'],
-        'androidstudio': ['studio', 'studio64', 'android studio'],
-        'studio': ['androidstudio'],
-        'sublime': ['sublime_text', 'sublimetext', 'sublime text'],
-        'atom': ['atom'],
-        'notepad++': ['notepad++'],
-        'vim': ['vim', 'gvim', 'nvim', 'neovim'],
-        'emacs': ['emacs'],
-        # Productivity
-        'notion': ['notion'],
-        'obsidian': ['obsidian'],
-        'evernote': ['evernote'],
-        'onenote': ['onenote', 'microsoft onenote'],
-        # Design
-        'figma': ['figma'],
-        'sketch': ['sketch'],
-        'photoshop': ['photoshop', 'adobe photoshop'],
-        'illustrator': ['illustrator', 'adobe illustrator'],
-        'xd': ['xd', 'adobe xd'],
-        # Project Management
-        'jira': ['jira'],
-        'confluence': ['confluence'],
-        'trello': ['trello'],
-        'asana': ['asana'],
-        'monday': ['monday'],
-        # Office
-        'word': ['winword', 'microsoft word'],
-        'winword': ['word'],
-        'excel': ['excel', 'microsoft excel'],
-        'powerpoint': ['powerpnt', 'powerpoint', 'microsoft powerpoint'],
-        'powerpnt': ['powerpoint'],
-        'outlook': ['outlook', 'microsoft outlook'],
-        # Terminals
-        'terminal': ['terminal', 'windowsterminal', 'cmd', 'powershell', 'pwsh'],
-        'windowsterminal': ['terminal'],
-        'powershell': ['powershell', 'pwsh'],
-        'cmd': ['cmd', 'command prompt'],
-        'iterm': ['iterm', 'iterm2'],
-        'warp': ['warp'],
-        # Git
-        'github': ['github', 'githubdesktop'],
-        'gitlab': ['gitlab'],
-        'sourcetree': ['sourcetree'],
-        'gitkraken': ['gitkraken'],
-        # API Tools
-        'postman': ['postman'],
-        'insomnia': ['insomnia'],
-        # Databases
-        'datagrip': ['datagrip'],
-        'dbeaver': ['dbeaver'],
-        'tableplus': ['tableplus'],
-        'pgadmin': ['pgadmin'],
-        # Other Dev Tools
-        'docker': ['docker', 'dockerdesktop'],
-        'kubernetes': ['kubernetes', 'kubectl'],
-    }
-    
-    def normalize_app_name(self, app_name):
-        """Normalize application name for comparison"""
-        if not app_name:
-            return ''
-        # Remove .exe extension, lowercase, remove spaces
-        normalized = app_name.lower().replace('.exe', '').replace(' ', '').strip()
-        return normalized
-    
-    def get_app_aliases(self, app_name):
-        """Get all aliases for an app name (including the name itself)"""
-        normalized = self.normalize_app_name(app_name)
-        aliases = {normalized}  # Start with the normalized name itself
+    def is_app_whitelisted(self, app_name, window_title=''):
+        """Check if application is productive (database-driven classification)
         
-        # Add aliases if this app has any defined
-        if normalized in self.APP_ALIASES:
-            aliases.update(self.APP_ALIASES[normalized])
+        REPLACES hardcoded whitelist with database lookups from application_classifications table.
+        Uses AppClassificationManager to check if app is classified as 'productive'.
+        """
+        # Use database-driven classification instead of hardcoded whitelist
+        classification, match_type = self.classification_manager.classify(app_name, window_title)
         
-        # Also check if this name is an alias for another app
-        for canonical, alias_list in self.APP_ALIASES.items():
-            if normalized in alias_list or normalized == canonical:
-                aliases.add(canonical)
-                aliases.update(alias_list)
+        # 'productive' apps are considered whitelisted (work apps)
+        return classification == 'productive'
+
+    def is_app_blacklisted(self, app_name, window_title=''):
+        """Check if application is non-productive (database-driven classification)
         
-        return aliases
-    
-    def app_matches(self, app_name, pattern):
-        """Check if app_name matches pattern (considering aliases)"""
-        app_normalized = self.normalize_app_name(app_name)
-        pattern_normalized = self.normalize_app_name(pattern)
+        REPLACES hardcoded blacklist with database lookups from application_classifications table.
+        Uses AppClassificationManager to check if app is classified as 'non_productive'.
+        """
+        # Use database-driven classification instead of hardcoded blacklist
+        classification, match_type = self.classification_manager.classify(app_name, window_title)
         
-        # Get all aliases for both the app and the pattern
-        app_aliases = self.get_app_aliases(app_name)
-        pattern_aliases = self.get_app_aliases(pattern)
-        
-        # Check if any alias matches (substring in either direction)
-        for app_alias in app_aliases:
-            for pattern_alias in pattern_aliases:
-                if pattern_alias in app_alias or app_alias in pattern_alias:
-                    return True
-        
-        return False
-    
-    def is_in_whitelist(self, app_name):
-        """Check if app exists in whitelist (using alias-aware matching)"""
-        whitelisted_apps = self.tracking_settings.get('whitelisted_apps', [])
-        if not whitelisted_apps:
-            return False
-
-        for whitelist_entry in whitelisted_apps:
-            if self.app_matches(app_name, whitelist_entry):
-                return True
-
-        return False
-
-    def is_in_blacklist(self, app_name):
-        """Check if app exists in blacklist (using alias-aware matching)"""
-        blacklisted_apps = self.tracking_settings.get('blacklisted_apps', [])
-        if not blacklisted_apps:
-            return False
-
-        for blacklist_entry in blacklisted_apps:
-            if self.app_matches(app_name, blacklist_entry):
-                return True
-
-        return False
-
-    def is_app_whitelisted(self, app_name):
-        """Check if application is in whitelist (work apps) - uses alias-aware matching"""
-        if not self.tracking_settings.get('whitelist_enabled', True):
-            return True  # If whitelist disabled, allow all
-
-        whitelisted_apps = self.tracking_settings.get('whitelisted_apps', [])
-        if not whitelisted_apps:
-            return True  # Empty whitelist means allow all
-
-        # Check if any whitelist entry matches (with alias support)
-        for whitelist_entry in whitelisted_apps:
-            if self.app_matches(app_name, whitelist_entry):
-                return True
-
-        return False
-
-    def is_app_blacklisted(self, app_name):
-        """Check if application is in blacklist (non-work apps) - uses alias-aware matching"""
-        if not self.tracking_settings.get('blacklist_enabled', True):
-            return False  # If blacklist disabled, nothing is blacklisted
-
-        blacklisted_apps = self.tracking_settings.get('blacklisted_apps', [])
-        if not blacklisted_apps:
-            return False  # Empty blacklist means nothing blocked
-
-        # Check if any blacklist entry matches (with alias support)
-        for blacklist_entry in blacklisted_apps:
-            if self.app_matches(app_name, blacklist_entry):
-                return True
-
-        return False
+        # 'non_productive' apps are considered blacklisted (non-work apps)
+        return classification == 'non_productive'
     
     def is_private_app(self, app_name, window_title=''):
         """Check if application/window is private (should not be tracked/recorded)"""
-        if not self.tracking_settings.get('private_sites_enabled', True):
-            return False  # If private sites disabled, nothing is private
-        
-        private_sites = self.tracking_settings.get('private_sites', [])
-        if not private_sites:
-            return False  # No private sites configured
-        
-        normalized_app = self.normalize_app_name(app_name)
-        normalized_title = window_title.lower() if window_title else ''
-        
-        # Check if any private site entry matches in app name or window title
-        for private_entry in private_sites:
-            normalized_entry = private_entry.lower().strip()
-            if normalized_entry in normalized_app or normalized_entry in normalized_title:
-                return True
-        
-        return False
+        classification, _ = self.classification_manager.classify(app_name, window_title)
+        return classification == 'private'
     
     def get_app_work_type(self, app_name, window_title=''):
-        """Determine work type based on app whitelist/blacklist
+        """Determine work type based on database-driven classification
         
         Returns:
-            str: 'office' for whitelisted apps, 'non-office' for blacklisted apps, 
-                 'office' as default if not in any list
+            str: 'office' for productive apps, 'non-office' for non-productive apps,
+                 'office' as default for unknown/private apps
         """
-        if self.is_app_blacklisted(app_name):
+        # Use database-driven classification
+        classification, match_type = self.classification_manager.classify(app_name, window_title)
+        
+        if classification == 'non_productive':
             return 'non-office'
-        elif self.is_app_whitelisted(app_name):
+        elif classification == 'productive':
             return 'office'
+        elif classification == 'private':
+            return 'office'  # Private apps treated as work by default to avoid tracking issues
         else:
-            # Default to office if not in any list
+            # Unknown apps default to 'office' (will be classified by admin later)
             return 'office'
     
     def should_skip_screenshot(self, app_name, window_title=''):
@@ -5175,32 +5888,306 @@ class TimeTracker:
         Returns:
             tuple: (should_skip: bool, reason: str or None)
         """
+        # Client-level kill switch: never capture/store screenshots.
+        if SCREENSHOT_MONITORING_HARD_DISABLED:
+            return (True, 'screenshot_monitoring_disabled')
+
         # Check if screenshot monitoring is disabled
         if not self.tracking_settings.get('screenshot_monitoring_enabled', True):
             return (True, 'screenshot_monitoring_disabled')
 
-        # TEMPORARILY DISABLED - whitelist/blacklist/private checks
-        # TODO: Re-enable after testing other features
-        # 
-        # # Check if app is private (should not be recorded at all)
-        # if self.is_private_app(app_name, window_title):
-        #     return (True, 'private_app')
-        #
-        # # Check blacklist FIRST (takes priority)
-        # # When blacklist is ENABLED, blacklisted apps should NOT be tracked
-        # if self.tracking_settings.get('blacklist_enabled', True):
-        #     if self.is_in_blacklist(app_name):
-        #         return (True, 'blacklisted_app')
-        #
-        # # Check whitelist
-        # # When whitelist is ENABLED, ONLY whitelisted apps should be tracked
-        # if self.tracking_settings.get('whitelist_enabled', True):
-        #     whitelisted_apps = self.tracking_settings.get('whitelisted_apps', [])
-        #     if whitelisted_apps:  # Only enforce if whitelist has apps
-        #         if not self.is_in_whitelist(app_name):
-        #             return (True, 'not_whitelisted')
+        # Use database-driven classification to skip private/non-productive apps
+        classification, _ = self.classification_manager.classify(app_name, window_title)
+        if classification == 'private':
+            return (True, 'private_app')
+        if classification == 'non_productive':
+            return (True, 'non_productive_app')
 
         return (False, None)
+
+    def upload_activity_batch(self):
+        """Upload accumulated activity records to Supabase as a single batch.
+        Called every 5 minutes (batch_upload_interval).
+        Requires the service role client to bypass RLS (desktop app users
+        authenticate via Atlassian OAuth, not Supabase Auth).
+        """
+        try:
+            # Backfill OCR for any sessions that were throttled during rapid window switches.
+            # Uses the ORIGINAL screenshot captured at throttle time, not a new one,
+            # so the OCR text matches the window the user was actually viewing.
+            pending_entries = self.session_manager.get_pending_ocr_entries()
+            for (pk_title, pk_app), saved_screenshot in pending_entries.items():
+                if saved_screenshot is not None:
+                    ocr_result = self.ocr_processor.ocr_from_image(saved_screenshot)
+                    del saved_screenshot
+                else:
+                    # Fallback: no saved screenshot (shouldn't happen, but be safe)
+                    print(f"[WARN] No saved screenshot for backfill: {pk_app} - {pk_title[:50]}")
+                    ocr_result = self.ocr_processor.capture_and_ocr()
+                if ocr_result and not ocr_result.get('throttled'):
+                    self.session_manager.backfill_ocr(pk_title, pk_app, ocr_result)
+
+            # Stop current timer so accumulated time is accurate
+            self.session_manager.stop_current_timer()
+
+            # Harvest all sessions
+            sessions = self.session_manager.get_all_sessions()
+            if not sessions:
+                print("[BATCH] No activity records to upload")
+                self.last_batch_upload_time = time.time()
+                return
+
+            # Must use service role client — anon client is blocked by RLS
+            # because desktop users don't have supabase_user_id linked
+            if not self.supabase_service:
+                print("[BATCH] No Supabase client — records stay in SQLite")
+                return
+
+            # Verify we have a real service client, not the anon fallback
+            service_key = get_env_var('SUPABASE_SERVICE_ROLE_KEY')
+            if not service_key:
+                print("[BATCH] No service role key available — batch insert requires service role to bypass RLS")
+                print("[BATCH] Records stay in SQLite until service role key is configured")
+                self.last_batch_upload_time = time.time()
+                return
+
+            if not self.current_user_id:
+                print("[BATCH] No current user ID — cannot upload activity records")
+                self.last_batch_upload_time = time.time()
+                return
+
+            # Check connectivity
+            if not self.offline_manager.check_connectivity():
+                print(f"[BATCH] Offline — {len(sessions)} records stay in SQLite for retry")
+                return
+
+            batch_timestamp = datetime.now(timezone.utc).isoformat()
+            batch_end = datetime.now(timezone.utc)
+            batch_start = self.batch_start_time
+
+            # Build activity_records payload
+            records = []
+            # Prefer the already-resolved current project used by tracking settings/classifications.
+            # Falling back to get_user_project_key() can drift when issue ordering/cache changes.
+            project_key = self.current_project_key or self.get_user_project_key()
+            project_key_source = "current_project_key" if self.current_project_key else "derived_from_issues_or_projects"
+            print(f"[BATCH] Using project_key: {project_key} (source: {project_key_source})")
+
+            for s in sessions:
+                classification = s.get('classification', 'unknown')
+
+                # Determine status based on classification
+                if classification in ('non_productive', 'private'):
+                    status = 'analyzed'  # No AI needed
+                else:
+                    status = 'pending'  # AI server will analyze
+
+                record = {
+                    'user_id': self.current_user_id,
+                    'organization_id': self.organization_id,
+                    'window_title': s.get('window_title', ''),
+                    'application_name': s.get('application_name', ''),
+                    'classification': classification,
+                    'ocr_text': s.get('ocr_text'),
+                    'ocr_method': s.get('ocr_method'),
+                    'ocr_confidence': s.get('ocr_confidence'),
+                    'ocr_error_message': s.get('ocr_error_message'),
+                    'total_time_seconds': int(s.get('total_time_seconds', 0)),
+                    'visit_count': s.get('visit_count', 1),
+                    'start_time': s.get('first_seen'),
+                    'end_time': s.get('last_seen'),
+                    'duration_seconds': int(s.get('total_time_seconds', 0)),
+                    'batch_timestamp': batch_timestamp,
+                    'batch_start': batch_start.isoformat(),
+                    'batch_end': batch_end.isoformat(),
+                    'work_date': s.get('first_seen', '')[:10] if s.get('first_seen') else datetime.now().date().isoformat(),
+                    'user_timezone': get_local_timezone_name(),
+                    'project_key': project_key,
+                    'user_assigned_issues': json.dumps(self.user_issues) if self.user_issues else None,
+                    'status': status,
+                    'metadata': {
+                        'tracking_mode': 'event_based',
+                        'app_version': self.app_version
+                    }
+                }
+                records.append(record)
+
+            # Single batch insert to Supabase using service role client
+            print(f"[BATCH] Inserting {len(records)} activity records...")
+            print(f"[BATCH] Using service client with key type: {'service_role' if service_key else 'unknown'}")
+            print(f"[BATCH] Target table: activity_records, user_id: {self.current_user_id}")
+            result = self.supabase_service.table('activity_records').insert(records).execute()
+            print(f"[BATCH] Insert result: data_count={len(result.data) if result.data else 0}, count={getattr(result, 'count', 'N/A')}")
+
+            if result.data:
+                productive_count = sum(1 for r in records if r['status'] == 'pending')
+                analyzed_count = sum(1 for r in records if r['status'] == 'analyzed')
+                inserted_ids = [r.get('id', '?') for r in result.data]
+                print(f"[BATCH] Uploaded {len(records)} activity records ({productive_count} pending AI, {analyzed_count} pre-analyzed)")
+                print(f"[BATCH] Inserted IDs: {inserted_ids}")
+
+                # Verify records actually exist in the database
+                try:
+                    verify = self.supabase_service.table('activity_records') \
+                        .select('id') \
+                        .eq('user_id', self.current_user_id) \
+                        .eq('batch_timestamp', batch_timestamp) \
+                        .execute()
+                    verified_count = len(verify.data) if verify.data else 0
+                    print(f"[BATCH] Verification: {verified_count}/{len(records)} records confirmed in database")
+                    if verified_count == 0:
+                        print(f"[WARN] Insert returned data but verification found 0 records — possible RLS or trigger issue")
+                except Exception as ve:
+                    print(f"[WARN] Verification query failed: {ve}")
+
+                # Success — clear local sessions and reset batch timer
+                self.session_manager.clear_all()
+                self.batch_start_time = datetime.now(timezone.utc)
+            else:
+                # Log detailed response for debugging
+                print(f"[WARN] Batch upload returned no data — records stay in SQLite")
+                if hasattr(result, 'count'):
+                    print(f"       result.count={result.count}")
+                # Log the full result for debugging
+                print(f"       result={result}")
+
+            self.last_batch_upload_time = time.time()
+
+        except Exception as e:
+            print(f"[ERROR] Activity batch upload failed: {e}")
+            # Log detailed error info from Supabase response
+            if hasattr(e, 'message'):
+                print(f"       Supabase error: {e.message}")
+            if hasattr(e, 'code'):
+                print(f"       Error code: {e.code}")
+            if hasattr(e, 'details'):
+                print(f"       Details: {e.details}")
+            print(f"       {len(sessions) if 'sessions' in dir() else '?'} records remain in SQLite for retry on next cycle")
+            self.last_batch_upload_time = time.time()
+
+    def process_window_event(self, window_info):
+        """Core event handler for event-based activity tracking.
+        Called on every window switch.
+
+        1. Classify app (productive, non_productive, private, unknown)
+        2. If productive/unknown: run OCR to capture screen text
+        3. If private: redact window title
+        4. If non_productive: no OCR, just metadata
+        5. If unknown: async classify via AI server
+        6. Update session manager with OCR result (text, method, confidence, error)
+        """
+        app_name = window_info.get('app', '')
+        window_title = window_info.get('title', '')
+
+        # Classify the application
+        classification, match_type = self.classification_manager.classify(app_name, window_title)
+
+        ocr_result = None
+        display_title = window_title
+
+        if classification == 'private':
+            # Private app: redact window title, no OCR
+            display_title = '[PRIVATE]'
+            print(f"[PRIVATE] {app_name} — window title redacted")
+
+        elif classification == 'non_productive':
+            # Non-productive: no OCR, just metadata
+            print(f"[NON-PROD] {app_name} — {window_title[:50]}")
+
+        elif classification in ('productive', 'unknown'):
+            # Productive or unknown: capture OCR (returns dict with text, method, confidence, error_message)
+            # If window title contains Jira issue key (e.g., SCRUM-123), force OCR
+            # and bypass short throttling so issue-context windows always get text.
+            issue_key_in_title = bool(re.search(r'\b[A-Z][A-Z0-9]+-\d+\b', window_title or ''))
+            spreadsheet_processes = {'excel.exe', 'libreofficecalc.exe', 'soffice.bin'}
+            force_ocr = issue_key_in_title or (app_name.lower() in spreadsheet_processes)
+            ocr_result = self.ocr_processor.capture_and_ocr(force=force_ocr)
+            ocr_text = ocr_result.get('text') if ocr_result else None
+            
+            if classification == 'unknown':
+                app_key = app_name.lower()
+                if app_key not in self._unknown_apps_classified:
+                    # First time seeing this app — send to AI for classification suggestion
+                    self._unknown_apps_classified.add(app_key)
+                    print(f"[UNKNOWN] {app_name} — sending to AI server for classification")
+                    threading.Thread(
+                        target=self._classify_unknown_app_async,
+                        args=(app_name, window_title, ocr_text),
+                        daemon=True
+                    ).start()
+                else:
+                    print(f"[UNKNOWN] {app_name} — already sent to AI server, skipping")
+            else:
+                print(f"[PROD] {app_name} — {window_title[:50]}")
+
+        # Update session manager with OCR result (includes text, method, confidence, error_message)
+        self.session_manager.on_window_switch(display_title, app_name, classification, ocr_result)
+
+    def _classify_unknown_app_async(self, app_name, window_title, ocr_text):
+        """Background thread: calls POST /api/classify-app on AI server."""
+        try:
+            ai_server_url = get_env_var('AI_SERVER_URL', '')
+            if not ai_server_url:
+                return
+
+            response = requests.post(
+                f"{ai_server_url}/api/classify-app",
+                json={
+                    'application_name': app_name,
+                    'window_title': window_title,
+                    'ocr_text': ocr_text or ''
+                },
+                headers=self._get_auth_headers(),
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                new_classification = data.get('classification', 'unknown')
+                reasoning = data.get('reasoning', '')
+
+                print(f"[AI] Classification for {app_name}: {new_classification}")
+                if reasoning:
+                    print(f"     Reasoning: {reasoning[:80]}")
+
+                # Update the session's classification via thread-safe method
+                self.session_manager.update_classification(app_name, 'unknown', new_classification)
+
+                # Also update already-uploaded activity_records that are still unknown
+                # for this app/user/org so DB reflects the latest AI classification.
+                try:
+                    if self.supabase_service and self.current_user_id and self.organization_id:
+                        new_status = 'pending' if new_classification == 'productive' else 'analyzed'
+                        update_query = self.supabase_service.table('activity_records').update({
+                            'classification': new_classification,
+                            'status': new_status
+                        }).eq('user_id', self.current_user_id) \
+                          .eq('organization_id', self.organization_id) \
+                          .eq('application_name', app_name) \
+                          .eq('classification', 'unknown')
+
+                        if self.current_project_key:
+                            update_query = update_query.eq('project_key', self.current_project_key)
+
+                        update_result = update_query.execute()
+                        updated_count = len(update_result.data) if getattr(update_result, 'data', None) else 0
+                        print(
+                            f"[AI] Updated {updated_count} activity_records rows for "
+                            f"{app_name}: unknown → {new_classification}"
+                        )
+                except Exception as db_err:
+                    print(f"[WARN] Failed to update unknown activity_records for {app_name}: {db_err}")
+        except Exception as e:
+            print(f"[WARN] Failed to classify unknown app {app_name}: {e}")
+
+    def _get_auth_headers(self):
+        """Get authentication headers for AI server requests."""
+        headers = {'Content-Type': 'application/json'}
+        if hasattr(self, 'auth_manager') and self.auth_manager:
+            token = self.auth_manager.tokens.get('access_token')
+            if token:
+                headers['Authorization'] = f'Bearer {token}'
+        return headers
 
     def capture_screenshot(self):
         """Capture screenshot and return PIL Image"""
@@ -5296,6 +6283,10 @@ class TimeTracker:
         """
         if not self.current_user_id:
             return
+
+        if SCREENSHOT_MONITORING_HARD_DISABLED:
+            print("[INFO] Screenshot upload/storage is disabled by client configuration")
+            return None
         
         # Use service role client for storage operations (bypasses RLS)
         # Since we're using Atlassian OAuth, not Supabase Auth, we need service role
@@ -5313,6 +6304,45 @@ class TimeTracker:
             thumb_buffer = BytesIO()
             thumbnail.save(thumb_buffer, format='JPEG', quality=70)
             thumb_bytes = thumb_buffer.getvalue()
+            
+            # Extract text using OCR (dynamic engine selection based on OCR_PRIMARY_ENGINE)
+            # Uses screenshot_mode for fast processing (skip heavy denoising/CLAHE)
+            print("[OCR] Extracting text from screenshot...")
+            ocr_start = time.perf_counter()
+            ocr_result = extract_text_from_image(
+                screenshot, 
+                window_title=window_info['title'], 
+                app_name=window_info['app'],
+                screenshot_mode=True
+            )
+            ocr_elapsed_ms = (time.perf_counter() - ocr_start) * 1000.0
+            
+            extracted_text = ocr_result.get('text', '')
+            ocr_confidence = ocr_result.get('confidence', 0.0)
+            ocr_method = ocr_result.get('method', 'unknown')
+            ocr_line_count = ocr_result.get('line_count', 0)
+            ocr_prep_ms = ocr_result.get('prep_ms')
+            ocr_infer_ms = ocr_result.get('infer_ms')
+            ocr_total_ms = ocr_result.get('total_ms')
+            
+            if ocr_result.get('success'):
+                print(
+                    f"[OCR] ✓ Text extracted via {ocr_method} "
+                    f"(confidence: {ocr_confidence:.2f}, lines: {ocr_line_count}, took: {ocr_elapsed_ms:.1f}ms, "
+                    f"prep: {ocr_prep_ms if ocr_prep_ms is not None else 'NA'}ms, "
+                    f"infer: {ocr_infer_ms if ocr_infer_ms is not None else 'NA'}ms, "
+                    f"total: {ocr_total_ms if ocr_total_ms is not None else 'NA'}ms)"
+                )
+                if extracted_text:
+                    print(f"[OCR] Preview: {extracted_text[:100]}...")
+            else:
+                print(
+                    f"[OCR] ✗ Failed in {ocr_elapsed_ms:.1f}ms - will use metadata analysis "
+                    f"(title: {window_info['title']}, app: {window_info['app']}, "
+                    f"prep: {ocr_prep_ms if ocr_prep_ms is not None else 'NA'}ms, "
+                    f"infer: {ocr_infer_ms if ocr_infer_ms is not None else 'NA'}ms, "
+                    f"total: {ocr_total_ms if ocr_total_ms is not None else 'NA'}ms)"
+                )
             
             # Generate filenames
             timestamp = datetime.now(timezone.utc)
@@ -5401,7 +6431,12 @@ class TimeTracker:
                 'metadata': {
                     'work_type': work_type,
                     'is_blacklisted': is_blacklisted,
-                    'tracking_mode': self.tracking_settings.get('tracking_mode', 'interval')
+                    'tracking_mode': self.tracking_settings.get('tracking_mode', 'interval'),
+                    # OCR data stored in metadata (not separate columns on screenshots table)
+                    'extracted_text': extracted_text,
+                    'ocr_confidence': ocr_confidence,
+                    'ocr_method': ocr_method,
+                    'ocr_line_count': ocr_line_count
                 }
             }
             
@@ -5881,8 +6916,10 @@ class TimeTracker:
 
     def tracking_loop(self):
         """Main tracking loop with idle detection and event-based window switch capture"""
-        # Fetch initial tracking settings from Supabase
-        self.fetch_tracking_settings()
+        # Detect current project and fetch initial tracking settings from Supabase
+        self.update_current_project()
+        project_key = self.current_project_key
+        self.fetch_tracking_settings(project_key=project_key)
         
         # Log actual tracking mode from settings
         tracking_mode = self.tracking_settings.get('tracking_mode', 'interval')
@@ -5899,6 +6936,10 @@ class TimeTracker:
         # Track time for refreshing settings
         last_settings_refresh = time.time()
         settings_refresh_interval = 300  # Refresh settings every 5 minutes
+
+        # Track time for classification sync
+        last_classification_sync = time.time()
+        classification_sync_interval = 1800  # Sync classifications every 30 minutes
 
         # Track time for notification checks
         last_notification_check = 0
@@ -5984,9 +7025,27 @@ class TimeTracker:
                 # Skip periodic checks while idle — no need to hit APIs when user is away
                 if not self.is_idle:
                     # Periodically refresh tracking settings from Supabase
+                    # Also check if user switched projects (e.g., from issue reassignment)
                     if time.time() - last_settings_refresh > settings_refresh_interval:
-                        self.fetch_tracking_settings()
+                        # Check if project changed (automatically reloads settings if it did)
+                        project_changed = self.update_current_project()
+                        
+                        # Refresh settings even if project didn't change (settings might have been updated)
+                        if not project_changed:
+                            self.fetch_tracking_settings(project_key=self.current_project_key)
+                        
                         last_settings_refresh = time.time()
+
+                    # Periodically sync app classifications from Supabase
+                    if time.time() - last_classification_sync > classification_sync_interval:
+                        try:
+                            client = self.supabase_service if self.supabase_service else self.supabase
+                            self.classification_manager.sync_classifications(
+                                client, self.organization_id, self.current_project_key
+                            )
+                        except Exception as e:
+                            print(f"[WARN] Periodic classification sync failed: {e}")
+                        last_classification_sync = time.time()
 
                     # Periodically check for app updates (every 4 hours by default)
                     # This runs in the background and shows notification if update available
@@ -5997,12 +7056,11 @@ class TimeTracker:
                     if time.time() - last_notification_check > notification_check_interval:
                         self.check_and_notify_unassigned_work()
                         last_notification_check = time.time()
-                
-                # Check if screenshot monitoring is enabled
-                if not self.tracking_settings.get('screenshot_monitoring_enabled', True):
-                    time.sleep(10)  # Sleep longer when disabled
-                    continue
 
+                    # Periodically upload activity batch (event-based tracking)
+                    if time.time() - self.last_batch_upload_time >= self.batch_upload_interval:
+                        self.upload_activity_batch()
+                
                 # Check for idle timeout (use configurable threshold)
                 idle_duration = time.time() - self.last_activity_time
                 current_idle_timeout = self.tracking_settings.get('idle_threshold_seconds', self.idle_timeout)
@@ -6060,31 +7118,21 @@ class TimeTracker:
                 # Get current capture interval from settings
                 current_capture_interval = self.tracking_settings.get('screenshot_interval_seconds', self.capture_interval)
                 
-                # Check if current app should be tracked (private app check)
+                # Check if current app should be tracked for screenshots
                 app_name = window_info.get('app', '')
                 window_title = window_info.get('title', '')
                 should_skip, skip_reason = self.should_skip_screenshot(app_name, window_title)
                 
                 if should_skip:
-                    # Log skip reasons (but not too frequently)
-                    if skip_reason == 'blacklisted_app':
-                        # Log blacklisted apps occasionally for transparency
-                        if not hasattr(self, '_last_blacklist_log') or time.time() - self._last_blacklist_log > 60:
-                            print(f"[SKIP] Blacklisted app not tracked: {app_name}")
-                            self._last_blacklist_log = time.time()
-                    elif skip_reason == 'not_whitelisted':
-                        # Log non-whitelisted apps occasionally
-                        if not hasattr(self, '_last_whitelist_log') or time.time() - self._last_whitelist_log > 60:
-                            print(f"[SKIP] App not in whitelist: {app_name}")
-                            self._last_whitelist_log = time.time()
-                    # Don't log private_app or screenshot_monitoring_disabled frequently
-                    time.sleep(2)
-                    continue
+                    if skip_reason in ('private_app', 'non_productive_app'):
+                        if not hasattr(self, '_last_skip_log') or time.time() - self._last_skip_log > 60:
+                            print(f"[SKIP] {skip_reason}: {app_name}")
+                            self._last_skip_log = time.time()
                 
                 # Determine work type based on whitelist/blacklist
                 work_type = self.get_app_work_type(app_name, window_title)
                 window_info['work_type'] = work_type
-                window_info['is_blacklisted'] = self.is_app_blacklisted(app_name)
+                window_info['is_blacklisted'] = self.is_app_blacklisted(app_name, window_title)
                 
                 # Check if window switched
                 window_switched = window_info.get('is_new_window', False)
@@ -6100,6 +7148,12 @@ class TimeTracker:
                 # IMPORTANT: Always update the previous window record when switching, regardless of interval
                 # The interval check only applies to creating NEW screenshots, not updating existing ones
                 if window_switched:
+                    # Process window event for event-based activity tracking (OCR capture and session management)
+                    tracking_mode = self.tracking_settings.get('tracking_mode', 'interval')
+                    event_enabled = self.tracking_settings.get('event_tracking_enabled', False)
+                    if event_enabled or tracking_mode == 'event':
+                        self.process_window_event(window_info)
+                    
                     # Update existing record of previous window with actual time spent
                     # This ensures we update the screenshot record with the actual duration
                     # Only update if there's actually a screenshot ID to update
@@ -6242,34 +7296,27 @@ class TimeTracker:
                     capture_reason = "interval"
                 
                 if should_capture and not self.is_idle:
-                    screenshot = self.capture_screenshot()
-                    if screenshot:
-                        # Upload screenshot with event-based tracking (start_time and end_time)
-                        # For window switches: start_time is when new window became active
-                        # For intervals: start_time is now (after updating previous record)
-                        self.upload_screenshot(screenshot, window_info)
-                        
-                        # Update timing based on capture reason
+                    if should_skip:
+                        # App is private/non-productive — skip the actual screenshot
+                        # but still reset the interval timer so we don't re-trigger immediately
                         if capture_reason == "interval":
-                            # Interval capture - reset the fixed interval timer
-                            # IMPORTANT: Use fresh time.time() here, NOT the stale current_time from start of loop
-                            # This prevents the issue where blocking operations (settings fetch, Jira API calls)
-                            # cause the next iteration to think another interval has passed
                             self.last_interval_time = time.time()
+                    else:
+                        screenshot = self.capture_screenshot()
+                        if screenshot:
+                            self.upload_screenshot(screenshot, window_info)
+                            
+                            if capture_reason == "interval":
+                                self.last_interval_time = time.time()
 
-                            # BUG FIX: If this was a "fresh" interval capture (no previous record was updated),
-                            # make this record "final" so the next interval creates a new record instead of updating this one.
-                            # This prevents records from spanning multiple interval periods when window switch
-                            # didn't create a screenshot (due to min_interval check).
-                            if not updated_existing_record:
-                                print(f"[INFO] Fresh interval capture - record is final (won't be extended)")
-                                self.current_window_screenshot_id = None
-                                self.current_window_db_start_time = None
-                                self.current_window_record_created_at = None
+                                if not updated_existing_record:
+                                    print(f"[INFO] Fresh interval capture - record is final (won't be extended)")
+                                    self.current_window_screenshot_id = None
+                                    self.current_window_db_start_time = None
+                                    self.current_window_record_created_at = None
 
-                        # Always update last_screenshot_time (for min_screenshot_interval check)
-                        last_screenshot_time = time.time()  # Also use fresh time here
-                        print(f"[OK] Screenshot captured ({capture_reason})")
+                            last_screenshot_time = time.time()
+                            print(f"[OK] Screenshot captured ({capture_reason})")
                 
                 # Sleep for shorter interval to check for window switches more frequently
                 # But still respect the minimum screenshot interval
@@ -6712,18 +7759,6 @@ class TimeTracker:
             if not self.current_user:
                 webbrowser.open(f'http://localhost:{self.web_port}/login')
 
-        # NOTE: Pause feature is disabled (not a confirmed feature yet)
-        # def do_pause():
-        #     # Show selection popup first - user must select duration before pausing
-        #     self.show_pause_selection_popup()
-
-        # def do_resume():
-        #     self.resume_tracking()
-        #     self.add_admin_log('INFO', 'Tracking resumed from tray menu')
-
-        # def open_settings():
-        #     webbrowser.open(f'http://localhost:{self.web_port}/settings')
-
         # Build menu items list dynamically based on current state
         menu_items = [
             item(
@@ -6731,19 +7766,6 @@ class TimeTracker:
                 users_action
             )
         ]
-
-        # NOTE: Pause feature is disabled (not a confirmed feature yet)
-        # # Add Pause option when tracking is active
-        # if self.tracking_active:
-        #     menu_items.append(item('Pause Tracking', do_pause))
-
-        # # Add Resume option when paused
-        # if self.pause_start_time is not None and self.running:
-        #     menu_items.append(item('Resume Tracking', do_resume))
-
-        # NOTE: Settings page only had pause options, disabled until new settings are added
-        # menu_items.append(pystray.Menu.SEPARATOR)
-        # menu_items.append(item('Settings', open_settings))
 
         # Add Send Feedback menu item
         def send_feedback_action():
@@ -6984,6 +8006,14 @@ class TimeTracker:
                             self.current_user_id = self._load_cached_user_id()
                         else:
                             self.current_user_id = self.ensure_user_exists(user_info)
+                            # Sync app classifications from Supabase
+                            try:
+                                client = self.supabase_service if self.supabase_service else self.supabase
+                                self.classification_manager.sync_classifications(
+                                    client, self.organization_id, self.current_project_key
+                                )
+                            except Exception as e:
+                                print(f"[WARN] Classification sync failed during startup: {e}")
                             # Associate any anonymous offline records with this user
                             self._associate_offline_records()
                     except Exception as e:

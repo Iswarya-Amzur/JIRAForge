@@ -2,48 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 import './TimesheetSettings.css';
 
-// Common applications for quick selection
-// Includes both friendly names and common exe names for better matching
-const COMMON_WORK_APPS = [
-  { name: 'VS Code', value: 'code' },  // Matches Code.exe
-  { name: 'Cursor IDE', value: 'cursor' },  // Matches Cursor.exe
-  { name: 'GitHub', value: 'github' },
-  { name: 'GitLab', value: 'gitlab' },
-  { name: 'JIRA', value: 'jira' },
-  { name: 'Confluence', value: 'confluence' },
-  { name: 'Slack', value: 'slack' },
-  { name: 'Microsoft Teams', value: 'teams' },
-  { name: 'Zoom', value: 'zoom' },
-  { name: 'Chrome', value: 'chrome' },  // Matches chrome.exe
-  { name: 'Firefox', value: 'firefox' },
-  { name: 'Edge', value: 'msedge' },  // Matches msedge.exe
-  { name: 'IntelliJ IDEA', value: 'intellij' },
-  { name: 'Postman', value: 'postman' },
-  { name: 'Figma', value: 'figma' },
-  { name: 'Notion', value: 'notion' },
-  { name: 'Terminal', value: 'terminal' },
-  { name: 'PowerShell', value: 'powershell' }
-];
-
-const COMMON_NON_WORK_APPS = [
-  { name: 'Netflix', value: 'netflix' },
-  { name: 'Amazon Prime Video', value: 'primevideo' },
-  { name: 'YouTube', value: 'youtube' },
-  { name: 'Facebook', value: 'facebook' },
-  { name: 'Instagram', value: 'instagram' },
-  { name: 'Twitter', value: 'twitter' },
-  { name: 'TikTok', value: 'tiktok' },
-  { name: 'Spotify', value: 'spotify' },
-  { name: 'WhatsApp', value: 'whatsapp' },
-  { name: 'Telegram', value: 'telegram' },
-  { name: 'Discord', value: 'discord' },
-  { name: 'Steam', value: 'steam' },
-  { name: 'Epic Games', value: 'epicgames' },
-  { name: 'Twitch', value: 'twitch' },
-  { name: 'Reddit', value: 'reddit' },
-  { name: 'Pinterest', value: 'pinterest' }
-];
-
 // Interval marks for slider (5 minute increments)
 const INTERVAL_MARKS = [
   { value: 300, label: '5m' },
@@ -73,20 +31,6 @@ function TimesheetSettings() {
     trackIdleTime: true,
     idleThresholdSeconds: 300,
 
-    // Whitelist
-    whitelistEnabled: true,
-    whitelistedApps: ['code', 'cursor', 'jira', 'zoom', 'chrome', 'postman', 'github', 'slack', 'teams'],
-
-    // Blacklist
-    blacklistEnabled: true,
-    blacklistedApps: ['netflix', 'spotify', 'telegram', 'tiktok', 'pinterest'],
-    nonWorkThresholdPercent: 30,
-    flagExcessiveNonWork: true,
-
-    // Private Sites
-    privateSitesEnabled: true,
-    privateSites: [],
-
     // Jira Worklog Sync
     jiraWorklogSyncEnabled: false
   });
@@ -96,20 +40,37 @@ function TimesheetSettings() {
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  // Input states for adding custom items
-  const [customWhitelistApp, setCustomWhitelistApp] = useState('');
-  const [customBlacklistApp, setCustomBlacklistApp] = useState('');
-  const [customPrivateSite, setCustomPrivateSite] = useState('');
+  // Project selection for project-level settings
+  const [selectedProject, setSelectedProject] = useState(null); // null = organization-wide
+  const [availableProjects, setAvailableProjects] = useState([]);
+  const [loadingProjects, setLoadingProjects] = useState(true);
+  const [settingsSource, setSettingsSource] = useState('organization'); // 'project', 'organization', or 'global'
 
-  const loadSettings = async () => {
+  const loadProjects = async () => {
+    setLoadingProjects(true);
+    try {
+      const result = await invoke('getAllProjects');
+      if (result.success && result.projects) {
+        setAvailableProjects(result.projects);
+      }
+    } catch (err) {
+      console.error('Failed to load projects:', err);
+      // Don't show error - just use empty list
+    } finally {
+      setLoadingProjects(false);
+    }
+  };
+
+  const loadSettings = async (projectKey = null) => {
     setLoading(true);
     try {
-      const result = await invoke('getTrackingSettings');
+      const result = await invoke('getTrackingSettings', { projectKey });
       if (result.success && result.settings) {
         setSettings(prev => ({
           ...prev,
           ...result.settings
         }));
+        setSettingsSource(result.settings.settingsSource || 'organization');
       }
     } catch (err) {
       console.error('Failed to load tracking settings:', err);
@@ -120,18 +81,31 @@ function TimesheetSettings() {
   };
 
   useEffect(() => {
-    loadSettings();
+    loadProjects();
+    loadSettings(selectedProject);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Reload settings when project changes
+  useEffect(() => {
+    if (!loadingProjects) {
+      loadSettings(selectedProject);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProject]);
 
   const handleSave = async () => {
     setSaving(true);
     setMessage({ type: '', text: '' });
 
     try {
-      const result = await invoke('saveTrackingSettings', { settings });
+      const result = await invoke('saveTrackingSettings', {
+        settings,
+        projectKey: selectedProject
+      });
       if (result.success) {
-        setMessage({ type: 'success', text: 'Timesheet settings saved successfully!' });
+        const level = selectedProject ? `project ${selectedProject}` : 'organization';
+        setMessage({ type: 'success', text: `Timesheet settings saved successfully for ${level}!` });
       } else {
         setMessage({ type: 'error', text: result.error || 'Failed to save settings' });
       }
@@ -170,60 +144,11 @@ function TimesheetSettings() {
     setSettings(prev => ({ ...prev, [field]: value }));
   };
 
-  // App list handlers
-  const addToList = (listField, value) => {
-    if (!value.trim()) return;
-    const normalizedValue = value.toLowerCase().trim().replace(/\s+/g, '');
-    if (!settings[listField].includes(normalizedValue)) {
-      setSettings(prev => ({
-        ...prev,
-        [listField]: [...prev[listField], normalizedValue]
-      }));
-    }
-  };
-
-  const removeFromList = (listField, value) => {
-    setSettings(prev => ({
-      ...prev,
-      [listField]: prev[listField].filter(item => item !== value)
-    }));
-  };
-
-  const toggleCommonApp = (listField, value) => {
-    if (settings[listField].includes(value)) {
-      removeFromList(listField, value);
-    } else {
-      addToList(listField, value);
-    }
-  };
-
-  const handleAddCustomWhitelist = () => {
-    addToList('whitelistedApps', customWhitelistApp);
-    setCustomWhitelistApp('');
-  };
-
-  const handleAddCustomBlacklist = () => {
-    addToList('blacklistedApps', customBlacklistApp);
-    setCustomBlacklistApp('');
-  };
-
-  const handleAddPrivateSite = () => {
-    addToList('privateSites', customPrivateSite);
-    setCustomPrivateSite('');
-  };
-
   // Format interval for display
   const formatInterval = (seconds) => {
     if (seconds < 60) return `${seconds}s`;
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
     return `${Math.floor(seconds / 3600)}h`;
-  };
-
-  // Get threshold color class
-  const getThresholdColorClass = (value) => {
-    if (value <= 30) return 'threshold-normal';
-    if (value <= 50) return 'threshold-moderate';
-    return 'threshold-high';
   };
 
   if (loading) {
@@ -243,6 +168,67 @@ function TimesheetSettings() {
           Configure time tracking, screenshots, and monitoring preferences
         </p>
       </div>
+
+      {/* Project Selector - Choose between org-wide or project-specific settings */}
+      <section className="settings-section project-selector-section">
+        <div className="section-header">
+          <div className="section-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M22 19C22 19.5304 21.7893 20.0391 21.4142 20.4142C21.0391 20.7893 20.5304 21 20 21H4C3.46957 21 2.96086 20.7893 2.58579 20.4142C2.21071 20.0391 2 19.5304 2 19V5C2 4.46957 2.21071 3.96086 2.58579 3.58579C2.96086 3.21071 3.46957 3 4 3H9L11 6H20C20.5304 6 21.0391 6.21071 21.4142 6.58579C21.7893 6.96086 22 7.46957 22 8V19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+          <h2>Settings Level</h2>
+        </div>
+        <div className="section-content">
+          <p className="field-description">
+            Choose whether to configure settings for the entire organization or for a specific project.
+            Project-specific settings override organization defaults.
+          </p>
+          <div className="form-group">
+            <label>Configuration Level</label>
+            {loadingProjects ? (
+              <p className="loading-text">Loading projects...</p>
+            ) : (
+              <select
+                value={selectedProject || ''}
+                onChange={(e) => setSelectedProject(e.target.value || null)}
+                className="project-select"
+              >
+                <option value="">Organization-Wide (Default for all projects)</option>
+                {availableProjects.map(project => (
+                  <option key={project.key} value={project.key}>
+                    {project.name} ({project.key})
+                  </option>
+                ))}
+              </select>
+            )}
+            {settingsSource && (
+              <p className="field-hint">
+                {settingsSource === 'project' && selectedProject && (
+                  <span style={{color: '#36B37E', fontWeight: 'bold'}}>
+                    ✓ Viewing project-specific settings for {selectedProject}
+                  </span>
+                )}
+                {settingsSource === 'organization' && selectedProject && (
+                  <span style={{color: '#FF991F'}}>
+                    ⚠ No project-specific settings found. Showing organization defaults. Save to create project-specific settings.
+                  </span>
+                )}
+                {settingsSource === 'organization' && !selectedProject && (
+                  <span style={{color: '#36B37E', fontWeight: 'bold'}}>
+                    ✓ Viewing organization-wide default settings
+                  </span>
+                )}
+                {settingsSource === 'global' && (
+                  <span style={{color: '#6B778C'}}>
+                    Showing global default settings
+                  </span>
+                )}
+              </p>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* Screenshot Monitoring Section */}
       <section className="settings-section">
@@ -376,285 +362,6 @@ function TimesheetSettings() {
         )}
       </section>
 
-      {/* Whitelisted Applications Section */}
-      <section className="settings-section">
-        <div className="section-header">
-          <div className="section-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M22 11.08V12C21.9988 14.1564 21.3005 16.2547 20.0093 17.9818C18.7182 19.709 16.9033 20.9725 14.8354 21.5839C12.7674 22.1953 10.5573 22.1219 8.53447 21.3746C6.51168 20.6273 4.78465 19.2461 3.61096 17.4371C2.43727 15.628 1.87979 13.4881 2.02168 11.3363C2.16356 9.18455 2.99721 7.13631 4.39828 5.49706C5.79935 3.85781 7.69279 2.71537 9.79619 2.24013C11.8996 1.7649 14.1003 1.98232 16.07 2.85999" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M22 4L12 14.01L9 11.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-          <h2>Whitelisted Applications</h2>
-          <label className="toggle-switch">
-            <input
-              type="checkbox"
-              checked={settings.whitelistEnabled}
-              onChange={() => handleToggle('whitelistEnabled')}
-            />
-            <span className="toggle-slider"></span>
-            <span className="toggle-label">Enable Whitelist</span>
-          </label>
-        </div>
-
-        {settings.whitelistEnabled && (
-          <div className="section-content">
-            <p className="field-description">
-              Applications that should be actively tracked during time monitoring
-            </p>
-
-            {/* Common Applications */}
-            <div className="common-apps-container">
-              <label className="common-apps-label">Common Applications</label>
-              <div className="common-apps-grid">
-                {COMMON_WORK_APPS.map(app => (
-                  <button
-                    key={app.value}
-                    className={`app-chip ${settings.whitelistedApps.includes(app.value) ? 'selected' : ''}`}
-                    onClick={() => toggleCommonApp('whitelistedApps', app.value)}
-                  >
-                    {app.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Custom Application Input */}
-            <div className="custom-input-container">
-              <label>Add Custom Application</label>
-              <div className="input-with-button">
-                <input
-                  type="text"
-                  placeholder="e.g., figma, notion, custom-app"
-                  value={customWhitelistApp}
-                  onChange={(e) => setCustomWhitelistApp(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleAddCustomWhitelist()}
-                />
-                <button
-                  className="add-button"
-                  onClick={handleAddCustomWhitelist}
-                  disabled={!customWhitelistApp.trim()}
-                >
-                  +
-                </button>
-              </div>
-            </div>
-
-            {/* Current Whitelist */}
-            <div className="current-list">
-              <label>Current Whitelist ({settings.whitelistedApps.length})</label>
-              <div className="tags-container">
-                {settings.whitelistedApps.map(app => (
-                  <span key={app} className="tag whitelist-tag">
-                    {app}
-                    <button
-                      className="tag-remove"
-                      onClick={() => removeFromList('whitelistedApps', app)}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* Blacklisted Applications Section */}
-      <section className="settings-section">
-        <div className="section-header">
-          <div className="section-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M4.93 4.93L19.07 19.07" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-          <h2>Blacklisted Applications</h2>
-          <label className="toggle-switch">
-            <input
-              type="checkbox"
-              checked={settings.blacklistEnabled}
-              onChange={() => handleToggle('blacklistEnabled')}
-            />
-            <span className="toggle-slider"></span>
-            <span className="toggle-label">Enable Blacklist</span>
-          </label>
-        </div>
-
-        {settings.blacklistEnabled && (
-          <div className="section-content">
-            <p className="field-description">
-              Non-productive applications that should not be tracked or monitored (e.g., entertainment, social media)
-            </p>
-
-            {/* Common Non-Work Applications */}
-            <div className="common-apps-container">
-              <label className="common-apps-label">Common Non-Productive Applications</label>
-              <div className="common-apps-grid">
-                {COMMON_NON_WORK_APPS.map(app => (
-                  <button
-                    key={app.value}
-                    className={`app-chip blacklist-chip ${settings.blacklistedApps.includes(app.value) ? 'selected' : ''}`}
-                    onClick={() => toggleCommonApp('blacklistedApps', app.value)}
-                  >
-                    {app.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Custom Application Input */}
-            <div className="custom-input-container">
-              <label>Add Custom Application</label>
-              <div className="input-with-button">
-                <input
-                  type="text"
-                  placeholder="e.g., custom-game, entertainment-app"
-                  value={customBlacklistApp}
-                  onChange={(e) => setCustomBlacklistApp(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleAddCustomBlacklist()}
-                />
-                <button
-                  className="add-button blacklist-add"
-                  onClick={handleAddCustomBlacklist}
-                  disabled={!customBlacklistApp.trim()}
-                >
-                  +
-                </button>
-              </div>
-            </div>
-
-            {/* Current Blacklist */}
-            <div className="current-list">
-              <label>Current Blacklist ({settings.blacklistedApps.length})</label>
-              <div className="tags-container">
-                {settings.blacklistedApps.map(app => (
-                  <span key={app} className="tag blacklist-tag">
-                    {app}
-                    <button
-                      className="tag-remove"
-                      onClick={() => removeFromList('blacklistedApps', app)}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            {/* Flag Excessive Non-Work Activity */}
-            <div className="threshold-section">
-              <div className="threshold-header">
-                <span className="threshold-icon">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M4 15C4 15 5 14 8 14C11 14 13 16 16 16C19 16 20 15 20 15V3C20 3 19 4 16 4C13 4 11 2 8 2C5 2 4 3 4 3V15Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M4 22V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </span>
-                <h3>Flag Users for Excessive Non-Work Activity</h3>
-              </div>
-              <p className="field-description">
-                Set the percentage threshold for weekly blacklisted app usage that will flag users for excessive non-work activities.
-                Users exceeding this threshold will be highlighted with a red indicator.
-              </p>
-              <div className="threshold-slider-container">
-                <span className="threshold-value">
-                  Threshold: {settings.nonWorkThresholdPercent}% of weekly time
-                </span>
-                <input
-                  type="range"
-                  min="10"
-                  max="100"
-                  step="5"
-                  value={settings.nonWorkThresholdPercent}
-                  onChange={(e) => handleChange('nonWorkThresholdPercent', parseInt(e.target.value))}
-                  className={`threshold-slider ${getThresholdColorClass(settings.nonWorkThresholdPercent)}`}
-                />
-                <div className="threshold-legend">
-                  <span className="legend-item normal">● 10-30%: Normal usage</span>
-                  <span className="legend-item moderate">● 40-50%: Moderate usage</span>
-                  <span className="legend-item high">● 60%+: High usage (flagged)</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* Private Work Sites Section */}
-      <section className="settings-section">
-        <div className="section-header">
-          <div className="section-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M7 11V7C7 5.67392 7.52678 4.40215 8.46447 3.46447C9.40215 2.52678 10.6739 2 12 2C13.3261 2 14.5979 2.52678 15.5355 3.46447C16.4732 4.40215 17 5.67392 17 7V11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-          <h2>Private Work Sites</h2>
-          <label className="toggle-switch">
-            <input
-              type="checkbox"
-              checked={settings.privateSitesEnabled}
-              onChange={() => handleToggle('privateSitesEnabled')}
-            />
-            <span className="toggle-slider"></span>
-            <span className="toggle-label">Enable Private Sites</span>
-          </label>
-        </div>
-
-        {settings.privateSitesEnabled && (
-          <div className="section-content">
-            <p className="field-description">
-              Websites and applications that should be omitted from tracking (e.g., banking, personal, healthcare)
-            </p>
-
-            {/* Custom Private Site Input */}
-            <div className="custom-input-container">
-              <label>Add Private Site/Domain</label>
-              <div className="input-with-button">
-                <input
-                  type="text"
-                  placeholder="e.g., banking, personal, healthcare"
-                  value={customPrivateSite}
-                  onChange={(e) => setCustomPrivateSite(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleAddPrivateSite()}
-                />
-                <button
-                  className="add-button private-add"
-                  onClick={handleAddPrivateSite}
-                  disabled={!customPrivateSite.trim()}
-                >
-                  +
-                </button>
-              </div>
-            </div>
-
-            {/* Current Private List */}
-            <div className="current-list">
-              <label>Current Private List ({settings.privateSites.length})</label>
-              {settings.privateSites.length === 0 ? (
-                <p className="empty-list-message">No private sites configured</p>
-              ) : (
-                <div className="tags-container">
-                  {settings.privateSites.map(site => (
-                    <span key={site} className="tag private-tag">
-                      {site}
-                      <button
-                        className="tag-remove"
-                        onClick={() => removeFromList('privateSites', site)}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </section>
-
       {/* Jira Worklog Auto-Sync Section */}
       <section className="settings-section">
         <div className="section-header">
@@ -732,7 +439,7 @@ function TimesheetSettings() {
             </>
           ) : (
             <>
-             
+
               Save Settings
             </>
           )}
