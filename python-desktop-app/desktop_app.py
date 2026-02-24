@@ -185,6 +185,10 @@ load_dotenv()
 # This is used for update checking and notifications
 APP_VERSION = "1.2.1"
 
+# Hard-disable screenshot monitoring/storage in desktop app.
+# OCR text extraction for activity records still runs via event-based flow.
+SCREENSHOT_MONITORING_HARD_DISABLED = True
+
 # Embedded credentials (for production builds - no .env file needed)
 # SECURITY: All sensitive keys moved to AI Server - fetched at runtime after authentication
 EMBEDDED_CONFIG = {
@@ -2130,6 +2134,10 @@ class OfflineManager:
         Returns:
             tuple: (synced_count, failed_count)
         """
+        if SCREENSHOT_MONITORING_HARD_DISABLED:
+            print("[INFO] Screenshot sync is disabled by client configuration")
+            return (0, 0)
+
         if self._syncing:
             print("[INFO] Sync already in progress, skipping...")
             return (0, 0)
@@ -3231,9 +3239,20 @@ class ActiveSessionManager:
         self._lock = threading.Lock()
         self._current_key = None  # (window_title, application_name)
         self._pending_ocr_keys = set()  # Sessions that need OCR backfill
+        self._pending_ocr_screenshots = {}  # (title, app) -> PIL.Image for throttled sessions
+
+    def get_pending_ocr_entries(self):
+        """Return and clear the dict of (title, app_name) -> PIL.Image awaiting OCR backfill."""
+        with self._lock:
+            entries = dict(self._pending_ocr_screenshots)
+            self._pending_ocr_screenshots.clear()
+            self._pending_ocr_keys.clear()
+            return entries
 
     def get_pending_ocr_keys(self):
-        """Return and clear the set of (title, app_name) keys awaiting OCR backfill."""
+        """Return and clear the set of (title, app_name) keys awaiting OCR backfill.
+        DEPRECATED: prefer get_pending_ocr_entries() which also returns saved screenshots.
+        """
         with self._lock:
             keys = self._pending_ocr_keys.copy()
             self._pending_ocr_keys.clear()
@@ -3276,22 +3295,24 @@ class ActiveSessionManager:
             title: Window title
             app_name: Application name
             classification: Activity classification (productive, non_productive, private, unknown)
-            ocr_result: Optional dict with keys: text, method, confidence, error_message
+            ocr_result: Optional dict with keys: text, method, confidence, error_message,
+                        screenshot (PIL.Image, present when throttled)
         """
         with self._lock:
             now = datetime.now(timezone.utc).isoformat()
             new_key = (title, app_name)
 
-            # Extract OCR data from result dict
             ocr_text = None
             ocr_method = None
             ocr_confidence = None
             ocr_error_message = None
             ocr_was_throttled = False
+            throttled_screenshot = None
             
             if ocr_result:
                 if isinstance(ocr_result, dict):
                     ocr_was_throttled = ocr_result.get('throttled', False)
+                    throttled_screenshot = ocr_result.get('screenshot')
                     if not ocr_was_throttled:
                         ocr_text = ocr_result.get('text')
                         ocr_method = ocr_result.get('method')
@@ -3306,11 +3327,9 @@ class ActiveSessionManager:
             cursor = conn.cursor()
 
             try:
-                # Stop timer on current active session (if any)
                 if self._current_key is not None:
                     self._stop_timer_internal(cursor, now)
 
-                # Check if this window was seen before in this batch cycle
                 cursor.execute(
                     'SELECT id, total_time_seconds, visit_count, ocr_method FROM active_sessions WHERE window_title = ? AND application_name = ?',
                     (title, app_name)
@@ -3330,9 +3349,13 @@ class ActiveSessionManager:
                         )
                     elif ocr_was_throttled and not existing_ocr_method:
                         self._pending_ocr_keys.add(new_key)
+                        if throttled_screenshot is not None:
+                            self._pending_ocr_screenshots[new_key] = throttled_screenshot
                 else:
                     if ocr_was_throttled:
                         self._pending_ocr_keys.add(new_key)
+                        if throttled_screenshot is not None:
+                            self._pending_ocr_screenshots[new_key] = throttled_screenshot
                     cursor.execute(
                         '''INSERT INTO active_sessions
                         (window_title, application_name, classification, ocr_text, ocr_method, ocr_confidence, ocr_error_message, total_time_seconds, visit_count, first_seen, last_seen, timer_started_at)
@@ -3458,44 +3481,111 @@ class LocalOCRProcessor:
                 - confidence (float): Confidence score (0.0 to 1.0)
                 - error_message (str or None): Error message if OCR failed
                 - throttled (bool): True if OCR was skipped due to rate limiting
+                - screenshot (PIL.Image or None): The captured screenshot when throttled,
+                  so callers can save it for later OCR backfill instead of losing the image
         """
-        # Throttle: skip if called too recently
         now = time.time()
         if (now - self._last_ocr_time) < self._min_interval:
-            return {'text': None, 'method': None, 'confidence': 0.0, 'error_message': None, 'throttled': True}
+            # Throttled: still capture the screenshot so the caller can save it
+            # for later backfill with the ORIGINAL image, not a new one
+            try:
+                screenshot = ImageGrab.grab()
+            except Exception:
+                screenshot = None
+            return {
+                'text': None, 'method': None, 'confidence': 0.0,
+                'error_message': None, 'throttled': True,
+                'screenshot': screenshot
+            }
 
         try:
-            # Capture screenshot in memory
             screenshot = ImageGrab.grab()
+            ocr_start = time.perf_counter()
 
-            # Use OCR facade for text extraction
-            # This respects OCR_PRIMARY_ENGINE and OCR_FALLBACK_ENGINES from .env
             ocr_result = extract_text_from_image(
                 screenshot,
-                window_title='',  # Not available in event-based capture
+                window_title='',
                 app_name='',
-                use_preprocessing=True
+                screenshot_mode=True
             )
+            ocr_elapsed_ms = (time.perf_counter() - ocr_start) * 1000.0
 
-            # Clean up screenshot from memory
             del screenshot
 
             self._last_ocr_time = time.time()
 
-            # Extract text and metadata from result
             text = ocr_result.get('text', '')
             method = ocr_result.get('method', 'unknown')
             confidence = ocr_result.get('confidence', 0.0)
             success = ocr_result.get('success', False)
             
-            # Log which engine was used (useful for debugging)
             if success and text:
-                print(f"[OCR] Event-based capture: {method} (confidence: {confidence:.2f})")
+                print(
+                    f"[OCR] Event-based capture: {method} "
+                    f"(confidence: {confidence:.2f}, took: {ocr_elapsed_ms:.1f}ms)"
+                )
+            else:
+                print(
+                    f"[OCR] Event-based capture failed ({method}) "
+                    f"(took: {ocr_elapsed_ms:.1f}ms)"
+                )
             
-            # Truncate very long text to save memory/bandwidth
             if text and len(text) > 2000:
                 text = text[:2000]
             
+            return {
+                'text': text.strip() if text else None,
+                'method': method,
+                'confidence': confidence,
+                'error_message': None if success else f"OCR failed with method: {method}",
+                'screenshot': None
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[WARN] Local OCR failed: {error_msg}")
+            return {
+                'text': None,
+                'method': 'error',
+                'confidence': 0.0,
+                'error_message': error_msg,
+                'screenshot': None
+            }
+
+    def ocr_from_image(self, screenshot):
+        """Run OCR on an already-captured PIL Image (for backfilling throttled sessions).
+
+        Args:
+            screenshot: PIL.Image to extract text from
+
+        Returns:
+            dict: OCR result with text, method, confidence, error_message keys
+        """
+        try:
+            ocr_start = time.perf_counter()
+            ocr_result = extract_text_from_image(
+                screenshot,
+                window_title='',
+                app_name='',
+                screenshot_mode=True
+            )
+            ocr_elapsed_ms = (time.perf_counter() - ocr_start) * 1000.0
+
+            self._last_ocr_time = time.time()
+
+            text = ocr_result.get('text', '')
+            method = ocr_result.get('method', 'unknown')
+            confidence = ocr_result.get('confidence', 0.0)
+            success = ocr_result.get('success', False)
+
+            if text and len(text) > 2000:
+                text = text[:2000]
+
+            print(
+                f"[OCR] Backfill OCR: {method} "
+                f"(confidence: {confidence:.2f}, took: {ocr_elapsed_ms:.1f}ms)"
+            )
+
             return {
                 'text': text.strip() if text else None,
                 'method': method,
@@ -3505,7 +3595,7 @@ class LocalOCRProcessor:
 
         except Exception as e:
             error_msg = str(e)
-            print(f"[WARN] Local OCR failed: {error_msg}")
+            print(f"[WARN] OCR from saved image failed: {error_msg}")
             return {
                 'text': None,
                 'method': 'error',
@@ -3557,7 +3647,7 @@ class TimeTracker:
         
         # Default settings (used as fallback)
         self.default_tracking_settings = {
-            'screenshot_monitoring_enabled': True,
+            'screenshot_monitoring_enabled': False,
             'screenshot_interval_seconds': 900,  # 15 minutes default
             'tracking_mode': 'interval',  # 'interval' or 'event'
             'event_tracking_enabled': False,
@@ -5408,6 +5498,9 @@ class TimeTracker:
                     'track_idle_time': _nvl(settings.get('track_idle_time'), True),
                     'idle_threshold_seconds': _nvl(settings.get('idle_threshold_seconds'), 300),
                 }
+
+                if SCREENSHOT_MONITORING_HARD_DISABLED:
+                    fetched_settings['screenshot_monitoring_enabled'] = False
                 
                 # Cache the settings
                 self.tracking_settings_cache[cache_key] = fetched_settings
@@ -5773,6 +5866,10 @@ class TimeTracker:
         Returns:
             tuple: (should_skip: bool, reason: str or None)
         """
+        # Client-level kill switch: never capture/store screenshots.
+        if SCREENSHOT_MONITORING_HARD_DISABLED:
+            return (True, 'screenshot_monitoring_disabled')
+
         # Check if screenshot monitoring is disabled
         if not self.tracking_settings.get('screenshot_monitoring_enabled', True):
             return (True, 'screenshot_monitoring_disabled')
@@ -5794,11 +5891,17 @@ class TimeTracker:
         """
         try:
             # Backfill OCR for any sessions that were throttled during rapid window switches.
-            # This runs synchronously before harvesting so no record leaves with NULL OCR
-            # when OCR was intended but rate-limited.
-            pending_keys = self.session_manager.get_pending_ocr_keys()
-            for pk_title, pk_app in pending_keys:
-                ocr_result = self.ocr_processor.capture_and_ocr()
+            # Uses the ORIGINAL screenshot captured at throttle time, not a new one,
+            # so the OCR text matches the window the user was actually viewing.
+            pending_entries = self.session_manager.get_pending_ocr_entries()
+            for (pk_title, pk_app), saved_screenshot in pending_entries.items():
+                if saved_screenshot is not None:
+                    ocr_result = self.ocr_processor.ocr_from_image(saved_screenshot)
+                    del saved_screenshot
+                else:
+                    # Fallback: no saved screenshot (shouldn't happen, but be safe)
+                    print(f"[WARN] No saved screenshot for backfill: {pk_app} - {pk_title[:50]}")
+                    ocr_result = self.ocr_processor.capture_and_ocr()
                 if ocr_result and not ocr_result.get('throttled'):
                     self.session_manager.backfill_ocr(pk_title, pk_app, ocr_result)
 
@@ -6124,6 +6227,10 @@ class TimeTracker:
         """
         if not self.current_user_id:
             return
+
+        if SCREENSHOT_MONITORING_HARD_DISABLED:
+            print("[INFO] Screenshot upload/storage is disabled by client configuration")
+            return None
         
         # Use service role client for storage operations (bypasses RLS)
         # Since we're using Atlassian OAuth, not Supabase Auth, we need service role
@@ -6143,14 +6250,16 @@ class TimeTracker:
             thumb_bytes = thumb_buffer.getvalue()
             
             # Extract text using OCR (dynamic engine selection based on OCR_PRIMARY_ENGINE)
-            # Automatically falls back to configured fallback engines if primary fails
+            # Uses screenshot_mode for fast processing (skip heavy denoising/CLAHE)
             print("[OCR] Extracting text from screenshot...")
+            ocr_start = time.perf_counter()
             ocr_result = extract_text_from_image(
                 screenshot, 
                 window_title=window_info['title'], 
                 app_name=window_info['app'],
-                use_preprocessing=True
+                screenshot_mode=True
             )
+            ocr_elapsed_ms = (time.perf_counter() - ocr_start) * 1000.0
             
             extracted_text = ocr_result.get('text', '')
             ocr_confidence = ocr_result.get('confidence', 0.0)
@@ -6158,11 +6267,17 @@ class TimeTracker:
             ocr_line_count = ocr_result.get('line_count', 0)
             
             if ocr_result.get('success'):
-                print(f"[OCR] ✓ Text extracted via {ocr_method} (confidence: {ocr_confidence:.2f}, lines: {ocr_line_count})")
+                print(
+                    f"[OCR] ✓ Text extracted via {ocr_method} "
+                    f"(confidence: {ocr_confidence:.2f}, lines: {ocr_line_count}, took: {ocr_elapsed_ms:.1f}ms)"
+                )
                 if extracted_text:
                     print(f"[OCR] Preview: {extracted_text[:100]}...")
             else:
-                print(f"[OCR] ✗ Failed - will use metadata analysis (title: {window_info['title']}, app: {window_info['app']})")
+                print(
+                    f"[OCR] ✗ Failed in {ocr_elapsed_ms:.1f}ms - will use metadata analysis "
+                    f"(title: {window_info['title']}, app: {window_info['app']})"
+                )
             
             # Generate filenames
             timestamp = datetime.now(timezone.utc)

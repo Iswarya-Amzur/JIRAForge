@@ -131,12 +131,14 @@ class PaddleOCREngine(BaseOCREngine):
             'multi_line': True
         }
     
-    def extract_text(self, image: np.ndarray) -> Dict[str, Any]:
+    def extract_text(self, image: np.ndarray, skip_angle_cls: bool = False) -> Dict[str, Any]:
         """
         Extract text from image using PaddleOCR.
         
         Args:
             image: numpy array (BGR or RGB)
+            skip_angle_cls: Skip angle classification (saves ~10ms/line).
+                Safe for screen captures where text is always horizontal.
         
         Returns:
             Standardized result dict
@@ -145,10 +147,8 @@ class PaddleOCREngine(BaseOCREngine):
             return self._create_error_result("PaddleOCR not available. Install: pip install paddlepaddle paddleocr")
         
         try:
-            # Convert image if needed
             img_array = self._convert_image(image)
             
-            # Detect version for API selection
             major_version = int(_PADDLEOCR_VERSION.split('.')[0]) if _PADDLEOCR_VERSION else 2
             
             lines = []
@@ -156,7 +156,6 @@ class PaddleOCREngine(BaseOCREngine):
             boxes = []
             
             if major_version >= 3:
-                # PaddleOCR 3.x: Use predict() API
                 try:
                     result_gen = self._ocr.predict(img_array)
                     result_list = list(result_gen)
@@ -176,16 +175,16 @@ class PaddleOCREngine(BaseOCREngine):
                                         boxes.append(det_boxes[i])
                 except Exception as e:
                     logger.debug(f"PaddleOCR 3.x predict() failed: {e}, trying legacy ocr()")
-                    major_version = 2  # Fall through to legacy API
+                    major_version = 2
             
             if major_version < 3 or not lines:
-                # PaddleOCR 2.x: Use legacy ocr() API
-                result = self._ocr.ocr(img_array, cls=True)
+                # cls=False skips the angle classifier (~10ms per line saved)
+                use_cls = not skip_angle_cls
+                result = self._ocr.ocr(img_array, cls=use_cls)
                 
                 if result and result[0]:
                     for line in result[0]:
                         if line and len(line) >= 2:
-                            # Format: [box_coords, (text, confidence)]
                             text = line[1][0]
                             conf = line[1][1]
                             box = line[0]
@@ -204,7 +203,6 @@ class PaddleOCREngine(BaseOCREngine):
                     'engine': self.get_name()
                 }
             
-            # Combine text
             full_text = '\n'.join(lines)
             avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
             

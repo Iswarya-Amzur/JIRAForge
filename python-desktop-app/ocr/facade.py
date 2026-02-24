@@ -15,7 +15,7 @@ from PIL import Image
 from .config import OCRConfig, OCREngineConfig
 from .engine_factory import EngineFactory
 from .base_engine import BaseOCREngine
-from .image_processor import preprocess_image, resize_if_needed
+from .image_processor import preprocess_image, preprocess_screenshot, resize_if_needed
 
 logger = logging.getLogger(__name__)
 
@@ -108,12 +108,18 @@ class OCRFacade:
                 "Install an OCR engine: pip install paddlepaddle paddleocr"
             )
     
+    # For productivity classification, we don't need every line from a code editor.
+    # The first N lines are enough to determine what the user is working on.
+    MAX_OCR_LINES = 40
+
     def extract_text(
         self,
         image,
         window_title: str = '',
         app_name: str = '',
-        use_preprocessing: bool = True
+        use_preprocessing: bool = True,
+        screenshot_mode: bool = False,
+        max_lines: int = 0
     ) -> Dict[str, Any]:
         """
         Extract text from image using configured engines with fallback.
@@ -122,52 +128,65 @@ class OCRFacade:
             image: PIL Image, numpy array, or file path
             window_title: Window title (for metadata fallback)
             app_name: Application name (for metadata fallback)
-            use_preprocessing: Apply image preprocessing
+            use_preprocessing: Apply image preprocessing (full pipeline)
+            screenshot_mode: Use lightweight preprocessing optimized for screen captures.
+                Skips expensive denoising/CLAHE/sharpening and downscales instead.
+            max_lines: Maximum text lines to return (0 = unlimited).
+                Helps cap processing time for text-heavy screenshots.
         
         Returns:
-            Standardized result dict:
-                - text (str): Extracted text
-                - confidence (float): Overall confidence
-                - method (str): Engine used ('paddle', 'tesseract', 'metadata')
-                - success (bool): Whether extraction succeeded
-                - window_title (str): Passed metadata
-                - app_name (str): Passed metadata
-                - line_count (int): Number of text lines
+            Standardized result dict
         """
+        effective_max_lines = max_lines or self.MAX_OCR_LINES
+
         try:
-            # Convert and preprocess image
-            img_array = self._prepare_image(image, use_preprocessing)
-            
-            # Build list of engines to try
+            # Convert image to PIL once; preprocessing is done per-engine
+            # because different engines need different formats
+            pil_image = self._load_image(image)
+
             engines_to_try = []
             if self._primary_engine and self._primary_engine.is_available():
                 engines_to_try.append(self._primary_engine)
             engines_to_try.extend([e for e in self._fallback_engines if e.is_available()])
             
-            # Try each engine in order
             for engine in engines_to_try:
                 engine_name = engine.get_name()
                 engine_config = self.config.get_engine_config(engine_name)
                 min_confidence = engine_config.min_confidence
                 
                 logger.debug(f"Trying OCR engine: {engine_name}")
+
+                # Preprocess per-engine: Tesseract needs grayscale+CLAHE,
+                # PaddleOCR works best with raw RGB
+                img_array = self._prepare_image(
+                    pil_image, use_preprocessing, screenshot_mode,
+                    engine_hint=engine_name
+                )
                 
                 try:
                     result = engine.extract_text(img_array)
                     
                     if result.get('success') and result.get('confidence', 0) >= min_confidence:
+                        text = result.get('text', '')
+                        line_count = result.get('line_count', 0)
+
+                        if effective_max_lines and line_count > effective_max_lines:
+                            text_lines = text.split('\n')[:effective_max_lines]
+                            text = '\n'.join(text_lines)
+                            line_count = len(text_lines)
+
                         logger.info(
                             f"OCR succeeded with {engine_name} "
-                            f"(confidence: {result['confidence']:.2f})"
+                            f"(confidence: {result['confidence']:.2f}, lines: {line_count})"
                         )
                         return {
-                            'text': result.get('text', ''),
+                            'text': text,
                             'confidence': result.get('confidence', 0.0),
                             'method': engine_name,
                             'success': True,
                             'window_title': window_title,
                             'app_name': app_name,
-                            'line_count': result.get('line_count', 0),
+                            'line_count': line_count,
                             'boxes': result.get('boxes')
                         }
                     else:
@@ -180,7 +199,6 @@ class OCRFacade:
                     logger.warning(f"Engine {engine_name} failed: {e}")
                     continue
             
-            # All engines failed - return metadata fallback
             logger.warning("All OCR engines failed or below threshold, using metadata fallback")
             return self._create_metadata_fallback(window_title, app_name)
             
@@ -196,33 +214,45 @@ class OCRFacade:
                 'app_name': app_name,
                 'line_count': 0
             }
+
+    def _load_image(self, image) -> Image.Image:
+        """Convert any image input to PIL Image."""
+        if isinstance(image, str):
+            return Image.open(image)
+        elif isinstance(image, np.ndarray):
+            return Image.fromarray(image)
+        return image
     
-    def _prepare_image(self, image, use_preprocessing: bool) -> np.ndarray:
+    def _prepare_image(
+        self, image: Image.Image, use_preprocessing: bool,
+        screenshot_mode: bool = False, engine_hint: str = ''
+    ) -> np.ndarray:
         """
-        Convert and preprocess image for OCR.
+        Preprocess image for a specific OCR engine.
+
+        In screenshot_mode, applies engine-appropriate lightweight preprocessing:
+          - PaddleOCR: just downscale (has own neural preprocessing)
+          - Tesseract: downscale + grayscale + CLAHE (~15ms, no denoising)
         
+        In document mode (use_preprocessing=True), runs the full heavy pipeline
+        regardless of engine (grayscale, CLAHE, denoise, sharpen).
+
         Args:
-            image: PIL Image, numpy array, or file path
-            use_preprocessing: Apply preprocessing
+            image: PIL Image
+            use_preprocessing: Apply full preprocessing (for scanned docs)
+            screenshot_mode: Use lightweight screenshot preprocessing
+            engine_hint: Engine name for engine-specific preprocessing
         
         Returns:
             Preprocessed numpy array
         """
-        # Convert to PIL Image
-        if isinstance(image, str):
-            img = Image.open(image)
-        elif isinstance(image, np.ndarray):
-            img = Image.fromarray(image)
+        if screenshot_mode:
+            return preprocess_screenshot(image, engine_hint=engine_hint)
+        elif use_preprocessing and self.config.use_preprocessing:
+            processed = preprocess_image(image)
         else:
-            img = image
+            processed = np.array(image)
         
-        # Preprocess if enabled
-        if use_preprocessing and self.config.use_preprocessing:
-            processed = preprocess_image(img)
-        else:
-            processed = np.array(img)
-        
-        # Resize if needed
         processed = resize_if_needed(processed, max_dimension=self.config.max_image_dimension)
         
         return processed
@@ -297,7 +327,9 @@ def extract_text_from_image(
     image,
     window_title: str = '',
     app_name: str = '',
-    use_preprocessing: bool = True
+    use_preprocessing: bool = True,
+    screenshot_mode: bool = False,
+    max_lines: int = 0
 ) -> Dict[str, Any]:
     """
     Extract text from image - BACKWARD COMPATIBLE function.
@@ -309,32 +341,31 @@ def extract_text_from_image(
         image: PIL Image, numpy array, or file path
         window_title: Window title for metadata fallback
         app_name: Application name for metadata fallback
-        use_preprocessing: Apply image preprocessing
+        use_preprocessing: Apply full image preprocessing (for scanned docs)
+        screenshot_mode: Use lightweight preprocessing for screen captures.
+            Skips expensive denoising/CLAHE/sharpening (~300-800ms savings).
+        max_lines: Maximum text lines to return (0 = use default cap of 40)
     
     Returns:
-        dict: {
-            'text': str,              # Extracted text
-            'confidence': float,      # Confidence score
-            'method': str,            # 'paddle', 'tesseract', or 'metadata'
-            'success': bool,
-            'window_title': str,      # Metadata (always included)
-            'app_name': str,          # Metadata (always included)
-            'line_count': int         # Number of text lines
-        }
+        dict with text, confidence, method, success, line_count, etc.
     
     Example:
         from ocr import extract_text_from_image
         
-        result = extract_text_from_image(screenshot, window_title='Chrome')
-        if result['success']:
-            print(f"Extracted: {result['text']}")
+        # For live screen captures (fast):
+        result = extract_text_from_image(screenshot, screenshot_mode=True)
+        
+        # For scanned documents (thorough):
+        result = extract_text_from_image(document_scan, use_preprocessing=True)
     """
     facade = get_facade()
     return facade.extract_text(
         image,
         window_title=window_title,
         app_name=app_name,
-        use_preprocessing=use_preprocessing
+        use_preprocessing=use_preprocessing,
+        screenshot_mode=screenshot_mode,
+        max_lines=max_lines
     )
 
 

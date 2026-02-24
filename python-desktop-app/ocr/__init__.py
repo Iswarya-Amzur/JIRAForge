@@ -36,7 +36,7 @@ from .engine_factory import EngineFactory
 from .base_engine import BaseOCREngine
 
 # Image processing utilities
-from .image_processor import preprocess_image, resize_if_needed
+from .image_processor import preprocess_image, preprocess_screenshot, resize_if_needed
 
 # Available engines (for direct access if needed)
 from .engines import PaddleOCREngine, TesseractEngine, MockOCREngine
@@ -58,6 +58,7 @@ __all__ = [
     
     # Image processing
     'preprocess_image',
+    'preprocess_screenshot',
     'resize_if_needed',
     
     # Engine implementations

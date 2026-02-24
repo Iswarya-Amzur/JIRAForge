@@ -1,6 +1,11 @@
 """
 Image Preprocessing for OCR
-CLAHE, denoising, sharpening for better text extraction
+CLAHE, denoising, sharpening for better text extraction.
+
+Three modes:
+  - preprocess_image(): Full pipeline for scanned documents (CLAHE, denoise, sharpen)
+  - preprocess_screenshot(): Engine-aware lightweight pipeline for screen captures
+  - resize_if_needed(): Simple downscale guard
 """
 import cv2
 import numpy as np
@@ -9,18 +14,88 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+SCREENSHOT_MAX_DIMENSION = 1920
+
+
+def preprocess_screenshot(img_input, max_dimension=SCREENSHOT_MAX_DIMENSION, engine_hint='paddle'):
+    """
+    Engine-aware lightweight preprocessing optimized for screen captures.
+
+    Screenshots are clean digital images — they don't need the heavy denoising
+    pipeline used for scanned documents. But different OCR engines have different
+    needs:
+
+      PaddleOCR: Has its own neural preprocessing; works best with RGB input.
+        → Just downscale, keep color.
+
+      Tesseract: A traditional engine that works best with high-contrast
+        grayscale input. Needs help with contrast but NOT denoising (clean
+        digital text has no noise to remove).
+        → Downscale → grayscale → CLAHE (fast contrast enhancement, ~15ms).
+
+    In all cases, the expensive operations are skipped:
+      - fastNlMeansDenoising (~300-800ms) — unnecessary for clean screenshots
+      - Sharpening kernel — can introduce artifacts on already-sharp screen text
+      - Upscaling — screenshots are already at native resolution
+
+    Args:
+        img_input: PIL Image or numpy array
+        max_dimension: Maximum width/height in pixels
+        engine_hint: OCR engine name ('paddle', 'tesseract', etc.)
+            Controls which preprocessing steps are applied.
+
+    Returns:
+        numpy array: Ready for OCR (format depends on engine)
+    """
+    try:
+        if isinstance(img_input, Image.Image):
+            img = np.array(img_input)
+        else:
+            img = img_input
+
+        height, width = img.shape[:2]
+
+        # Downscale large images (4K → 1920px max)
+        if max(height, width) > max_dimension:
+            scale = max_dimension / max(height, width)
+            new_w = int(width * scale)
+            new_h = int(height * scale)
+            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            logger.debug(f"Screenshot downscaled {width}x{height} → {new_w}x{new_h}")
+
+        # Engine-specific preprocessing
+        if engine_hint in ('tesseract', 'easyocr'):
+            # Tesseract/EasyOCR need grayscale + contrast enhancement
+            if len(img.shape) == 3:
+                gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = img
+
+            # CLAHE: fast adaptive contrast (~10-15ms). Critical for Tesseract
+            # accuracy on screenshots with varying background colors (dark themes,
+            # colored terminals, etc.)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            img = clahe.apply(gray)
+
+            logger.debug(f"Screenshot preprocessed for {engine_hint}: grayscale + CLAHE")
+
+        # PaddleOCR (and other neural engines): keep RGB, no extra processing
+        return img
+
+    except Exception as e:
+        logger.error(f"Screenshot preprocessing failed: {e}")
+        if isinstance(img_input, Image.Image):
+            return np.array(img_input)
+        return img_input
+
 
 def preprocess_image(img_input, target_dpi=300):
     """
-    Preprocess image for better OCR accuracy
-    
-    Steps:
-    1. Convert to grayscale
-    2. CLAHE (Contrast Limited Adaptive Histogram Equalization)
-    3. Denoise
-    4. Sharpen
-    5. Optional upscale if too small
-    
+    Full preprocessing for scanned documents / photos.
+
+    Steps: grayscale → CLAHE → denoise → sharpen → optional upscale.
+    NOT recommended for screen captures — use preprocess_screenshot() instead.
+
     Args:
         img_input: PIL Image or numpy array
         target_dpi (int): Target DPI for upscaling
@@ -29,33 +104,27 @@ def preprocess_image(img_input, target_dpi=300):
         numpy array: Preprocessed image
     """
     try:
-        # Convert PIL Image to numpy array if needed
         if isinstance(img_input, Image.Image):
             img = np.array(img_input)
         else:
             img = img_input.copy()
         
-        # Convert to grayscale if needed
         if len(img.shape) == 3:
             gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
         else:
             gray = img
         
-        # CLAHE - improve contrast
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(gray)
         
-        # Denoise
         denoised = cv2.fastNlMeansDenoising(enhanced, None, h=10)
         
-        # Sharpen
         kernel = np.array([[-1, -1, -1],
                           [-1,  9, -1],
                           [-1, -1, -1]])
         sharpened = cv2.filter2D(denoised, -1, kernel)
         
-        # Resize if too small (< 150 DPI equivalent)
-        min_dimension = 1000  # Pixels
+        min_dimension = 1000
         height, width = sharpened.shape
         if min(height, width) < min_dimension:
             scale = min_dimension / min(height, width)
@@ -69,7 +138,6 @@ def preprocess_image(img_input, target_dpi=300):
         
     except Exception as e:
         logger.error(f"Image preprocessing failed: {e}")
-        # Return original grayscale if preprocessing fails
         if isinstance(img_input, Image.Image):
             return cv2.cvtColor(np.array(img_input), cv2.COLOR_RGB2GRAY)
         return img_input
@@ -92,7 +160,6 @@ def resize_if_needed(img, max_dimension=4096):
         if max(height, width) <= max_dimension:
             return img
         
-        # Calculate scale
         scale = max_dimension / max(height, width)
         new_width = int(width * scale)
         new_height = int(height * scale)
