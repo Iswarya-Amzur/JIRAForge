@@ -4,7 +4,7 @@
  * Supports Fireworks AI primary with automatic LiteLLM fallback
  */
 
-const { chatCompletionWithFallback, isAIEnabled } = require('./ai/ai-client');
+const { chatCompletionWithFallback, isActivityAIEnabled } = require('./ai/ai-client');
 const logger = require('../utils/logger');
 const { toUTCISOString } = require('../utils/datetime');
 
@@ -85,7 +85,7 @@ exports.clusterUnassignedWork = async (sessions, userIssues = []) => {
       return { groups: [] };
     }
 
-    if (!isAIEnabled()) {
+    if (!isActivityAIEnabled()) {
       throw new Error('AI client not available - check API keys');
     }
 
