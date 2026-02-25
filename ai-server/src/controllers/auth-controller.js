@@ -11,6 +11,7 @@
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const logger = require('../utils/logger');
+const { getClient } = require('../services/db/supabase-client');
 
 // Atlassian OAuth configuration
 const ATLASSIAN_TOKEN_URL = 'https://auth.atlassian.com/oauth/token';
@@ -254,6 +255,40 @@ exports.exchangeToken = async (req, res) => {
 
     logger.info('[Auth] Atlassian user verified: %s', atlassianAccountId);
 
+    // Verify user exists in our system (registered via Forge app)
+    const supabase = getClient();
+    if (!supabase) {
+      logger.error('[Auth] Supabase client not available for user lookup');
+      return res.status(500).json({
+        success: false,
+        error: 'Server configuration error - database not available'
+      });
+    }
+
+    const { data: dbUser, error: dbError } = await supabase
+      .from('users')
+      .select('id, organization_id')
+      .eq('atlassian_account_id', atlassianAccountId)
+      .single();
+
+    if (dbError || !dbUser) {
+      logger.warn('[Auth] User not found in system: %s', atlassianAccountId);
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Your Jira account is not associated with an organization that has the Forge app installed. Please contact your administrator to install the app.'
+      });
+    }
+
+    if (!dbUser.organization_id) {
+      logger.warn('[Auth] User has no organization: %s', atlassianAccountId);
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Your account is not associated with an organization. Please contact your administrator.'
+      });
+    }
+
+    logger.info('[Auth] User validated in system: %s (org: %s)', atlassianAccountId, dbUser.organization_id);
+
     // Extract Supabase reference from URL (e.g., jvijitdewbypqbatfboi from https://jvijitdewbypqbatfboi.supabase.co)
     const supabaseRef = supabaseUrl ? supabaseUrl.match(/https:\/\/([^.]+)\.supabase\.co/)?.[1] : null;
 
@@ -304,8 +339,10 @@ exports.exchangeToken = async (req, res) => {
       supabase_token: supabaseToken,
       expires_in: expiresIn,
       user: {
+        id: dbUser.id,
         atlassian_account_id: atlassianAccountId,
-        email: email
+        email: email,
+        organization_id: dbUser.organization_id
       }
     });
 
@@ -337,14 +374,16 @@ exports.getSupabaseConfig = async (req, res) => {
     }
 
     // Verify the Atlassian token first
+    let atlassianUser;
     try {
-      await axios.get(ATLASSIAN_ME_URL, {
+      const userResponse = await axios.get(ATLASSIAN_ME_URL, {
         headers: {
           'Authorization': `Bearer ${atlassian_token}`,
           'Accept': 'application/json'
         },
         timeout: 10000
       });
+      atlassianUser = userResponse.data;
     } catch (error) {
       logger.warn('[Auth] Invalid Atlassian token for Supabase config:', error.response?.status);
       return res.status(401).json({
@@ -352,6 +391,41 @@ exports.getSupabaseConfig = async (req, res) => {
         error: 'Invalid or expired Atlassian token'
       });
     }
+
+    // Verify user exists in our system (registered via Forge app)
+    const atlassianAccountId = atlassianUser.account_id;
+    const supabase = getClient();
+    if (!supabase) {
+      logger.error('[Auth] Supabase client not available for user lookup');
+      return res.status(500).json({
+        success: false,
+        error: 'Server configuration error - database not available'
+      });
+    }
+
+    const { data: dbUser, error: dbError } = await supabase
+      .from('users')
+      .select('id, organization_id')
+      .eq('atlassian_account_id', atlassianAccountId)
+      .single();
+
+    if (dbError || !dbUser) {
+      logger.warn('[Auth] User not found in system for Supabase config: %s', atlassianAccountId);
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Your Jira account is not associated with an organization that has the Forge app installed. Please contact your administrator to install the app.'
+      });
+    }
+
+    if (!dbUser.organization_id) {
+      logger.warn('[Auth] User has no organization for Supabase config: %s', atlassianAccountId);
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Your account is not associated with an organization. Please contact your administrator.'
+      });
+    }
+
+    logger.info('[Auth] User validated for Supabase config: %s (org: %s)', atlassianAccountId, dbUser.organization_id);
 
     // Get Supabase credentials from environment
     const supabaseUrl = process.env.SUPABASE_URL;
