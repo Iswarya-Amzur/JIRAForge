@@ -140,6 +140,135 @@ export async function getTrackingSettings(accountId, cloudId, projectKey = null)
   }
 }
 
+function inferPrivateMatchBy(identifier) {
+  const value = (identifier || '').toLowerCase();
+  // Process-like values (desktop executables / binaries)
+  if (/\.(exe|app|bin|msc)$/i.test(value)) return 'process';
+  // Wildcard/domain/path-like values are treated as URL entries.
+  if (value.includes('*') || value.includes('/') || value.includes('.')) return 'url';
+  // Safe default for legacy plain names in private list.
+  return 'process';
+}
+
+async function upsertApplicationClassificationsFromTrackingSettings(
+  supabaseConfig,
+  {
+    organizationId,
+    projectKey,
+    userId,
+    whitelistedApps = [],
+    blacklistedApps = [],
+    privateSites = []
+  }
+) {
+  if (!organizationId) {
+    return;
+  }
+
+  const projectFilter = projectKey
+    ? `project_key=eq.${encodeURIComponent(projectKey)}`
+    : 'project_key=is.null';
+
+  const entries = [
+    ...(whitelistedApps || []).filter(Boolean).map((identifier) => ({
+      identifier,
+      display_name: identifier,
+      classification: 'productive',
+      match_by: 'process'
+    })),
+    ...(blacklistedApps || []).filter(Boolean).map((identifier) => ({
+      identifier,
+      display_name: identifier,
+      classification: 'non_productive',
+      match_by: 'process'
+    })),
+    ...(privateSites || []).filter(Boolean).map((identifier) => ({
+      identifier,
+      display_name: identifier,
+      classification: 'private',
+      match_by: inferPrivateMatchBy(identifier)
+    }))
+  ];
+
+  // Deduplicate exact identifier+match_by pairs in this save payload.
+  const uniqueMap = new Map();
+  for (const entry of entries) {
+    const key = `${entry.identifier}|${entry.match_by}`;
+    if (!uniqueMap.has(key)) uniqueMap.set(key, entry);
+  }
+  const uniqueEntries = Array.from(uniqueMap.values());
+
+  for (const entry of uniqueEntries) {
+    const existing = await supabaseRequest(
+      supabaseConfig,
+      `application_classifications?organization_id=eq.${organizationId}&${projectFilter}&identifier=eq.${encodeURIComponent(entry.identifier)}&match_by=eq.${entry.match_by}&limit=1`
+    );
+
+    const payload = {
+      organization_id: organizationId,
+      project_key: projectKey || null,
+      identifier: entry.identifier,
+      display_name: entry.display_name,
+      classification: entry.classification,
+      match_by: entry.match_by,
+      is_default: false,
+      updated_at: new Date().toISOString(),
+      created_by: userId || null
+    };
+
+    if (existing && existing.length > 0) {
+      await supabaseRequest(
+        supabaseConfig,
+        `application_classifications?id=eq.${existing[0].id}`,
+        { method: 'PATCH', body: payload }
+      );
+    } else {
+      await supabaseRequest(
+        supabaseConfig,
+        'application_classifications',
+        {
+          method: 'POST',
+          body: {
+            ...payload,
+            created_at: new Date().toISOString()
+          }
+        }
+      );
+    }
+
+    // Backfill already-uploaded unknown activity rows for this app so values
+    // don't remain stale after admin classification changes.
+    try {
+      const newStatus = entry.classification === 'productive' ? 'pending' : 'analyzed';
+      let updateQuery =
+        `activity_records?organization_id=eq.${organizationId}` +
+        `&classification=eq.unknown` +
+        `&application_name=eq.${encodeURIComponent(entry.identifier)}`;
+
+      if (projectKey) {
+        updateQuery += `&project_key=eq.${encodeURIComponent(projectKey)}`;
+      }
+
+      await supabaseRequest(
+        supabaseConfig,
+        updateQuery,
+        {
+          method: 'PATCH',
+          body: {
+            classification: entry.classification,
+            status: newStatus
+          }
+        }
+      );
+    } catch (backfillErr) {
+      console.warn(
+        `[TrackingSettings] Classification saved for ${entry.identifier}, ` +
+        `but failed to backfill unknown activity_records: ${backfillErr.message}`
+      );
+    }
+  }
+}
+
 /**
  * Save tracking/timesheet settings to Supabase
  * Can save at project-level or organization-level
@@ -258,6 +387,20 @@ export async function saveTrackingSettings(accountId, cloudId, settings, project
       { method: 'POST', body: trackingData }
     );
   }
+
+  // Keep application_classifications in sync with project/org app selections
+  // saved in tracking settings so desktop project-level classification has rows.
+  await upsertApplicationClassificationsFromTrackingSettings(
+    supabaseConfig,
+    {
+      organizationId,
+      projectKey,
+      userId,
+      whitelistedApps: trackingData.whitelisted_apps,
+      blacklistedApps: trackingData.blacklisted_apps,
+      privateSites: trackingData.private_sites
+    }
+  );
 
   const settingsLevel = projectKey ? `project ${projectKey}` : `org ${organizationId}`;
   console.log(`[TrackingSettings] Settings saved successfully for ${settingsLevel}`);

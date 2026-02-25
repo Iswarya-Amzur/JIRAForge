@@ -31,6 +31,7 @@ from PIL import Image as PILImage
 
 # Supabase
 from supabase import create_client, Client
+from supabase.lib.client_options import ClientOptions
 from dotenv import load_dotenv
 
 # SQLite for offline storage
@@ -3166,38 +3167,55 @@ class AppClassificationManager:
         return ('unknown', None)
 
     def sync_classifications(self, supabase_client, organization_id, project_key=None):
-        """Fetch classifications from Supabase and write merged results to SQLite cache.
+        """Fetch classifications from Supabase and write results to SQLite cache.
 
-        Uses 3-tier merge: global defaults < org overrides < project overrides.
+        Strategy:
+        1) If project_key is present, try project-only rows first.
+        2) If project rows exist, use ONLY those rows.
+        3) If project rows are missing (or project fetch fails), fall back to
+           merged org/global defaults.
         """
         try:
             merged = {}  # key = (identifier_lower, match_by) -> row dict
+            used_project_only = False
 
-            # Tier 1: Global defaults (is_default = true, organization_id IS NULL)
-            result = supabase_client.table('application_classifications').select(
-                'identifier, display_name, classification, match_by'
-            ).eq('is_default', True).is_('organization_id', 'null').execute()
-            for row in (result.data or []):
-                key = (row['identifier'].lower(), row['match_by'])
-                merged[key] = row
-
-            # Tier 2: Organization overrides (organization_id = X, project_key IS NULL)
-            if organization_id:
-                result = supabase_client.table('application_classifications').select(
-                    'identifier, display_name, classification, match_by'
-                ).eq('organization_id', organization_id).is_('project_key', 'null').execute()
-                for row in (result.data or []):
-                    key = (row['identifier'].lower(), row['match_by'])
-                    merged[key] = row
-
-            # Tier 3: Project overrides (organization_id = X, project_key = Y)
             if organization_id and project_key:
+                try:
+                    project_result = supabase_client.table('application_classifications').select(
+                        'identifier, display_name, classification, match_by'
+                    ).eq('organization_id', organization_id).eq('project_key', project_key).execute()
+                    project_rows = project_result.data or []
+
+                    if project_rows:
+                        for row in project_rows:
+                            key = (row['identifier'].lower(), row['match_by'])
+                            merged[key] = row
+                        used_project_only = True
+                        print(f"[OK] Using project-only classifications for {project_key}: {len(project_rows)} rows")
+                    else:
+                        print(f"[INFO] No project-level classifications for {project_key}; falling back to org/global")
+                except Exception as project_err:
+                    print(f"[WARN] Project-level classification fetch failed for {project_key}: {project_err}")
+                    print("[INFO] Falling back to org/global classification set")
+
+            # Fall back only when project-only set is unavailable
+            if not used_project_only:
+                # Tier 1 fallback: Global defaults
                 result = supabase_client.table('application_classifications').select(
                     'identifier, display_name, classification, match_by'
-                ).eq('organization_id', organization_id).eq('project_key', project_key).execute()
+                ).eq('is_default', True).is_('organization_id', 'null').execute()
                 for row in (result.data or []):
                     key = (row['identifier'].lower(), row['match_by'])
                     merged[key] = row
+
+                # Tier 2 fallback: Organization overrides
+                if organization_id:
+                    result = supabase_client.table('application_classifications').select(
+                        'identifier, display_name, classification, match_by'
+                    ).eq('organization_id', organization_id).is_('project_key', 'null').execute()
+                    for row in (result.data or []):
+                        key = (row['identifier'].lower(), row['match_by'])
+                        merged[key] = row
 
             # Write merged results to SQLite cache
             conn = sqlite3.connect(self.db_path)
@@ -3902,13 +3920,29 @@ class TimeTracker:
                 print("[ERROR] Supabase URL or anon key not available")
                 return False
 
-            # Initialize anonymous client
-            self.supabase: Client = create_client(self.supabase_url, supabase_anon_key)
-            print(f"[OK] Supabase client initialized for {self.supabase_url}")
+            # Configure Supabase client with longer timeouts to handle slow networks
+            # Default is postgrest_client_timeout=5s, storage_client_timeout=20s
+            # Increase to 60s for both to handle slow connections and network hiccups
+            supabase_options = ClientOptions(
+                postgrest_client_timeout=60,  # Database query timeout
+                storage_client_timeout=60      # File storage timeout
+            )
+
+            # Initialize anonymous client with custom timeout
+            self.supabase: Client = create_client(
+                self.supabase_url, 
+                supabase_anon_key,
+                options=supabase_options
+            )
+            print(f"[OK] Supabase client initialized for {self.supabase_url} (timeout: 60s)")
 
             # Initialize service client for admin operations (bypasses RLS)
             if supabase_service_key:
-                self.supabase_service: Client = create_client(self.supabase_url, supabase_service_key)
+                self.supabase_service: Client = create_client(
+                    self.supabase_url, 
+                    supabase_service_key,
+                    options=supabase_options
+                )
                 print("[OK] Supabase service client initialized")
             else:
                 self.supabase_service = self.supabase
@@ -4869,62 +4903,81 @@ class TimeTracker:
         return None
 
     def register_organization(self):
-        """Register or update organization in Supabase database"""
+        """Register or update organization in Supabase database with retry logic"""
         if not self.jira_cloud_id:
             print("[WARN] Cannot register organization: No Jira Cloud ID")
             return None
 
-        try:
-            # Use service client to bypass RLS
-            client = self.supabase_service if self.supabase_service else self.supabase
+        max_retries = 3
+        retry_delay = 2  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                # Use service client to bypass RLS
+                client = self.supabase_service if self.supabase_service else self.supabase
 
-            # Check if organization already exists
-            result = client.table('organizations').select('id').eq(
-                'jira_cloud_id', self.jira_cloud_id
-            ).execute()
+                # Check if organization already exists
+                result = client.table('organizations').select('id').eq(
+                    'jira_cloud_id', self.jira_cloud_id
+                ).execute()
 
-            if result.data:
-                # Organization exists
-                self.organization_id = result.data[0]['id']
-                print(f"[OK] Found existing organization: {self.organization_id}")
+                if result.data:
+                    # Organization exists
+                    self.organization_id = result.data[0]['id']
+                    print(f"[OK] Found existing organization: {self.organization_id}")
 
-                # Update organization info if changed
-                client.table('organizations').update({
-                    'org_name': self.organization_name,
-                    'jira_instance_url': self.jira_instance_url
-                }).eq('id', self.organization_id).execute()
-            else:
-                # Create new organization
-                org_data = {
-                    'jira_cloud_id': self.jira_cloud_id,
-                    'org_name': self.organization_name,
-                    'jira_instance_url': self.jira_instance_url,
-                    'subscription_status': 'active',
-                    'subscription_tier': 'free'
-                }
-                create_result = client.table('organizations').insert(org_data).execute()
-
-                if create_result.data:
-                    self.organization_id = create_result.data[0]['id']
-                    print(f"[OK] Created new organization: {self.organization_id}")
-
-                    # Create default organization settings
-                    settings_data = {
-                        'organization_id': self.organization_id,
-                        'screenshot_interval': self.capture_interval,
-                        'auto_worklog_enabled': True
-                    }
-                    client.table('organization_settings').insert(settings_data).execute()
-                    print(f"[OK] Created organization settings")
+                    # Update organization info if changed
+                    client.table('organizations').update({
+                        'org_name': self.organization_name,
+                        'jira_instance_url': self.jira_instance_url
+                    }).eq('id', self.organization_id).execute()
                 else:
-                    raise Exception("Failed to create organization")
+                    # Create new organization
+                    org_data = {
+                        'jira_cloud_id': self.jira_cloud_id,
+                        'org_name': self.organization_name,
+                        'jira_instance_url': self.jira_instance_url,
+                        'subscription_status': 'active',
+                        'subscription_tier': 'free'
+                    }
+                    create_result = client.table('organizations').insert(org_data).execute()
 
-            return self.organization_id
+                    if create_result.data:
+                        self.organization_id = create_result.data[0]['id']
+                        print(f"[OK] Created new organization: {self.organization_id}")
 
-        except Exception as e:
-            print(f"[ERROR] Failed to register organization: {e}")
-            traceback.print_exc()
-            return None
+                        # Create default organization settings
+                        settings_data = {
+                            'organization_id': self.organization_id,
+                            'screenshot_interval': self.capture_interval,
+                            'auto_worklog_enabled': True
+                        }
+                        client.table('organization_settings').insert(settings_data).execute()
+                        print(f"[OK] Created organization settings")
+                    else:
+                        raise Exception("Failed to create organization")
+
+                return self.organization_id
+
+            except Exception as e:
+                error_msg = str(e).lower()
+                is_timeout = 'timeout' in error_msg or 'timed out' in error_msg
+                is_connection_error = 'connection' in error_msg or 'network' in error_msg
+                
+                if attempt < max_retries - 1 and (is_timeout or is_connection_error):
+                    wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                    print(f"[WARN] Organization registration failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    print(f"[INFO] Retrying in {wait_time}s... (Network issue: timeout or connection error)")
+                    time.sleep(wait_time)
+                else:
+                    print(f"[ERROR] Failed to register organization: {e}")
+                    if is_timeout:
+                        print("[INFO] Timeout error - check your network connection or firewall")
+                        print(f"[INFO] Supabase URL: {self.supabase_url}")
+                    traceback.print_exc()
+                    return None
+        
+        return None
 
     def fetch_project_settings(self, force_refresh=False):
         """Fetch project settings (tracked statuses) from Supabase
@@ -5833,30 +5886,16 @@ class TimeTracker:
         except Exception as e:
             print(f"[WARN] Error checking unassigned work: {e}")
     
-    def is_app_whitelisted(self, app_name, window_title=''):
-        """Check if application is productive (database-driven classification)
-        
-        REPLACES hardcoded whitelist with database lookups from application_classifications table.
-        Uses AppClassificationManager to check if app is classified as 'productive'.
-        """
-        # Use database-driven classification instead of hardcoded whitelist
-        classification, match_type = self.classification_manager.classify(app_name, window_title)
-        
-        # 'productive' apps are considered whitelisted (work apps)
+    def is_app_productive(self, app_name, window_title=''):
+        """Check if application is productive (database-driven classification)."""
+        classification, _ = self.classification_manager.classify(app_name, window_title)
         return classification == 'productive'
 
-    def is_app_blacklisted(self, app_name, window_title=''):
-        """Check if application is non-productive (database-driven classification)
-        
-        REPLACES hardcoded blacklist with database lookups from application_classifications table.
-        Uses AppClassificationManager to check if app is classified as 'non_productive'.
-        """
-        # Use database-driven classification instead of hardcoded blacklist
-        classification, match_type = self.classification_manager.classify(app_name, window_title)
-        
-        # 'non_productive' apps are considered blacklisted (non-work apps)
+    def is_app_non_productive(self, app_name, window_title=''):
+        """Check if application is non-productive (database-driven classification)."""
+        classification, _ = self.classification_manager.classify(app_name, window_title)
         return classification == 'non_productive'
-    
+
     def is_private_app(self, app_name, window_title=''):
         """Check if application/window is private (should not be tracked/recorded)"""
         classification, _ = self.classification_manager.classify(app_name, window_title)
@@ -6100,9 +6139,20 @@ class TimeTracker:
             # and bypass short throttling so issue-context windows always get text.
             issue_key_in_title = bool(re.search(r'\b[A-Z][A-Z0-9]+-\d+\b', window_title or ''))
             spreadsheet_processes = {'excel.exe', 'libreofficecalc.exe', 'soffice.bin'}
-            force_ocr = issue_key_in_title or (app_name.lower() in spreadsheet_processes)
+            # Unknown apps should bypass OCR throttling so AI classification has text context.
+            force_ocr = (classification == 'unknown') or issue_key_in_title or (app_name.lower() in spreadsheet_processes)
             ocr_result = self.ocr_processor.capture_and_ocr(force=force_ocr)
             ocr_text = ocr_result.get('text') if ocr_result else None
+
+            # Unknown apps sometimes still return empty OCR (e.g., transient OCR engine failure).
+            # Retry once with forced OCR before sending to AI classification.
+            if classification == 'unknown' and not ocr_text:
+                retry_result = self.ocr_processor.capture_and_ocr(force=True)
+                retry_text = retry_result.get('text') if retry_result else None
+                if retry_text:
+                    ocr_result = retry_result
+                    ocr_text = retry_text
+                    print(f"[UNKNOWN] {app_name} — OCR retry succeeded, using retry text")
             
             if classification == 'unknown':
                 app_key = app_name.lower()
@@ -6128,6 +6178,7 @@ class TimeTracker:
         try:
             ai_server_url = get_env_var('AI_SERVER_URL', '')
             if not ai_server_url:
+                print(f"[WARN] AI server URL missing for unknown app {app_name}; keep as unknown for admin review")
                 return
 
             response = requests.post(
@@ -6177,12 +6228,19 @@ class TimeTracker:
                         )
                 except Exception as db_err:
                     print(f"[WARN] Failed to update unknown activity_records for {app_name}: {db_err}")
+            else:
+                print(
+                    f"[WARN] AI classify-app returned {response.status_code} for {app_name}; "
+                    "keeping app as unknown for admin review"
+                )
         except Exception as e:
             print(f"[WARN] Failed to classify unknown app {app_name}: {e}")
+            print(f"[INFO] Keeping {app_name} as unknown for project admin classification")
 
     def _get_auth_headers(self):
         """Get authentication headers for AI server requests."""
         headers = {'Content-Type': 'application/json'}
+        # Use Atlassian OAuth token for AI server authentication
         if hasattr(self, 'auth_manager') and self.auth_manager:
             token = self.auth_manager.tokens.get('access_token')
             if token:
@@ -6398,7 +6456,7 @@ class TimeTracker:
 
             # Prepare screenshot data for both online and offline storage
             work_type = window_info.get('work_type', 'office')  # Default to 'office'
-            is_blacklisted = window_info.get('is_blacklisted', False)
+            is_non_productive = window_info.get('is_non_productive', False)
 
             # Refresh user_assigned_issues cache before building payload so DB gets current list
             if self.should_refresh_issues_cache():
@@ -6430,7 +6488,7 @@ class TimeTracker:
                 'work_date': datetime.now().date().isoformat(),   # Local date: 'YYYY-MM-DD'
                 'metadata': {
                     'work_type': work_type,
-                    'is_blacklisted': is_blacklisted,
+                    'is_non_productive': is_non_productive,
                     'tracking_mode': self.tracking_settings.get('tracking_mode', 'interval'),
                     # OCR data stored in metadata (not separate columns on screenshots table)
                     'extracted_text': extracted_text,
@@ -7129,10 +7187,10 @@ class TimeTracker:
                             print(f"[SKIP] {skip_reason}: {app_name}")
                             self._last_skip_log = time.time()
                 
-                # Determine work type based on whitelist/blacklist
+                # Determine work type based on productive/non-productive classification
                 work_type = self.get_app_work_type(app_name, window_title)
                 window_info['work_type'] = work_type
-                window_info['is_blacklisted'] = self.is_app_blacklisted(app_name, window_title)
+                window_info['is_non_productive'] = self.is_app_non_productive(app_name, window_title)
                 
                 # Check if window switched
                 window_switched = window_info.get('is_new_window', False)

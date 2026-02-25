@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@forge/bridge';
 import './AppClassificationSettings.css';
 
+const DEFAULT_VISIBLE_APPS = 24;
+
 /**
  * Normalize an app identifier to a canonical form for deduplication.
  * Strips file extensions, removes separators, and lowercases.
@@ -12,7 +14,7 @@ function normalizeAppIdentifier(identifier) {
   return identifier
     .toLowerCase()
     .replace(/\.(exe|app|dmg|msi|deb|rpm|snap|flatpak)$/i, '')
-    .replace(/[\s\-_\.]+/g, '');
+    .replace(/[\s\-_.]+/g, '');
 }
 
 /**
@@ -106,10 +108,10 @@ function deduplicateClassifications(entries) {
 
 function AppClassificationSettings({ projectKey }) {
   const [settings, setSettings] = useState({
-    whitelistEnabled: true,
-    whitelistedApps: [],
-    blacklistEnabled: true,
-    blacklistedApps: [],
+    productiveAppsEnabled: true,
+    productiveAppsSelected: [],
+    nonProductiveAppsEnabled: true,
+    nonProductiveAppsSelected: [],
     nonWorkThresholdPercent: 30,
     flagExcessiveNonWork: true,
     privateSitesEnabled: true,
@@ -126,9 +128,12 @@ function AppClassificationSettings({ projectKey }) {
   const [unknownApps, setUnknownApps] = useState([]);
   const [savingUnknownApp, setSavingUnknownApp] = useState({});
 
-  const [customWhitelistApp, setCustomWhitelistApp] = useState('');
-  const [customBlacklistApp, setCustomBlacklistApp] = useState('');
-  const [customPrivateSite, setCustomPrivateSite] = useState('');
+  const [productiveSearch, setProductiveSearch] = useState('');
+  const [nonProductiveSearch, setNonProductiveSearch] = useState('');
+  const [privateSearch, setPrivateSearch] = useState('');
+  const [productiveVisibleCount, setProductiveVisibleCount] = useState(DEFAULT_VISIBLE_APPS);
+  const [nonProductiveVisibleCount, setNonProductiveVisibleCount] = useState(DEFAULT_VISIBLE_APPS);
+  const [privateVisibleCount, setPrivateVisibleCount] = useState(DEFAULT_VISIBLE_APPS);
 
   const [message, setMessage] = useState({ type: '', text: '' });
 
@@ -147,7 +152,8 @@ function AppClassificationSettings({ projectKey }) {
       const canonical = getCanonicalKey(app);
       if (!seen.has(canonical)) {
         seen.add(canonical);
-        result.push(canonical);
+        // Preserve original identifier for runtime matching (e.g., code.exe).
+        result.push(app);
       }
     }
     return result;
@@ -161,10 +167,20 @@ function AppClassificationSettings({ projectKey }) {
         setFullTrackingSettings(result.settings);
         setSettings(prev => ({
           ...prev,
-          whitelistEnabled: result.settings.whitelistEnabled ?? prev.whitelistEnabled,
-          whitelistedApps: normalizeAppList(result.settings.whitelistedApps),
-          blacklistEnabled: result.settings.blacklistEnabled ?? prev.blacklistEnabled,
-          blacklistedApps: normalizeAppList(result.settings.blacklistedApps),
+          productiveAppsEnabled:
+            result.settings.productiveAppsEnabled ??
+            result.settings.whitelistEnabled ??
+            prev.productiveAppsEnabled,
+          productiveAppsSelected: normalizeAppList(
+            result.settings.productiveAppsSelected ?? result.settings.whitelistedApps
+          ),
+          nonProductiveAppsEnabled:
+            result.settings.nonProductiveAppsEnabled ??
+            result.settings.blacklistEnabled ??
+            prev.nonProductiveAppsEnabled,
+          nonProductiveAppsSelected: normalizeAppList(
+            result.settings.nonProductiveAppsSelected ?? result.settings.blacklistedApps
+          ),
           nonWorkThresholdPercent: result.settings.nonWorkThresholdPercent ?? prev.nonWorkThresholdPercent,
           flagExcessiveNonWork: result.settings.flagExcessiveNonWork ?? prev.flagExcessiveNonWork,
           privateSitesEnabled: result.settings.privateSitesEnabled ?? prev.privateSitesEnabled,
@@ -184,23 +200,13 @@ function AppClassificationSettings({ projectKey }) {
     try {
       const result = await invoke('getClassifications', { projectKey: projectKey || null });
       if (result.success && result.classifications) {
-        const productiveRaw = result.classifications
-          .filter(c => c.classification === 'productive' && c.match_by === 'process');
-        const nonProductiveRaw = result.classifications
-          .filter(c => c.classification === 'non_productive' && c.match_by === 'process');
-        const privateRaw = result.classifications
-          .filter(c => c.classification === 'private');
+        // Show one unified searchable app catalog in all three sections.
+        const dedupedCatalog = deduplicateClassifications(result.classifications)
+          .map(c => ({ name: c.display_name || c.identifier, value: c.identifier }));
 
-        const dedupedProductive = deduplicateClassifications(productiveRaw)
-          .map(c => ({ name: c.display_name || c.identifier, value: getCanonicalKey(c.identifier) }));
-        const dedupedNonProductive = deduplicateClassifications(nonProductiveRaw)
-          .map(c => ({ name: c.display_name || c.identifier, value: getCanonicalKey(c.identifier) }));
-        const dedupedPrivate = deduplicateClassifications(privateRaw)
-          .map(c => ({ name: c.display_name || c.identifier, value: getCanonicalKey(c.identifier) }));
-
-        setProductiveApps(dedupedProductive);
-        setNonProductiveApps(dedupedNonProductive);
-        setPrivateApps(dedupedPrivate);
+        setProductiveApps(dedupedCatalog);
+        setNonProductiveApps(dedupedCatalog);
+        setPrivateApps(dedupedCatalog);
       }
     } catch (err) {
       console.error('Failed to load classifications:', err);
@@ -242,9 +248,17 @@ function AppClassificationSettings({ projectKey }) {
         ...(fullTrackingSettings || {}),
         ...updatedClassificationSettings,
       };
+      const persistenceSettings = {
+        ...mergedSettings,
+        // Keep persistence compatible with existing backend/storage schema.
+        whitelistEnabled: mergedSettings.productiveAppsEnabled,
+        whitelistedApps: mergedSettings.productiveAppsSelected || [],
+        blacklistEnabled: mergedSettings.nonProductiveAppsEnabled,
+        blacklistedApps: mergedSettings.nonProductiveAppsSelected || [],
+      };
 
       const result = await invoke('saveTrackingSettings', {
-        settings: mergedSettings,
+        settings: persistenceSettings,
         projectKey: projectKey || null
       });
       if (result.success) {
@@ -277,17 +291,6 @@ function AppClassificationSettings({ projectKey }) {
     });
   };
 
-  const addToList = (listField, value) => {
-    if (!value.trim()) return;
-    const canonicalValue = getCanonicalKey(value.trim());
-    setSettings(prev => {
-      if (prev[listField].includes(canonicalValue)) return prev;
-      const updated = { ...prev, [listField]: [...prev[listField], canonicalValue] };
-      saveSettings(updated);
-      return updated;
-    });
-  };
-
   const removeFromList = (listField, value) => {
     setSettings(prev => {
       const updated = { ...prev, [listField]: prev[listField].filter(item => item !== value) };
@@ -299,28 +302,22 @@ function AppClassificationSettings({ projectKey }) {
   const toggleCommonApp = (listField, value) => {
     setSettings(prev => {
       const isSelected = prev[listField].includes(value);
-      const newList = isSelected
-        ? prev[listField].filter(item => item !== value)
-        : [...prev[listField], value];
-      const updated = { ...prev, [listField]: newList };
+      const classificationLists = ['productiveAppsSelected', 'nonProductiveAppsSelected', 'privateSites'];
+      const updated = { ...prev };
+
+      if (isSelected) {
+        updated[listField] = prev[listField].filter(item => item !== value);
+      } else {
+        // Keep one app in exactly one classification bucket.
+        for (const field of classificationLists) {
+          updated[field] = (updated[field] || []).filter(item => item !== value);
+        }
+        updated[listField] = [...(updated[listField] || []), value];
+      }
+
       saveSettings(updated);
       return updated;
     });
-  };
-
-  const handleAddCustomWhitelist = () => {
-    addToList('whitelistedApps', customWhitelistApp);
-    setCustomWhitelistApp('');
-  };
-
-  const handleAddCustomBlacklist = () => {
-    addToList('blacklistedApps', customBlacklistApp);
-    setCustomBlacklistApp('');
-  };
-
-  const handleAddPrivateSite = () => {
-    addToList('privateSites', customPrivateSite);
-    setCustomPrivateSite('');
   };
 
   const getThresholdColorClass = (value) => {
@@ -328,6 +325,22 @@ function AppClassificationSettings({ projectKey }) {
     if (value <= 50) return 'threshold-moderate';
     return 'threshold-high';
   };
+
+  const filterAppsBySearch = (apps, query) => {
+    if (!query.trim()) return apps;
+    const q = query.trim().toLowerCase();
+    return apps.filter(app =>
+      app.name.toLowerCase().includes(q) || app.value.toLowerCase().includes(q)
+    );
+  };
+
+  const filteredProductiveApps = filterAppsBySearch(productiveApps, productiveSearch);
+  const filteredNonProductiveApps = filterAppsBySearch(nonProductiveApps, nonProductiveSearch);
+  const filteredPrivateApps = filterAppsBySearch(privateApps, privateSearch);
+
+  const visibleProductiveApps = filteredProductiveApps.slice(0, productiveVisibleCount);
+  const visibleNonProductiveApps = filteredNonProductiveApps.slice(0, nonProductiveVisibleCount);
+  const visiblePrivateApps = filteredPrivateApps.slice(0, privateVisibleCount);
 
   const classifyUnknownApp = async (unknownApp, classification) => {
     const appId = unknownApp.applicationName;
@@ -391,15 +404,15 @@ function AppClassificationSettings({ projectKey }) {
           <label className="toggle-switch">
             <input
               type="checkbox"
-              checked={settings.whitelistEnabled}
-              onChange={() => handleToggle('whitelistEnabled')}
+              checked={settings.productiveAppsEnabled}
+              onChange={() => handleToggle('productiveAppsEnabled')}
             />
             <span className="toggle-slider"></span>
             <span className="toggle-label">Enable Productive Apps</span>
           </label>
         </div>
 
-        {settings.whitelistEnabled && (
+        {settings.productiveAppsEnabled && (
           <div className="section-content">
             <p className="field-description">
               Applications classified as productive work apps (managed via Application Classifications)
@@ -407,55 +420,72 @@ function AppClassificationSettings({ projectKey }) {
 
             <div className="common-apps-container">
               <label className="common-apps-label">Classified Productive Applications</label>
+              <div className="classification-search-row">
+                <input
+                  type="text"
+                  className="classification-search-input"
+                  placeholder="Search productive apps..."
+                  value={productiveSearch}
+                  onChange={(e) => {
+                    setProductiveSearch(e.target.value);
+                    setProductiveVisibleCount(DEFAULT_VISIBLE_APPS);
+                  }}
+                />
+                <span className="classification-count-text">
+                  {productiveSearch.trim()
+                    ? `${filteredProductiveApps.length} match${filteredProductiveApps.length === 1 ? '' : 'es'}`
+                    : 'Type to search'}
+                </span>
+              </div>
               {loadingClassifications ? (
                 <p className="loading-text">Loading classifications...</p>
-              ) : productiveApps.length > 0 ? (
+              ) : !productiveSearch.trim() ? (
+                <p className="field-hint">Use search to find and select productive apps.</p>
+              ) : filteredProductiveApps.length > 0 ? (
                 <div className="common-apps-grid">
-                  {productiveApps.map(app => (
+                  {visibleProductiveApps.map(app => (
                     <button
                       key={app.value}
-                      className={`app-chip ${settings.whitelistedApps.includes(app.value) ? 'selected' : ''}`}
-                      onClick={() => toggleCommonApp('whitelistedApps', app.value)}
+                      className={`app-chip ${settings.productiveAppsSelected.includes(app.value) ? 'selected' : ''}`}
+                      onClick={() => toggleCommonApp('productiveAppsSelected', app.value)}
                     >
                       {app.name}
                     </button>
                   ))}
                 </div>
+              ) : productiveApps.length > 0 ? (
+                <p className="field-hint">No productive applications match your search.</p>
               ) : (
                 <p className="field-hint">No productive applications classified yet. Add them via Application Classifications page.</p>
               )}
-            </div>
-
-            <div className="custom-input-container">
-              <label>Add Custom Application</label>
-              <div className="input-with-button">
-                <input
-                  type="text"
-                  placeholder="e.g., figma, notion, custom-app"
-                  value={customWhitelistApp}
-                  onChange={(e) => setCustomWhitelistApp(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleAddCustomWhitelist()}
-                />
+              {productiveSearch.trim() && filteredProductiveApps.length > DEFAULT_VISIBLE_APPS && (
                 <button
-                  className="add-button"
-                  onClick={handleAddCustomWhitelist}
-                  disabled={!customWhitelistApp.trim()}
+                  className="load-more-button"
+                  onClick={() => {
+                    if (productiveVisibleCount >= filteredProductiveApps.length) {
+                      setProductiveVisibleCount(DEFAULT_VISIBLE_APPS);
+                    } else {
+                      setProductiveVisibleCount(prev => prev + DEFAULT_VISIBLE_APPS);
+                    }
+                  }}
                 >
-                  +
+                  {productiveVisibleCount >= filteredProductiveApps.length
+                    ? 'Show Less'
+                    : `Show More (${filteredProductiveApps.length - productiveVisibleCount} remaining)`}
                 </button>
-              </div>
+              )}
             </div>
 
             <div className="current-list">
-              <label>Current Productive Apps ({settings.whitelistedApps.length})</label>
+              <label>Current Productive Apps ({settings.productiveAppsSelected.length})</label>
               <div className="tags-container">
-                {settings.whitelistedApps.length > 0 ? (
-                  settings.whitelistedApps.map(app => (
-                    <span key={app} className="tag whitelist-tag">
+                {settings.productiveAppsSelected.length > 0 ? (
+                  settings.productiveAppsSelected.map(app => (
+                    <span key={app} className="tag productive-tag">
                       {app}
                       <button
                         className="tag-remove"
-                        onClick={() => removeFromList('whitelistedApps', app)}
+                        onClick={() => removeFromList('productiveAppsSelected', app)}
                       >
                         ×
                       </button>
@@ -524,7 +554,7 @@ function AppClassificationSettings({ projectKey }) {
                           Mark Productive
                         </button>
                         <button
-                          className="add-button blacklist-add unknown-app-action-btn"
+                          className="add-button non-productive-add unknown-app-action-btn"
                           disabled={isSaving}
                           onClick={() => classifyUnknownApp(app, 'non_productive')}
                         >
@@ -560,15 +590,15 @@ function AppClassificationSettings({ projectKey }) {
           <label className="toggle-switch">
             <input
               type="checkbox"
-              checked={settings.blacklistEnabled}
-              onChange={() => handleToggle('blacklistEnabled')}
+              checked={settings.nonProductiveAppsEnabled}
+              onChange={() => handleToggle('nonProductiveAppsEnabled')}
             />
             <span className="toggle-slider"></span>
             <span className="toggle-label">Enable Non-Productive Apps</span>
           </label>
         </div>
 
-        {settings.blacklistEnabled && (
+        {settings.nonProductiveAppsEnabled && (
           <div className="section-content">
             <p className="field-description">
               Applications classified as non-productive (e.g., entertainment, social media - managed via Application Classifications)
@@ -576,55 +606,72 @@ function AppClassificationSettings({ projectKey }) {
 
             <div className="common-apps-container">
               <label className="common-apps-label">Classified Non-Productive Applications</label>
+              <div className="classification-search-row">
+                <input
+                  type="text"
+                  className="classification-search-input"
+                  placeholder="Search non-productive apps..."
+                  value={nonProductiveSearch}
+                  onChange={(e) => {
+                    setNonProductiveSearch(e.target.value);
+                    setNonProductiveVisibleCount(DEFAULT_VISIBLE_APPS);
+                  }}
+                />
+                <span className="classification-count-text">
+                  {nonProductiveSearch.trim()
+                    ? `${filteredNonProductiveApps.length} match${filteredNonProductiveApps.length === 1 ? '' : 'es'}`
+                    : 'Type to search'}
+                </span>
+              </div>
               {loadingClassifications ? (
                 <p className="loading-text">Loading classifications...</p>
-              ) : nonProductiveApps.length > 0 ? (
+              ) : !nonProductiveSearch.trim() ? (
+                <p className="field-hint">Use search to find and select non-productive apps.</p>
+              ) : filteredNonProductiveApps.length > 0 ? (
                 <div className="common-apps-grid">
-                  {nonProductiveApps.map(app => (
+                  {visibleNonProductiveApps.map(app => (
                     <button
                       key={app.value}
-                      className={`app-chip blacklist-chip ${settings.blacklistedApps.includes(app.value) ? 'selected' : ''}`}
-                      onClick={() => toggleCommonApp('blacklistedApps', app.value)}
+                      className={`app-chip non-productive-chip ${settings.nonProductiveAppsSelected.includes(app.value) ? 'selected' : ''}`}
+                      onClick={() => toggleCommonApp('nonProductiveAppsSelected', app.value)}
                     >
                       {app.name}
                     </button>
                   ))}
                 </div>
+              ) : nonProductiveApps.length > 0 ? (
+                <p className="field-hint">No non-productive applications match your search.</p>
               ) : (
                 <p className="field-hint">No non-productive applications classified yet. Add them via Application Classifications page.</p>
               )}
-            </div>
-
-            <div className="custom-input-container">
-              <label>Add Custom Application</label>
-              <div className="input-with-button">
-                <input
-                  type="text"
-                  placeholder="e.g., custom-game, entertainment-app"
-                  value={customBlacklistApp}
-                  onChange={(e) => setCustomBlacklistApp(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleAddCustomBlacklist()}
-                />
+              {nonProductiveSearch.trim() && filteredNonProductiveApps.length > DEFAULT_VISIBLE_APPS && (
                 <button
-                  className="add-button blacklist-add"
-                  onClick={handleAddCustomBlacklist}
-                  disabled={!customBlacklistApp.trim()}
+                  className="load-more-button"
+                  onClick={() => {
+                    if (nonProductiveVisibleCount >= filteredNonProductiveApps.length) {
+                      setNonProductiveVisibleCount(DEFAULT_VISIBLE_APPS);
+                    } else {
+                      setNonProductiveVisibleCount(prev => prev + DEFAULT_VISIBLE_APPS);
+                    }
+                  }}
                 >
-                  +
+                  {nonProductiveVisibleCount >= filteredNonProductiveApps.length
+                    ? 'Show Less'
+                    : `Show More (${filteredNonProductiveApps.length - nonProductiveVisibleCount} remaining)`}
                 </button>
-              </div>
+              )}
             </div>
 
             <div className="current-list">
-              <label>Current Non-Productive Apps ({settings.blacklistedApps.length})</label>
+              <label>Current Non-Productive Apps ({settings.nonProductiveAppsSelected.length})</label>
               <div className="tags-container">
-                {settings.blacklistedApps.length > 0 ? (
-                  settings.blacklistedApps.map(app => (
-                    <span key={app} className="tag blacklist-tag">
+                {settings.nonProductiveAppsSelected.length > 0 ? (
+                  settings.nonProductiveAppsSelected.map(app => (
+                    <span key={app} className="tag non-productive-tag">
                       {app}
                       <button
                         className="tag-remove"
-                        onClick={() => removeFromList('blacklistedApps', app)}
+                        onClick={() => removeFromList('nonProductiveAppsSelected', app)}
                       >
                         ×
                       </button>
@@ -704,11 +751,30 @@ function AppClassificationSettings({ projectKey }) {
 
             <div className="common-apps-container">
               <label className="common-apps-label">Classified Private Sites/Applications</label>
+              <div className="classification-search-row">
+                <input
+                  type="text"
+                  className="classification-search-input"
+                  placeholder="Search private apps/sites..."
+                  value={privateSearch}
+                  onChange={(e) => {
+                    setPrivateSearch(e.target.value);
+                    setPrivateVisibleCount(DEFAULT_VISIBLE_APPS);
+                  }}
+                />
+                <span className="classification-count-text">
+                  {privateSearch.trim()
+                    ? `${filteredPrivateApps.length} match${filteredPrivateApps.length === 1 ? '' : 'es'}`
+                    : 'Type to search'}
+                </span>
+              </div>
               {loadingClassifications ? (
                 <p className="loading-text">Loading classifications...</p>
-              ) : privateApps.length > 0 ? (
+              ) : !privateSearch.trim() ? (
+                <p className="field-hint">Use search to find and select private apps/sites.</p>
+              ) : filteredPrivateApps.length > 0 ? (
                 <div className="common-apps-grid">
-                  {privateApps.map(app => (
+                  {visiblePrivateApps.map(app => (
                     <button
                       key={app.value}
                       className={`app-chip private-chip ${settings.privateSites.includes(app.value) ? 'selected' : ''}`}
@@ -718,29 +784,27 @@ function AppClassificationSettings({ projectKey }) {
                     </button>
                   ))}
                 </div>
+              ) : privateApps.length > 0 ? (
+                <p className="field-hint">No private applications match your search.</p>
               ) : (
                 <p className="field-hint">No private sites/applications classified yet. Add them via Application Classifications page.</p>
               )}
-            </div>
-
-            <div className="custom-input-container">
-              <label>Add Custom Private Site/Domain</label>
-              <div className="input-with-button">
-                <input
-                  type="text"
-                  placeholder="e.g., banking, personal, healthcare"
-                  value={customPrivateSite}
-                  onChange={(e) => setCustomPrivateSite(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleAddPrivateSite()}
-                />
+              {privateSearch.trim() && filteredPrivateApps.length > DEFAULT_VISIBLE_APPS && (
                 <button
-                  className="add-button private-add"
-                  onClick={handleAddPrivateSite}
-                  disabled={!customPrivateSite.trim()}
+                  className="load-more-button"
+                  onClick={() => {
+                    if (privateVisibleCount >= filteredPrivateApps.length) {
+                      setPrivateVisibleCount(DEFAULT_VISIBLE_APPS);
+                    } else {
+                      setPrivateVisibleCount(prev => prev + DEFAULT_VISIBLE_APPS);
+                    }
+                  }}
                 >
-                  +
+                  {privateVisibleCount >= filteredPrivateApps.length
+                    ? 'Show Less'
+                    : `Show More (${filteredPrivateApps.length - privateVisibleCount} remaining)`}
                 </button>
-              </div>
+              )}
             </div>
 
             <div className="current-list">

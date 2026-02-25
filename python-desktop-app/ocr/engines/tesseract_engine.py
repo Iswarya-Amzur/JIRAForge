@@ -125,6 +125,32 @@ class TesseractEngine(BaseOCREngine):
             'page_segmentation_modes': True,
             'oem_modes': True
         }
+
+    def _get_language_candidates(self) -> list:
+        """Return language candidates with compatibility fallbacks.
+
+        Tesseract commonly expects 3-letter ISO codes (e.g., eng), but many
+        configs still use 2-letter values (e.g., en). Try both to auto-heal
+        language-data mismatch issues.
+        """
+        configured = (self.language or 'eng').strip()
+        candidates = [configured]
+
+        # Single-language fallback mapping.
+        if '+' not in configured:
+            if configured == 'en':
+                candidates.append('eng')
+            elif configured == 'eng':
+                candidates.append('en')
+
+        # Deduplicate while preserving order.
+        deduped = []
+        seen = set()
+        for lang in candidates:
+            if lang and lang not in seen:
+                seen.add(lang)
+                deduped.append(lang)
+        return deduped
     
     def extract_text(self, image: np.ndarray) -> Dict[str, Any]:
         """
@@ -151,13 +177,49 @@ class TesseractEngine(BaseOCREngine):
             # Build tesseract config
             custom_config = self.extra_params.get('config', '--oem 3 --psm 3')
             
-            # Get detailed data with confidence scores
-            data = _tesseract.image_to_data(
-                pil_image,
-                lang=self.language,
-                config=custom_config,
-                output_type=_tesseract.Output.DICT
-            )
+            # Get detailed data with confidence scores.
+            # Auto-fallback between configured language and compatible aliases
+            # (e.g., en <-> eng) to avoid hard failures on tessdata naming.
+            data = None
+            used_language = None
+            last_lang_error = None
+            for lang_candidate in self._get_language_candidates():
+                try:
+                    data = _tesseract.image_to_data(
+                        pil_image,
+                        lang=lang_candidate,
+                        config=custom_config,
+                        output_type=_tesseract.Output.DICT
+                    )
+                    used_language = lang_candidate
+                    break
+                except Exception as lang_err:
+                    last_lang_error = lang_err
+                    err_text = str(lang_err).lower()
+                    is_language_data_error = (
+                        'error opening data file' in err_text or
+                        'failed loading language' in err_text or
+                        "couldn't load any languages" in err_text
+                    )
+                    if is_language_data_error:
+                        logger.warning(
+                            f"Tesseract language '{lang_candidate}' failed; trying next fallback. "
+                            f"Error: {lang_err}"
+                        )
+                        continue
+                    raise
+
+            if data is None:
+                raise RuntimeError(
+                    f"Tesseract could not run with any language candidate "
+                    f"{self._get_language_candidates()}: {last_lang_error}"
+                )
+
+            if used_language and used_language != self.language:
+                logger.info(
+                    f"Tesseract language fallback applied: configured='{self.language}', "
+                    f"used='{used_language}'"
+                )
             
             # Extract text and confidence
             lines = []

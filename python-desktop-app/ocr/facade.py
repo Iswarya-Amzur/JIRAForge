@@ -58,9 +58,19 @@ class OCRFacade:
         self.config = config or OCRConfig.from_env()
         self._primary_engine: Optional[BaseOCREngine] = None
         self._fallback_engines: List[BaseOCREngine] = []
+        # Auto-heal guardrails for unstable engines (e.g., intermittent Paddle CPU primitive failures).
+        self._engine_failure_counts: Dict[str, int] = {}
+        self._engine_backoff_until: Dict[str, float] = {}
+        self._engine_backoff_seconds: float = 120.0
+        
+        # Privacy filter for redacting sensitive information
+        self._privacy_filter = None
         
         # Initialize engines
         self._initialize_engines()
+        
+        # Initialize privacy filter
+        self._initialize_privacy_filter()
     
     def _initialize_engines(self):
         """Initialize primary and fallback engines"""
@@ -109,6 +119,127 @@ class OCRFacade:
                 "Install an OCR engine: pip install paddlepaddle paddleocr"
             )
     
+    def _initialize_privacy_filter(self):
+        """
+        Initialize the privacy filter for redacting sensitive data from OCR text.
+        
+        The privacy filter detects and redacts:
+        - Passwords in URLs and config strings
+        - API keys (AWS, GitHub, Stripe, etc.)
+        - Private keys and certificates
+        - PII (credit cards, SSN, phone numbers) if Presidio is installed
+        - High-entropy secrets if detect-secrets is installed
+        
+        Configure via environment variables:
+            PRIVACY_FILTER_ENABLED=true (default)
+            PRIVACY_MIN_CONFIDENCE=0.7
+            PRIVACY_REDACTION_STRATEGY=mask|entity_type|hash|remove
+        """
+        try:
+            from privacy import PrivacyFilter, PrivacyConfig
+            
+            privacy_config = PrivacyConfig.from_env()
+            
+            if privacy_config.enabled:
+                self._privacy_filter = PrivacyFilter(privacy_config)
+                available_detectors = self._privacy_filter.get_available_detectors()
+                logger.info(
+                    f"Privacy filter initialized with detectors: {available_detectors}"
+                )
+            else:
+                self._privacy_filter = None
+                logger.info("Privacy filter disabled by configuration (PRIVACY_FILTER_ENABLED=false)")
+                
+        except ImportError as e:
+            self._privacy_filter = None
+            logger.warning(
+                f"Privacy module not available: {e}. "
+                "Sensitive data in OCR text will NOT be redacted. "
+                "Check that privacy/ module exists."
+            )
+        except Exception as e:
+            self._privacy_filter = None
+            logger.error(f"Failed to initialize privacy filter: {e}")
+    
+    def _apply_privacy_filter(self, text: str, engine_name: str) -> Dict[str, Any]:
+        """
+        Apply privacy filtering to extracted text and log results.
+        
+        Args:
+            text: OCR-extracted text
+            engine_name: Name of OCR engine used (for logging context)
+            
+        Returns:
+            Dict with:
+                - text: Redacted text
+                - privacy_applied: Whether filtering was applied
+                - privacy_redactions: Number of redactions made
+                - privacy_ms: Processing time in milliseconds
+                - privacy_detectors: List of detectors used
+        """
+        if not self._privacy_filter or not text:
+            return {
+                'text': text,
+                'privacy_applied': False,
+                'privacy_redactions': 0,
+                'privacy_ms': 0.0,
+                'privacy_detectors': []
+            }
+        
+        try:
+            result = self._privacy_filter.redact(text)
+            
+            redactions = result.get('redactions', [])
+            redaction_count = result.get('redactions_count', 0)
+            processing_ms = result.get('processing_time_ms', 0.0)
+            detectors_used = result.get('detectors_used', [])
+            
+            # Detailed logging for privacy redactions
+            if redaction_count > 0:
+                logger.warning(
+                    f"[PRIVACY] Detected {redaction_count} sensitive item(s) in OCR text from {engine_name}"
+                )
+                
+                # Log each redaction type (without revealing actual content)
+                redaction_summary = {}
+                for detection in redactions:
+                    entity_type = detection.get('entity_type', 'UNKNOWN')
+                    redaction_summary[entity_type] = redaction_summary.get(entity_type, 0) + 1
+                
+                for entity_type, count in redaction_summary.items():
+                    logger.warning(
+                        f"[PRIVACY]   - {entity_type}: {count} occurrence(s) REDACTED"
+                    )
+                
+                logger.info(
+                    f"[PRIVACY] Redaction complete: {redaction_count} items masked "
+                    f"(detectors: {detectors_used}, time: {processing_ms:.1f}ms)"
+                )
+            else:
+                logger.debug(
+                    f"[PRIVACY] No sensitive data detected in OCR text "
+                    f"(checked with: {detectors_used}, time: {processing_ms:.1f}ms)"
+                )
+            
+            return {
+                'text': result.get('text', text),
+                'privacy_applied': True,
+                'privacy_redactions': redaction_count,
+                'privacy_ms': processing_ms,
+                'privacy_detectors': detectors_used
+            }
+            
+        except Exception as e:
+            logger.error(f"[PRIVACY] Privacy filter error: {e}. Returning original text.")
+            return {
+                'text': text,
+                'privacy_applied': False,
+                'privacy_redactions': 0,
+                'privacy_ms': 0.0,
+                'privacy_detectors': [],
+                'privacy_error': str(e)
+            }
+    
     # For productivity classification, we don't need every line from a code editor.
     # The first N lines are enough to determine what the user is working on.
     MAX_OCR_LINES = 40
@@ -153,6 +284,13 @@ class OCRFacade:
             
             for engine in engines_to_try:
                 engine_name = engine.get_name()
+                backoff_until = self._engine_backoff_until.get(engine_name, 0.0)
+                if backoff_until > time.time():
+                    logger.warning(
+                        f"Skipping OCR engine '{engine_name}' due to temporary backoff "
+                        f"({backoff_until - time.time():.0f}s remaining)"
+                    )
+                    continue
                 engine_config = self.config.get_engine_config(engine_name)
                 min_confidence = engine_config.min_confidence
                 
@@ -186,19 +324,31 @@ class OCRFacade:
                             text = '\n'.join(text_lines)
                             line_count = len(text_lines)
 
+                        self._engine_failure_counts[engine_name] = 0
+                        self._engine_backoff_until.pop(engine_name, None)
+                        
+                        # Apply privacy filter to redact sensitive information
+                        privacy_result = self._apply_privacy_filter(text, engine_name)
+                        filtered_text = privacy_result['text']
+                        
                         logger.info(
                             f"OCR succeeded with {engine_name} "
                             f"(confidence: {result['confidence']:.2f}, lines: {line_count}, "
                             f"prep: {prep_ms:.1f}ms, infer: {infer_ms:.1f}ms, "
+                            f"privacy: {privacy_result['privacy_ms']:.1f}ms, "
                             f"total: {(time.perf_counter() - total_start) * 1000.0:.1f}ms)"
                         )
                         return {
-                            'text': text,
+                            'text': filtered_text,
                             'confidence': result.get('confidence', 0.0),
                             'method': engine_name,
                             'success': True,
                             'prep_ms': prep_ms,
                             'infer_ms': infer_ms,
+                            'privacy_ms': privacy_result['privacy_ms'],
+                            'privacy_applied': privacy_result['privacy_applied'],
+                            'privacy_redactions': privacy_result['privacy_redactions'],
+                            'privacy_detectors': privacy_result.get('privacy_detectors', []),
                             'total_ms': (time.perf_counter() - total_start) * 1000.0,
                             'window_title': window_title,
                             'app_name': app_name,
@@ -214,6 +364,20 @@ class OCRFacade:
                         
                 except Exception as e:
                     logger.warning(f"Engine {engine_name} failed: {e}")
+                    self._engine_failure_counts[engine_name] = self._engine_failure_counts.get(engine_name, 0) + 1
+                    err_text = str(e).lower()
+                    # Paddle-specific auto-heal: temporarily route to fallback engines
+                    # when low-level primitive execution repeatedly fails.
+                    if (
+                        engine_name == 'paddle' and
+                        'could not execute a primitive' in err_text and
+                        self._engine_failure_counts.get(engine_name, 0) >= 1
+                    ):
+                        self._engine_backoff_until[engine_name] = time.time() + self._engine_backoff_seconds
+                        logger.warning(
+                            f"Temporarily backing off Paddle OCR for "
+                            f"{int(self._engine_backoff_seconds)}s due to primitive execution failure"
+                        )
                     continue
             
             logger.warning("All OCR engines failed or below threshold, using metadata fallback")
@@ -232,7 +396,11 @@ class OCRFacade:
                 'total_ms': (time.perf_counter() - total_start) * 1000.0 if 'total_start' in locals() else None,
                 'window_title': window_title,
                 'app_name': app_name,
-                'line_count': 0
+                'line_count': 0,
+                'privacy_applied': False,
+                'privacy_redactions': 0,
+                'privacy_ms': 0.0,
+                'privacy_detectors': []
             }
 
     def _load_image(self, image) -> Image.Image:
@@ -299,7 +467,11 @@ class OCRFacade:
             'success': False,
             'window_title': window_title,
             'app_name': app_name,
-            'line_count': 0
+            'line_count': 0,
+            'privacy_applied': False,
+            'privacy_redactions': 0,
+            'privacy_ms': 0.0,
+            'privacy_detectors': []
         }
     
     def get_available_engines(self) -> Dict[str, bool]:

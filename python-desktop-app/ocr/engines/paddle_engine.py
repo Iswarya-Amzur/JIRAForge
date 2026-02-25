@@ -7,6 +7,7 @@ Implements singleton pattern to avoid reloading expensive models.
 Supports both PaddleOCR 2.x (legacy) and 3.x (new) APIs.
 """
 import os
+import sys
 import numpy as np
 from PIL import Image
 import logging
@@ -15,6 +16,35 @@ from typing import Dict, Any, Optional
 from ..base_engine import BaseOCREngine
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_platform_safe_runtime_defaults():
+    """Apply OS-aware Paddle runtime stability defaults.
+
+    These defaults are intentionally conservative and only applied when the
+    user/environment has not explicitly set a value.
+
+    - Windows: known to hit intermittent oneDNN/MKL primitive execution issues
+      in some CPU environments. Disable MKLDNN and use a single OMP thread.
+    - Linux/macOS: keep defaults unless user configured values.
+    """
+    if sys.platform == 'win32':
+        os.environ.setdefault('OCR_PADDLE_USE_GPU', 'false')
+        os.environ.setdefault('FLAGS_use_mkldnn', '0')
+        os.environ.setdefault('OMP_NUM_THREADS', '1')
+        logger.info(
+            "Applied Windows Paddle safe defaults "
+            "(OCR_PADDLE_USE_GPU=false, FLAGS_use_mkldnn=0, OMP_NUM_THREADS=1)"
+        )
+    elif sys.platform == 'darwin':
+        # Keep compatible, conservative threading on macOS.
+        os.environ.setdefault('OMP_NUM_THREADS', '1')
+    else:
+        # Linux and other platforms: no forced MKLDNN/GPU overrides.
+        pass
+
+
+_apply_platform_safe_runtime_defaults()
 
 # Check if PaddleOCR is available and detect version
 _PADDLEOCR_AVAILABLE = False
