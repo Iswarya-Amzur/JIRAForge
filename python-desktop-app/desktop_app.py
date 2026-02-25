@@ -31,6 +31,7 @@ from PIL import Image as PILImage
 
 # Supabase
 from supabase import create_client, Client
+from supabase.lib.client_options import ClientOptions
 from dotenv import load_dotenv
 
 # SQLite for offline storage
@@ -3919,13 +3920,29 @@ class TimeTracker:
                 print("[ERROR] Supabase URL or anon key not available")
                 return False
 
-            # Initialize anonymous client
-            self.supabase: Client = create_client(self.supabase_url, supabase_anon_key)
-            print(f"[OK] Supabase client initialized for {self.supabase_url}")
+            # Configure Supabase client with longer timeouts to handle slow networks
+            # Default is postgrest_client_timeout=5s, storage_client_timeout=20s
+            # Increase to 60s for both to handle slow connections and network hiccups
+            supabase_options = ClientOptions(
+                postgrest_client_timeout=60,  # Database query timeout
+                storage_client_timeout=60      # File storage timeout
+            )
+
+            # Initialize anonymous client with custom timeout
+            self.supabase: Client = create_client(
+                self.supabase_url, 
+                supabase_anon_key,
+                options=supabase_options
+            )
+            print(f"[OK] Supabase client initialized for {self.supabase_url} (timeout: 60s)")
 
             # Initialize service client for admin operations (bypasses RLS)
             if supabase_service_key:
-                self.supabase_service: Client = create_client(self.supabase_url, supabase_service_key)
+                self.supabase_service: Client = create_client(
+                    self.supabase_url, 
+                    supabase_service_key,
+                    options=supabase_options
+                )
                 print("[OK] Supabase service client initialized")
             else:
                 self.supabase_service = self.supabase
@@ -4886,62 +4903,81 @@ class TimeTracker:
         return None
 
     def register_organization(self):
-        """Register or update organization in Supabase database"""
+        """Register or update organization in Supabase database with retry logic"""
         if not self.jira_cloud_id:
             print("[WARN] Cannot register organization: No Jira Cloud ID")
             return None
 
-        try:
-            # Use service client to bypass RLS
-            client = self.supabase_service if self.supabase_service else self.supabase
+        max_retries = 3
+        retry_delay = 2  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                # Use service client to bypass RLS
+                client = self.supabase_service if self.supabase_service else self.supabase
 
-            # Check if organization already exists
-            result = client.table('organizations').select('id').eq(
-                'jira_cloud_id', self.jira_cloud_id
-            ).execute()
+                # Check if organization already exists
+                result = client.table('organizations').select('id').eq(
+                    'jira_cloud_id', self.jira_cloud_id
+                ).execute()
 
-            if result.data:
-                # Organization exists
-                self.organization_id = result.data[0]['id']
-                print(f"[OK] Found existing organization: {self.organization_id}")
+                if result.data:
+                    # Organization exists
+                    self.organization_id = result.data[0]['id']
+                    print(f"[OK] Found existing organization: {self.organization_id}")
 
-                # Update organization info if changed
-                client.table('organizations').update({
-                    'org_name': self.organization_name,
-                    'jira_instance_url': self.jira_instance_url
-                }).eq('id', self.organization_id).execute()
-            else:
-                # Create new organization
-                org_data = {
-                    'jira_cloud_id': self.jira_cloud_id,
-                    'org_name': self.organization_name,
-                    'jira_instance_url': self.jira_instance_url,
-                    'subscription_status': 'active',
-                    'subscription_tier': 'free'
-                }
-                create_result = client.table('organizations').insert(org_data).execute()
-
-                if create_result.data:
-                    self.organization_id = create_result.data[0]['id']
-                    print(f"[OK] Created new organization: {self.organization_id}")
-
-                    # Create default organization settings
-                    settings_data = {
-                        'organization_id': self.organization_id,
-                        'screenshot_interval': self.capture_interval,
-                        'auto_worklog_enabled': True
-                    }
-                    client.table('organization_settings').insert(settings_data).execute()
-                    print(f"[OK] Created organization settings")
+                    # Update organization info if changed
+                    client.table('organizations').update({
+                        'org_name': self.organization_name,
+                        'jira_instance_url': self.jira_instance_url
+                    }).eq('id', self.organization_id).execute()
                 else:
-                    raise Exception("Failed to create organization")
+                    # Create new organization
+                    org_data = {
+                        'jira_cloud_id': self.jira_cloud_id,
+                        'org_name': self.organization_name,
+                        'jira_instance_url': self.jira_instance_url,
+                        'subscription_status': 'active',
+                        'subscription_tier': 'free'
+                    }
+                    create_result = client.table('organizations').insert(org_data).execute()
 
-            return self.organization_id
+                    if create_result.data:
+                        self.organization_id = create_result.data[0]['id']
+                        print(f"[OK] Created new organization: {self.organization_id}")
 
-        except Exception as e:
-            print(f"[ERROR] Failed to register organization: {e}")
-            traceback.print_exc()
-            return None
+                        # Create default organization settings
+                        settings_data = {
+                            'organization_id': self.organization_id,
+                            'screenshot_interval': self.capture_interval,
+                            'auto_worklog_enabled': True
+                        }
+                        client.table('organization_settings').insert(settings_data).execute()
+                        print(f"[OK] Created organization settings")
+                    else:
+                        raise Exception("Failed to create organization")
+
+                return self.organization_id
+
+            except Exception as e:
+                error_msg = str(e).lower()
+                is_timeout = 'timeout' in error_msg or 'timed out' in error_msg
+                is_connection_error = 'connection' in error_msg or 'network' in error_msg
+                
+                if attempt < max_retries - 1 and (is_timeout or is_connection_error):
+                    wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                    print(f"[WARN] Organization registration failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    print(f"[INFO] Retrying in {wait_time}s... (Network issue: timeout or connection error)")
+                    time.sleep(wait_time)
+                else:
+                    print(f"[ERROR] Failed to register organization: {e}")
+                    if is_timeout:
+                        print("[INFO] Timeout error - check your network connection or firewall")
+                        print(f"[INFO] Supabase URL: {self.supabase_url}")
+                    traceback.print_exc()
+                    return None
+        
+        return None
 
     def fetch_project_settings(self, force_refresh=False):
         """Fetch project settings (tracked statuses) from Supabase
@@ -6204,6 +6240,7 @@ class TimeTracker:
     def _get_auth_headers(self):
         """Get authentication headers for AI server requests."""
         headers = {'Content-Type': 'application/json'}
+        # Use Atlassian OAuth token for AI server authentication
         if hasattr(self, 'auth_manager') and self.auth_manager:
             token = self.auth_manager.tokens.get('access_token')
             if token:

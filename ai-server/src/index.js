@@ -13,6 +13,7 @@ const appVersionController = require('./controllers/app-version-controller');
 const feedbackController = require('./controllers/feedback-controller');
 const authMiddleware = require('./middleware/auth');
 const forgeAuthMiddleware = require('./middleware/forge-auth');
+const atlassianAuthMiddleware = require('./middleware/atlassian-auth');
 const logger = require('./utils/logger');
 const pollingService = require('./services/polling-service');
 const clusteringPollingService = require('./services/clustering-polling-service');
@@ -249,7 +250,8 @@ app.post('/api/process-brd', authMiddleware, brdController.processBRD);
 
 // Activity tracking endpoints (new event-based pipeline)
 app.post('/api/analyze-batch', authMiddleware, activityController.analyzeBatch);
-app.post('/api/classify-app', authMiddleware, activityController.classifyApp);
+// classify-app uses Atlassian token auth (desktop app sends OAuth token)
+app.post('/api/classify-app', atlassianAuthMiddleware, activityController.classifyApp);
 
 // Manual trigger for clustering - called by organization admins from Forge app
 app.post('/api/trigger-clustering', authMiddleware, async (req, res, next) => {
