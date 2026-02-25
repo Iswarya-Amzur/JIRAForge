@@ -247,12 +247,24 @@ function getClient() {
 }
 
 /**
- * Check if AI analysis is enabled
- * @returns {boolean} True if any AI client is available
+ * Check if AI analysis is enabled for screenshots (vision-based)
+ * Controlled by USE_AI_FOR_SCREENSHOTS env var
+ * @returns {boolean} True if any AI client is available and screenshot AI is enabled
  */
 function isAIEnabled() {
   const hasClient = getFireworksClient() !== null || getLiteLLMClient() !== null;
   return hasClient && process.env.USE_AI_FOR_SCREENSHOTS !== 'false';
+}
+
+/**
+ * Check if AI analysis is enabled for activity records (text-only)
+ * Controlled by USE_AI_FOR_ACTIVITIES env var (defaults to enabled)
+ * Separate from screenshot AI — activity analysis is text-only LLM matching
+ * @returns {boolean} True if any AI client is available and activity AI is enabled
+ */
+function isActivityAIEnabled() {
+  const hasClient = getFireworksClient() !== null || getLiteLLMClient() !== null;
+  return hasClient && process.env.USE_AI_FOR_ACTIVITIES !== 'false';
 }
 
 /**
@@ -650,6 +662,7 @@ module.exports = {
 
   // Status checks
   isAIEnabled,
+  isActivityAIEnabled,
   isFireworksEnabled,
   isLiteLLMEnabled,
   getProviderStatus,

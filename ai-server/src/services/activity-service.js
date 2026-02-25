@@ -8,7 +8,7 @@
  * No vision model needed — all analysis is text-only.
  */
 
-const { chatCompletionWithFallback, isAIEnabled } = require('./ai/ai-client');
+const { chatCompletionWithFallback, isActivityAIEnabled } = require('./ai/ai-client');
 const { formatAssignedIssues } = require('./ai/prompts');
 const activityDbService = require('./db/activity-db-service');
 const logger = require('../utils/logger');
@@ -157,7 +157,7 @@ function salvageTruncatedJsonArray(truncatedJson) {
  * @returns {Promise<Object>} Analysis results
  */
 async function analyzeBatch(records, userAssignedIssues, userId, organizationId) {
-  if (!isAIEnabled()) {
+  if (!isActivityAIEnabled()) {
     throw new Error('AI client not initialized - check API keys');
   }
 
@@ -271,7 +271,7 @@ async function analyzeBatch(records, userAssignedIssues, userId, organizationId)
  * @returns {Promise<Object>} Classification result
  */
 async function classifyUnknownApp(appName, windowTitle, ocrText) {
-  if (!isAIEnabled()) {
+  if (!isActivityAIEnabled()) {
     throw new Error('AI client not initialized - check API keys');
   }
 
