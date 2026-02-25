@@ -6155,9 +6155,18 @@ class TimeTracker:
                     print(f"[UNKNOWN] {app_name} — OCR retry succeeded, using retry text")
             
             if classification == 'unknown':
-                app_key = app_name.lower()
+                # For browsers, key by (app_name, domain) so different sites can be classified separately
+                # For non-browsers, key by app_name only
+                app_lower = app_name.lower()
+                if app_lower in BROWSER_PROCESSES:
+                    # Extract domain-like identifier from window title for browsers
+                    domain = self._extract_domain_from_title(window_title)
+                    app_key = f"{app_lower}|{domain}" if domain else app_lower
+                else:
+                    app_key = app_lower
+                
                 if app_key not in self._unknown_apps_classified:
-                    # First time seeing this app — send to AI for classification suggestion
+                    # First time seeing this app/domain — send to AI for classification suggestion
                     self._unknown_apps_classified.add(app_key)
                     print(f"[UNKNOWN] {app_name} — sending to AI server for classification")
                     threading.Thread(
@@ -6236,6 +6245,86 @@ class TimeTracker:
         except Exception as e:
             print(f"[WARN] Failed to classify unknown app {app_name}: {e}")
             print(f"[INFO] Keeping {app_name} as unknown for project admin classification")
+
+    def _extract_domain_from_title(self, window_title):
+        """Extract domain/site identifier from browser window title.
+        
+        Browser window titles typically include the site name or domain.
+        Examples:
+            "Anthropic | Claude" -> "anthropic"
+            "YouTube - AI Tutorial" -> "youtube"
+            "GitHub - AmzurATG/JIRAForge" -> "github"
+            "Google Search" -> "google"
+            "Stack Overflow - How to..." -> "stackoverflow"
+        
+        Returns:
+            str: Lowercase domain/site identifier, or empty string if not found
+        """
+        if not window_title:
+            return ''
+        
+        title_lower = window_title.lower()
+        
+        # Common site patterns to extract
+        site_patterns = [
+            # Direct domain mentions
+            ('youtube', 'youtube'),
+            ('github', 'github'),
+            ('stackoverflow', 'stackoverflow'),
+            ('stack overflow', 'stackoverflow'),
+            ('google', 'google'),
+            ('facebook', 'facebook'),
+            ('twitter', 'twitter'),
+            ('linkedin', 'linkedin'),
+            ('reddit', 'reddit'),
+            ('instagram', 'instagram'),
+            ('amazon', 'amazon'),
+            ('netflix', 'netflix'),
+            ('spotify', 'spotify'),
+            ('slack', 'slack'),
+            ('discord', 'discord'),
+            ('zoom', 'zoom'),
+            ('teams', 'teams'),
+            ('outlook', 'outlook'),
+            ('gmail', 'gmail'),
+            ('jira', 'jira'),
+            ('atlassian', 'atlassian'),
+            ('confluence', 'confluence'),
+            ('bitbucket', 'bitbucket'),
+            ('trello', 'trello'),
+            ('notion', 'notion'),
+            ('figma', 'figma'),
+            ('canva', 'canva'),
+            ('anthropic', 'anthropic'),
+            ('openai', 'openai'),
+            ('chatgpt', 'chatgpt'),
+        ]
+        
+        for pattern, site_id in site_patterns:
+            if pattern in title_lower:
+                return site_id
+        
+        # Try to extract from URL-like patterns in title
+        # e.g., "example.com - Page Title"
+        import re
+        url_match = re.search(r'([a-z0-9][-a-z0-9]*\.)+[a-z]{2,}', title_lower)
+        if url_match:
+            domain = url_match.group(0)
+            # Extract main domain (e.g., "example.com" from "www.example.com")
+            parts = domain.split('.')
+            if len(parts) >= 2:
+                return parts[-2]  # Return main domain name
+        
+        # Fallback: use first word of title as identifier
+        # This handles cases like "Anthropic | Claude" -> "anthropic"
+        words = title_lower.split()
+        if words:
+            # Clean first word of special characters
+            first_word = re.sub(r'[^a-z0-9]', '', words[0])
+            if len(first_word) >= 3:
+                return first_word
+        
+        return ''
 
     def _get_auth_headers(self):
         """Get authentication headers for AI server requests."""

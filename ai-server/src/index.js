@@ -11,6 +11,7 @@ const authController = require('./controllers/auth-controller');
 const forgeProxyController = require('./controllers/forge-proxy-controller');
 const appVersionController = require('./controllers/app-version-controller');
 const feedbackController = require('./controllers/feedback-controller');
+const notificationController = require('./controllers/notification-controller');
 const authMiddleware = require('./middleware/auth');
 const forgeAuthMiddleware = require('./middleware/forge-auth');
 const atlassianAuthMiddleware = require('./middleware/atlassian-auth');
@@ -18,6 +19,7 @@ const logger = require('./utils/logger');
 const pollingService = require('./services/polling-service');
 const clusteringPollingService = require('./services/clustering-polling-service');
 const cleanupService = require('./services/cleanup-service');
+const notificationPollingService = require('./services/notifications/notification-polling');
 const aiService = require('./services/ai');
 const { initializeSheetsLogger } = require('./services/sheets-logger');
 const activityController = require('./controllers/activity-controller');
@@ -197,6 +199,14 @@ app.post('/api/app-version/releases', authMiddleware, appVersionController.creat
 
 // Compute SHA256 checksum for a file URL (protected - admin utility)
 app.post('/api/app-version/compute-checksum', authMiddleware, appVersionController.computeChecksum);
+
+// =============================================================================
+// NOTIFICATION ROUTES (Protected - require authMiddleware)
+// Email notifications for login reminders, download reminders, new versions, etc.
+// =============================================================================
+
+// Mount notification routes
+app.use('/api/notifications', authMiddleware, notificationController);
 
 // =============================================================================
 // FORGE REMOTE ROUTES (require Forge Invocation Token authentication)
@@ -458,6 +468,15 @@ async function startServer() {
       activityPollingService.start();
       logger.info('Activity polling service started - will process pending activity records');
 
+      // Step 5: Start notification polling service for email notifications
+      // Sends login reminders, download reminders, new version alerts, and inactivity alerts
+      if (process.env.EMAIL_PROVIDER) {
+        notificationPollingService.start();
+        logger.info('Notification polling service started - will send email notifications');
+      } else {
+        logger.info('Notification polling service not started - EMAIL_PROVIDER not configured');
+      }
+
       resolve();
     });
   });
@@ -476,6 +495,7 @@ process.on('SIGTERM', () => {
   clusteringPollingService.stop();
   cleanupService.stop();
   activityPollingService.stop();
+  notificationPollingService.stop();
   process.exit(0);
 });
 
@@ -485,5 +505,6 @@ process.on('SIGINT', () => {
   clusteringPollingService.stop();
   cleanupService.stop();
   activityPollingService.stop();
+  notificationPollingService.stop();
   process.exit(0);
 });
