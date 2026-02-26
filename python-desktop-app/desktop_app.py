@@ -3085,6 +3085,35 @@ BROWSER_PROCESSES = {
     'opera.exe', 'vivaldi.exe', 'arc.exe',
 }
 
+PROCESS_IDENTIFIER_ALIASES = {
+    'code': 'vscode',
+    'visualstudiocode': 'vscode',
+    'vscode': 'vscode',
+    'gitbash': 'gitbash',
+    'gitbashterminal': 'gitbash',
+    'teams': 'teams',
+    'microsoftteams': 'teams',
+    'msteams': 'teams',
+    'jira': 'jira',
+    'atlassianjira': 'jira',
+    'chrome': 'chrome',
+    'googlechrome': 'chrome',
+    'firefox': 'firefox',
+    'mozillafirefox': 'firefox',
+    'edge': 'msedge',
+    'msedge': 'msedge',
+    'microsoftedge': 'msedge',
+    'brave': 'brave',
+    'bravebrowser': 'brave',
+    'opera': 'opera',
+    'vivaldi': 'vivaldi',
+    'arc': 'arc',
+}
+
+BROWSER_PROCESS_NORMALIZED_KEYS = {
+    'chrome', 'msedge', 'firefox', 'brave', 'opera', 'vivaldi', 'arc'
+}
+
 
 class AppClassificationManager:
     """Manages application classification lookups using local SQLite cache.
@@ -3096,14 +3125,27 @@ class AppClassificationManager:
     def __init__(self, db_path):
         self.db_path = db_path
         # In-memory lookup dicts (populated from SQLite)
-        self.process_classifications = {}  # identifier (lower) -> classification
+        self.process_classifications = {}  # exact identifier (lower) -> classification
+        self.normalized_process_classifications = {}  # canonical identifier -> classification
         self.url_classifications = {}      # identifier (lower) -> classification
         self.url_wildcard_patterns = []    # [(pattern, classification)] for fnmatch
         self.reload_from_cache()
 
+    def _normalize_process_identifier(self, identifier):
+        """Normalize process identifiers so legacy names match real process names."""
+        value = (identifier or '').strip().lower()
+        value = re.sub(r'\.(exe|app|dmg|msi|deb|rpm|snap|flatpak|bin)$', '', value)
+        value = re.sub(r'[\s\-_\.]+', '', value)
+        return value
+
+    def _canonical_process_key(self, identifier):
+        normalized = self._normalize_process_identifier(identifier)
+        return PROCESS_IDENTIFIER_ALIASES.get(normalized, normalized)
+
     def reload_from_cache(self):
         """Load classifications from SQLite into memory for fast lookup."""
         self.process_classifications = {}
+        self.normalized_process_classifications = {}
         self.url_classifications = {}
         self.url_wildcard_patterns = []
         try:
@@ -3111,9 +3153,12 @@ class AppClassificationManager:
             cursor = conn.cursor()
             cursor.execute('SELECT identifier, classification, match_by FROM app_classifications_cache')
             for identifier, classification, match_by in cursor.fetchall():
-                key = identifier.lower()
+                key = (identifier or '').lower().strip()
                 if match_by == 'process':
                     self.process_classifications[key] = classification
+                    canonical_key = self._canonical_process_key(identifier)
+                    if canonical_key:
+                        self.normalized_process_classifications[canonical_key] = classification
                 elif match_by == 'url':
                     if '*' in identifier:
                         self.url_wildcard_patterns.append((key, classification))
@@ -3134,10 +3179,11 @@ class AppClassificationManager:
                 classification: 'productive', 'non_productive', 'private', or 'unknown'
                 match_type: 'process', 'url', 'browser_default', or None
         """
-        app_lower = app_name.lower() if app_name else ''
+        app_lower = (app_name or '').lower().strip()
+        app_canonical_key = self._canonical_process_key(app_name)
 
         # Check if it's a browser
-        if app_lower in BROWSER_PROCESSES:
+        if app_lower in BROWSER_PROCESSES or app_canonical_key in BROWSER_PROCESS_NORMALIZED_KEYS:
             # Browser: check window title against URL entries
             title_lower = window_title.lower() if window_title else ''
 
@@ -3162,6 +3208,8 @@ class AppClassificationManager:
         # Non-browser: check process name
         if app_lower in self.process_classifications:
             return (self.process_classifications[app_lower], 'process')
+        if app_canonical_key in self.normalized_process_classifications:
+            return (self.normalized_process_classifications[app_canonical_key], 'process')
 
         # No match found
         return ('unknown', None)
@@ -3170,52 +3218,53 @@ class AppClassificationManager:
         """Fetch classifications from Supabase and write results to SQLite cache.
 
         Strategy:
-        1) If project_key is present, try project-only rows first.
-        2) If project rows exist, use ONLY those rows.
-        3) If project rows are missing (or project fetch fails), fall back to
-           merged org/global defaults.
+        Merge all tiers in order:
+        1) Global defaults
+        2) Organization overrides
+        3) Project overrides
+
+        Later tiers override earlier ones by (identifier, match_by).
         """
         try:
             merged = {}  # key = (identifier_lower, match_by) -> row dict
-            used_project_only = False
+            defaults_count = 0
+            org_count = 0
+            project_count = 0
 
+            # Tier 1: Global defaults
+            result = supabase_client.table('application_classifications').select(
+                'identifier, display_name, classification, match_by'
+            ).eq('is_default', True).is_('organization_id', 'null').execute()
+            defaults_rows = result.data or []
+            defaults_count = len(defaults_rows)
+            for row in defaults_rows:
+                key = ((row.get('identifier') or '').lower(), row.get('match_by'))
+                merged[key] = row
+
+            # Tier 2: Organization overrides
+            if organization_id:
+                result = supabase_client.table('application_classifications').select(
+                    'identifier, display_name, classification, match_by'
+                ).eq('organization_id', organization_id).is_('project_key', 'null').execute()
+                org_rows = result.data or []
+                org_count = len(org_rows)
+                for row in org_rows:
+                    key = ((row.get('identifier') or '').lower(), row.get('match_by'))
+                    merged[key] = row
+
+            # Tier 3: Project overrides
             if organization_id and project_key:
                 try:
                     project_result = supabase_client.table('application_classifications').select(
                         'identifier, display_name, classification, match_by'
                     ).eq('organization_id', organization_id).eq('project_key', project_key).execute()
                     project_rows = project_result.data or []
-
-                    if project_rows:
-                        for row in project_rows:
-                            key = (row['identifier'].lower(), row['match_by'])
-                            merged[key] = row
-                        used_project_only = True
-                        print(f"[OK] Using project-only classifications for {project_key}: {len(project_rows)} rows")
-                    else:
-                        print(f"[INFO] No project-level classifications for {project_key}; falling back to org/global")
+                    project_count = len(project_rows)
+                    for row in project_rows:
+                        key = ((row.get('identifier') or '').lower(), row.get('match_by'))
+                        merged[key] = row
                 except Exception as project_err:
                     print(f"[WARN] Project-level classification fetch failed for {project_key}: {project_err}")
-                    print("[INFO] Falling back to org/global classification set")
-
-            # Fall back only when project-only set is unavailable
-            if not used_project_only:
-                # Tier 1 fallback: Global defaults
-                result = supabase_client.table('application_classifications').select(
-                    'identifier, display_name, classification, match_by'
-                ).eq('is_default', True).is_('organization_id', 'null').execute()
-                for row in (result.data or []):
-                    key = (row['identifier'].lower(), row['match_by'])
-                    merged[key] = row
-
-                # Tier 2 fallback: Organization overrides
-                if organization_id:
-                    result = supabase_client.table('application_classifications').select(
-                        'identifier, display_name, classification, match_by'
-                    ).eq('organization_id', organization_id).is_('project_key', 'null').execute()
-                    for row in (result.data or []):
-                        key = (row['identifier'].lower(), row['match_by'])
-                        merged[key] = row
 
             # Write merged results to SQLite cache
             conn = sqlite3.connect(self.db_path)
@@ -3238,7 +3287,16 @@ class AppClassificationManager:
             finally:
                 conn.close()
 
-            print(f"[OK] Synced {len(merged)} app classifications from Supabase")
+            if project_key:
+                print(
+                    f"[OK] Synced {len(merged)} app classifications from Supabase "
+                    f"({defaults_count} defaults, {org_count} org, {project_count} project for {project_key})"
+                )
+            else:
+                print(
+                    f"[OK] Synced {len(merged)} app classifications from Supabase "
+                    f"({defaults_count} defaults, {org_count} org)"
+                )
             self.reload_from_cache()
 
         except Exception as e:
