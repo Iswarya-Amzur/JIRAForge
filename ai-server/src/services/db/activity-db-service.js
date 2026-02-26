@@ -64,11 +64,14 @@ async function updateActivityRecordAnalysis(recordId, analysisResult) {
   const updateData = {
     status: 'analyzed',
     user_assigned_issue_key: analysisResult.taskKey || null,
-    project_key: analysisResult.projectKey || null,
     metadata: analysisResult.metadata || {},
     analyzed_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   };
+  // Preserve existing row project_key unless AI explicitly resolves one.
+  if (analysisResult.projectKey) {
+    updateData.project_key = analysisResult.projectKey;
+  }
 
   const { data, error } = await supabase
     .from('activity_records')

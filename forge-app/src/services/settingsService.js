@@ -150,25 +150,11 @@ function inferPrivateMatchBy(identifier) {
   return 'process';
 }
 
-async function upsertApplicationClassificationsFromTrackingSettings(
-  supabaseConfig,
-  {
-    organizationId,
-    projectKey,
-    userId,
-    whitelistedApps = [],
-    blacklistedApps = [],
-    privateSites = []
-  }
-) {
-  if (!organizationId) {
-    return;
-  }
-
-  const projectFilter = projectKey
-    ? `project_key=eq.${encodeURIComponent(projectKey)}`
-    : 'project_key=is.null';
-
+function buildTrackingClassificationEntries({
+  whitelistedApps = [],
+  blacklistedApps = [],
+  privateSites = []
+} = {}) {
   const entries = [
     ...(whitelistedApps || []).filter(Boolean).map((identifier) => ({
       identifier,
@@ -190,13 +176,82 @@ async function upsertApplicationClassificationsFromTrackingSettings(
     }))
   ];
 
-  // Deduplicate exact identifier+match_by pairs in this save payload.
   const uniqueMap = new Map();
   for (const entry of entries) {
     const key = `${entry.identifier}|${entry.match_by}`;
     if (!uniqueMap.has(key)) uniqueMap.set(key, entry);
   }
-  const uniqueEntries = Array.from(uniqueMap.values());
+  return Array.from(uniqueMap.values());
+}
+
+async function deleteRemovedApplicationClassificationsFromTrackingSettings(
+  supabaseConfig,
+  {
+    organizationId,
+    projectKey,
+    previousSettings = {},
+    whitelistedApps = [],
+    blacklistedApps = [],
+    privateSites = []
+  }
+) {
+  if (!organizationId) return;
+
+  const previousEntries = buildTrackingClassificationEntries({
+    whitelistedApps: previousSettings.whitelisted_apps || [],
+    blacklistedApps: previousSettings.blacklisted_apps || [],
+    privateSites: previousSettings.private_sites || []
+  });
+  const currentEntries = buildTrackingClassificationEntries({
+    whitelistedApps,
+    blacklistedApps,
+    privateSites
+  });
+  const currentKeys = new Set(
+    currentEntries.map((entry) => `${entry.identifier}|${entry.match_by}`)
+  );
+  const removedEntries = previousEntries.filter(
+    (entry) => !currentKeys.has(`${entry.identifier}|${entry.match_by}`)
+  );
+  if (removedEntries.length === 0) return;
+
+  const projectFilter = projectKey
+    ? `project_key=eq.${encodeURIComponent(projectKey)}`
+    : 'project_key=is.null';
+
+  for (const entry of removedEntries) {
+    await supabaseRequest(
+      supabaseConfig,
+      `application_classifications?organization_id=eq.${organizationId}&${projectFilter}&identifier=eq.${encodeURIComponent(entry.identifier)}&match_by=eq.${entry.match_by}`,
+      { method: 'DELETE' }
+    );
+  }
+}
+
+async function upsertApplicationClassificationsFromTrackingSettings(
+  supabaseConfig,
+  {
+    organizationId,
+    projectKey,
+    userId,
+    whitelistedApps = [],
+    blacklistedApps = [],
+    privateSites = []
+  }
+) {
+  if (!organizationId) {
+    return;
+  }
+
+  const projectFilter = projectKey
+    ? `project_key=eq.${encodeURIComponent(projectKey)}`
+    : 'project_key=is.null';
+
+  const uniqueEntries = buildTrackingClassificationEntries({
+    whitelistedApps,
+    blacklistedApps,
+    privateSites
+  });
 
   for (const entry of uniqueEntries) {
     const existing = await supabaseRequest(
@@ -390,6 +445,18 @@ export async function saveTrackingSettings(accountId, cloudId, settings, project
 
   // Keep application_classifications in sync with project/org app selections
   // saved in tracking settings so desktop project-level classification has rows.
+  await deleteRemovedApplicationClassificationsFromTrackingSettings(
+    supabaseConfig,
+    {
+      organizationId,
+      projectKey,
+      previousSettings: existingSettings?.[0] || {},
+      whitelistedApps: trackingData.whitelisted_apps,
+      blacklistedApps: trackingData.blacklisted_apps,
+      privateSites: trackingData.private_sites
+    }
+  );
+
   await upsertApplicationClassificationsFromTrackingSettings(
     supabaseConfig,
     {
