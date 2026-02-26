@@ -184,7 +184,8 @@ async function analyzeBatch(records, userAssignedIssues, userId, organizationId)
       isVision: false,
       reasoningEffort: 'none',
       userId,
-      organizationId
+      organizationId,
+      apiCallName: 'batch-analysis'
     });
 
     const content = response.choices[0].message.content.trim();
@@ -268,9 +269,11 @@ async function analyzeBatch(records, userAssignedIssues, userId, organizationId)
  * @param {string} appName - Application/process name
  * @param {string} windowTitle - Window title
  * @param {string} ocrText - OCR-extracted text
+ * @param {string} userId - User ID for LiteLLM tracking (optional)
+ * @param {string} organizationId - Organization ID for cost tracking (optional)
  * @returns {Promise<Object>} Classification result
  */
-async function classifyUnknownApp(appName, windowTitle, ocrText) {
+async function classifyUnknownApp(appName, windowTitle, ocrText, userId = null, organizationId = null) {
   if (!isActivityAIEnabled()) {
     throw new Error('AI client not initialized - check API keys');
   }
@@ -288,7 +291,10 @@ async function classifyUnknownApp(appName, windowTitle, ocrText) {
       temperature: 0.2,
       max_tokens: 300,
       isVision: false,
-      reasoningEffort: 'none'
+      reasoningEffort: 'none',
+      userId,
+      organizationId,
+      apiCallName: 'app-classification'
     });
 
     const content = response.choices[0].message.content.trim();

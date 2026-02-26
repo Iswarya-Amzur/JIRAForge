@@ -571,9 +571,10 @@ function getProviderConfig(providerId) {
  * @param {string} params.userId - User ID for cost tracking (optional)
  * @param {string} params.organizationId - Organization ID for cost tracking (optional)
  * @param {string} params.screenshotId - Screenshot ID for cost tracking (optional)
+ * @param {string} params.apiCallName - Label for the request type sent as LiteLLM metadata (e.g. 'vision-analysis', 'app-classification') (optional)
  * @returns {Promise<Object>} { response, provider, model }
  */
-async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tokens = 800, isVision = false, reasoningEffort = null, userId = null, organizationId = null, screenshotId = null }) {
+async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tokens = 800, isVision = false, reasoningEffort = null, userId = null, organizationId = null, screenshotId = null, apiCallName = null }) {
   const errors = [];
   const requestType = isVision ? 'vision' : 'text';
 
@@ -631,6 +632,12 @@ async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tok
       };
       if (config.useLiteLLMUser) {
         requestParams.user = litellmUser;
+        // Send request type as metadata to LiteLLM for tracking/filtering
+        const callLabel = apiCallName || requestType;
+        requestParams.metadata = {
+          request_type: callLabel,
+          organization_id: organizationId || undefined
+        };
       }
       // Disable Gemini thinking for text-only (e.g. OCR) so token budget goes to the JSON response
       if (reasoningEffort && providerId === 'litellm-gemini') {

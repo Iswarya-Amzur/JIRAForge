@@ -232,7 +232,8 @@ CRITICAL - DESCRIPTIONS MUST BE SPECIFIC:
       isVision: false,
       userId: null, // Clustering doesn't have user context
       organizationId: null,
-      screenshotId: null
+      screenshotId: null,
+      apiCallName: 'clustering'
     });
 
     const responseText = response.choices[0].message.content.trim();

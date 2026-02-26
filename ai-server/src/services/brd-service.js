@@ -61,7 +61,8 @@ exports.parseRequirements = async (text, context = {}) => {
       isVision: false,
       userId: null, // Can be added if userId is passed to this function
       organizationId: null,
-      screenshotId: null
+      screenshotId: null,
+      apiCallName: 'brd-generation'
     });
 
     const content = response.choices[0].message.content.trim();

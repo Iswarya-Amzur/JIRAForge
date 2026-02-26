@@ -55,7 +55,7 @@ async function analyzeBatch(req, res, next) {
  */
 async function classifyApp(req, res, next) {
   try {
-    const { application_name, window_title, ocr_text } = req.body;
+    const { application_name, window_title, ocr_text, user_id, organization_id } = req.body;
 
     if (!application_name) {
       return res.status(400).json({
@@ -69,7 +69,9 @@ async function classifyApp(req, res, next) {
     const result = await activityService.classifyUnknownApp(
       application_name,
       window_title || '',
-      ocr_text || ''
+      ocr_text || '',
+      user_id || null,
+      organization_id || null
     );
 
     res.json({ success: true, ...result });
