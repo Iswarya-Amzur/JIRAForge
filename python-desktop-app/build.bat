@@ -54,9 +54,35 @@ echo.
 echo [STEP 2/4] Checking for UPX compression tool...
 where upx >nul 2>&1
 if errorlevel 1 (
-    echo [WARN] UPX not found - executable will not be compressed
-    echo To enable compression, download UPX from https://github.com/upx/upx/releases
-    echo and add it to your PATH
+    echo [INFO] UPX not found - attempting auto-install...
+    where winget >nul 2>&1
+    if not errorlevel 1 (
+        winget install --id UPX.UPX -e --silent --accept-source-agreements --accept-package-agreements >nul 2>&1
+    )
+
+    where upx >nul 2>&1
+    if errorlevel 1 (
+        where choco >nul 2>&1
+        if not errorlevel 1 (
+            choco install upx -y >nul 2>&1
+        )
+    )
+
+    where upx >nul 2>&1
+    if errorlevel 1 (
+        where scoop >nul 2>&1
+        if not errorlevel 1 (
+            scoop install upx >nul 2>&1
+        )
+    )
+
+    where upx >nul 2>&1
+    if errorlevel 1 (
+        echo [WARN] UPX install failed or unavailable - executable will not be compressed
+        echo       Install manually from https://github.com/upx/upx/releases and add to PATH
+    ) else (
+        echo [OK] UPX installed and found in PATH - compression enabled
+    )
 ) else (
     echo [OK] UPX found - compression enabled
 )

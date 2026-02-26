@@ -257,25 +257,29 @@ def set_runtime_ocr_config(config_dict):
     """
     global RUNTIME_OCR_CONFIG
     RUNTIME_OCR_CONFIG = {}
-    
-    # Set primary engine
-    RUNTIME_OCR_CONFIG['OCR_PRIMARY_ENGINE'] = config_dict.get('primary_engine', 'paddle')
-    
-    # Set fallback engines as comma-separated string
-    fallbacks = config_dict.get('fallback_engines', ['tesseract'])
-    RUNTIME_OCR_CONFIG['OCR_FALLBACK_ENGINES'] = ','.join(fallbacks)
+
+    # Enforce lean OCR policy for desktop runtime:
+    # - primary engine: paddle
+    # - fallback engine: tesseract only
+    RUNTIME_OCR_CONFIG['OCR_PRIMARY_ENGINE'] = 'paddle'
+    RUNTIME_OCR_CONFIG['OCR_FALLBACK_ENGINES'] = 'tesseract'
     
     # Set global settings
     RUNTIME_OCR_CONFIG['OCR_USE_PREPROCESSING'] = str(config_dict.get('use_preprocessing', True)).lower()
     RUNTIME_OCR_CONFIG['OCR_MAX_IMAGE_DIMENSION'] = str(config_dict.get('max_image_dimension', 4096))
     RUNTIME_OCR_CONFIG['OCR_PREPROCESSING_TARGET_DPI'] = str(config_dict.get('preprocessing_target_dpi', 300))
     
-    # Set per-engine configurations
+    # Set per-engine configurations (only required engines)
     engines = config_dict.get('engines', {})
+    required_engines = {'paddle', 'tesseract'}
     for engine_name, engine_config in engines.items():
+        engine_name_lower = str(engine_name).lower()
+        if engine_name_lower not in required_engines:
+            continue
         prefix = f'OCR_{engine_name.upper()}_'
         RUNTIME_OCR_CONFIG[f'{prefix}ENABLED'] = str(engine_config.get('enabled', True)).lower()
-        RUNTIME_OCR_CONFIG[f'{prefix}MIN_CONFIDENCE'] = str(engine_config.get('min_confidence', 0.5))
+        default_conf = 0.4 if engine_name_lower == 'paddle' else 0.5
+        RUNTIME_OCR_CONFIG[f'{prefix}MIN_CONFIDENCE'] = str(engine_config.get('min_confidence', default_conf))
         RUNTIME_OCR_CONFIG[f'{prefix}USE_GPU'] = str(engine_config.get('use_gpu', False)).lower()
         RUNTIME_OCR_CONFIG[f'{prefix}LANGUAGE'] = engine_config.get('language', 'en')
         
@@ -283,8 +287,26 @@ def set_runtime_ocr_config(config_dict):
         extra_params = engine_config.get('extra_params', {})
         for param_name, param_value in extra_params.items():
             RUNTIME_OCR_CONFIG[f'{prefix}{param_name.upper()}'] = str(param_value)
-    
-    print(f"[OK] OCR config loaded from AI server (engines: {', '.join(engines.keys())})")
+
+    # Ensure required engines always have usable defaults.
+    if 'OCR_PADDLE_ENABLED' not in RUNTIME_OCR_CONFIG:
+        RUNTIME_OCR_CONFIG['OCR_PADDLE_ENABLED'] = 'true'
+    RUNTIME_OCR_CONFIG['OCR_PADDLE_MIN_CONFIDENCE'] = '0.4'
+    if 'OCR_PADDLE_USE_GPU' not in RUNTIME_OCR_CONFIG:
+        RUNTIME_OCR_CONFIG['OCR_PADDLE_USE_GPU'] = 'false'
+    if 'OCR_PADDLE_LANGUAGE' not in RUNTIME_OCR_CONFIG:
+        RUNTIME_OCR_CONFIG['OCR_PADDLE_LANGUAGE'] = 'en'
+
+    if 'OCR_TESSERACT_ENABLED' not in RUNTIME_OCR_CONFIG:
+        RUNTIME_OCR_CONFIG['OCR_TESSERACT_ENABLED'] = 'true'
+    if 'OCR_TESSERACT_MIN_CONFIDENCE' not in RUNTIME_OCR_CONFIG:
+        RUNTIME_OCR_CONFIG['OCR_TESSERACT_MIN_CONFIDENCE'] = '0.5'
+    if 'OCR_TESSERACT_USE_GPU' not in RUNTIME_OCR_CONFIG:
+        RUNTIME_OCR_CONFIG['OCR_TESSERACT_USE_GPU'] = 'false'
+    if 'OCR_TESSERACT_LANGUAGE' not in RUNTIME_OCR_CONFIG:
+        RUNTIME_OCR_CONFIG['OCR_TESSERACT_LANGUAGE'] = 'en'
+
+    print("[OK] OCR config loaded from AI server (engines: paddle, tesseract)")
 
 
 # ============================================================================

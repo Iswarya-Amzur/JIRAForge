@@ -121,11 +121,13 @@ class OCRConfig:
         """
         prefix = f'OCR_{engine_name.upper()}_'
         
+        default_min_confidence = '0.4' if engine_name.lower() == 'paddle' else '0.5'
+
         # Standard configuration
         engine_config = OCREngineConfig(
             name=engine_name,
             enabled=os.getenv(f'{prefix}ENABLED', 'true').lower() == 'true',
-            min_confidence=float(os.getenv(f'{prefix}MIN_CONFIDENCE', '0.5')),
+            min_confidence=float(os.getenv(f'{prefix}MIN_CONFIDENCE', default_min_confidence)),
             use_gpu=os.getenv(f'{prefix}USE_GPU', 'false').lower() == 'true',
             language=os.getenv(f'{prefix}LANGUAGE', 'en')
         )
@@ -174,11 +176,12 @@ class OCRConfig:
         for name, engine_data in data.get('engines', {}).items():
             extra = {k: v for k, v in engine_data.items() 
                     if k not in ['name', 'enabled', 'priority', 'min_confidence', 'use_gpu', 'language']}
+            default_min_confidence = 0.4 if str(name).lower() == 'paddle' else 0.5
             config.engines[name] = OCREngineConfig(
                 name=name,
                 enabled=engine_data.get('enabled', True),
                 priority=engine_data.get('priority', 0),
-                min_confidence=engine_data.get('min_confidence', 0.5),
+                min_confidence=engine_data.get('min_confidence', default_min_confidence),
                 use_gpu=engine_data.get('use_gpu', False),
                 language=engine_data.get('language', 'en'),
                 extra_params=extra

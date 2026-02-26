@@ -7,17 +7,25 @@ Generates a single-file Windows executable with all dependencies bundled.
 import sys
 import os
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+
+sys.setrecursionlimit(sys.getrecursionlimit() * 5)
 
 block_cipher = None
 
 # Collect OCR module files
 ocr_datas = []
-ocr_dir = os.path.join(os.path.dirname(os.path.abspath('desktop_app.py')), 'ocr')
+spec_dir = os.path.abspath('.')
+ocr_dir = os.path.join(spec_dir, 'ocr')
 if os.path.exists(ocr_dir):
     for root, dirs, files in os.walk(ocr_dir):
         for file in files:
             # Only include Python files, exclude config and env files
-            if file.endswith('.py') and not file.startswith('.env'):
+            if (
+                file.endswith('.py')
+                and not file.startswith('.env')
+                and file not in ('easyocr_engine.py', 'mock_engine.py', 'demo_engine.py')
+            ):
                 src = os.path.join(root, file)
                 # Preserve directory structure in ocr/
                 rel_path = os.path.relpath(root, os.path.dirname(ocr_dir))
@@ -34,6 +42,20 @@ else:
     print(f"[WARN] PaddleOCR models not found at: {paddleocr_cache}")
     print(f"[WARN] Models will be downloaded on first run")
 
+# Extra submodules used dynamically at runtime
+dynamic_hiddenimports = []
+dynamic_hiddenimports += collect_submodules('ocr')
+dynamic_hiddenimports += collect_submodules('privacy')
+dynamic_hiddenimports += collect_submodules('supabase')
+dynamic_hiddenimports += collect_submodules('keyring')
+dynamic_hiddenimports += collect_submodules('pynput')
+dynamic_hiddenimports += collect_submodules('pystray')
+
+# Runtime data files needed by some dependencies
+runtime_datas = []
+runtime_datas += collect_data_files('certifi')
+runtime_datas += collect_data_files('tzdata')
+
 a = Analysis(
     ['desktop_app.py'],
     pathex=[],
@@ -45,7 +67,10 @@ a = Analysis(
     ],
     datas=[
         # Tesseract language data files
-        (r'C:\Program Files\Tesseract-OCR\tessdata\eng.traineddata', 'tesseract/tessdata'), ocr_datas + paddleocr_models
+        (r'C:\Program Files\Tesseract-OCR\tessdata\eng.traineddata', 'tesseract/tessdata'),
+        *ocr_datas,
+        *paddleocr_models,
+        *runtime_datas,
     ],
    
     hiddenimports=[
@@ -139,9 +164,6 @@ a = Analysis(
         'ocr.engines',
         'ocr.engines.paddle_engine',
         'ocr.engines.tesseract_engine',
-        'ocr.engines.easyocr_engine',
-        'ocr.engines.mock_engine',
-        'ocr.engines.demo_engine',
         'ocr.engines.dynamic_engine',  # NEW: Dynamic engine for any OCR library
         # Legacy OCR modules (backward compatibility)
         'ocr.ocr_engine',
@@ -156,8 +178,6 @@ a = Analysis(
         'paddle.inference',
         # Tesseract
         'pytesseract',
-        # EasyOCR (optional - large dependency)
-        'easyocr',
         # Image/Math
         'cv2',
         'numpy',
@@ -174,7 +194,7 @@ a = Analysis(
         'base64',
         'socket',
         'logging',
-    ],
+    ] + dynamic_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -186,6 +206,24 @@ a = Analysis(
         'test',
         'unittest',
         'xmlrpc',
+        # Exclude optional heavy OCR/ML dependencies not used in production build
+        'easyocr',
+        'torch',
+        'torchvision',
+        'torchaudio',
+        'tensorboard',
+        'torch.utils.tensorboard',
+        'detect_secrets',
+        'privacy.detectors.secrets_detector',
+        'spacy',
+        'spacy_legacy',
+        'spacy_loggers',
+        'thinc',
+        'en_core_web_sm',
+        'en_core_web_md',
+        'en_core_web_lg',
+        'ocr.engines.mock_engine',
+        'ocr.engines.demo_engine',
         # SECURITY: Exclude .env file to prevent credential leaks
         '.env',
         '.env.local',
