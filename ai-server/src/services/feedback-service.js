@@ -146,7 +146,8 @@ async function analyzeFeedbackWithAI(feedback) {
     ],
     temperature: 0.3,
     max_tokens: 1000,
-    isVision: false
+    isVision: false,
+    apiCallName: 'feedback-analysis'
   });
 
   const content = response.choices[0]?.message?.content;

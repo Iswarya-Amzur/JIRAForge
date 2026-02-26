@@ -28,6 +28,7 @@ module.exports = {
   getFireworksModel: aiClient.getFireworksModel,
   getLiteLLMModel: aiClient.getLiteLLMModel,
   getLiteLLMUser: aiClient.getLiteLLMUser,
+  resolveLiteLLMUser: aiClient.resolveLiteLLMUser,
 
   // Main request function with fallback
   chatCompletionWithFallback: aiClient.chatCompletionWithFallback,

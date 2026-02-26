@@ -72,7 +72,8 @@ async function analyzeWithVision({ imageBuffer, windowTitle, applicationName, us
       reasoningEffort: 'none',
       userId: userId,
       organizationId: organizationId,
-      screenshotId: screenshotId
+      screenshotId: screenshotId,
+      apiCallName: 'vision-analysis'
     });
 
     const content = response.choices[0].message.content.trim();

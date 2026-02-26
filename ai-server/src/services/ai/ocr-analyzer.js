@@ -92,7 +92,8 @@ async function analyzeWithOCR({ extractedText, windowTitle, applicationName, use
       reasoningEffort: 'none',
       userId: userId,
       organizationId: organizationId,
-      screenshotId: screenshotId
+      screenshotId: screenshotId,
+      apiCallName: 'ocr-analysis'
     });
 
     const content = response.choices[0].message.content.trim();

@@ -49,13 +49,13 @@ class NotificationPollingService {
 
         // Run immediately on start
         this.runAllChecks().catch(err => {
-            logger.error('[NotificationPolling] Initial run failed:', err);
+            logger.error('[NotificationPolling] Initial run failed: %s', err.message);
         });
 
         // Set up interval
         this.intervalId = setInterval(() => {
             this.runAllChecks().catch(err => {
-                logger.error('[NotificationPolling] Scheduled run failed:', err);
+                logger.error('[NotificationPolling] Scheduled run failed: %s', err.message);
             });
         }, POLLING_INTERVAL);
 
@@ -110,7 +110,7 @@ class NotificationPollingService {
             logger.info(`[NotificationPolling] Notification checks complete in ${duration}ms`);
             
         } catch (error) {
-            logger.error('[NotificationPolling] Error running checks:', error);
+            logger.error('[NotificationPolling] Error running checks: %s', error.message);
             this.stats.lastErrors.push({
                 time: new Date().toISOString(),
                 error: error.message
@@ -151,7 +151,7 @@ class NotificationPollingService {
                 .or(`desktop_last_heartbeat.is.null,desktop_last_heartbeat.lt.${cutoffDate.toISOString()}`);
 
             if (error) {
-                logger.error('[NotificationPolling] Error querying users for login reminders:', error);
+                logger.error('[NotificationPolling] Error querying users for login reminders: %s', error.message);
                 return;
             }
 
@@ -177,7 +177,7 @@ class NotificationPollingService {
             logger.info(`[NotificationPolling] Login reminders: checked ${users?.length || 0} users, sent ${sentCount}`);
             
         } catch (error) {
-            logger.error('[NotificationPolling] Error checking login reminders:', error);
+            logger.error('[NotificationPolling] Error checking login reminders: %s', error.message);
         }
     }
 
@@ -207,7 +207,7 @@ class NotificationPollingService {
                 .is('desktop_app_version', null);
 
             if (error) {
-                logger.error('[NotificationPolling] Error querying users for download reminders:', error);
+                logger.error('[NotificationPolling] Error querying users for download reminders: %s', error.message);
                 return;
             }
 
@@ -229,7 +229,7 @@ class NotificationPollingService {
             logger.info(`[NotificationPolling] Download reminders: checked ${users?.length || 0} users, sent ${sentCount}`);
             
         } catch (error) {
-            logger.error('[NotificationPolling] Error checking download reminders:', error);
+            logger.error('[NotificationPolling] Error checking download reminders: %s', error.message);
         }
     }
 
@@ -274,7 +274,7 @@ class NotificationPollingService {
                 .neq('desktop_app_version', latestRelease.version);
 
             if (error) {
-                logger.error('[NotificationPolling] Error querying users for version notifications:', error);
+                logger.error('[NotificationPolling] Error querying users for version notifications: %s', error.message);
                 return;
             }
 
@@ -305,7 +305,7 @@ class NotificationPollingService {
             logger.info(`[NotificationPolling] Version notifications: checked ${users?.length || 0} users, sent ${sentCount}`);
             
         } catch (error) {
-            logger.error('[NotificationPolling] Error checking version notifications:', error);
+            logger.error('[NotificationPolling] Error checking version notifications: %s', error.message);
         }
     }
 
@@ -339,7 +339,7 @@ class NotificationPollingService {
                 .lt('desktop_last_heartbeat', thresholdTime.toISOString());
 
             if (error) {
-                logger.error('[NotificationPolling] Error querying users for inactivity alerts:', error);
+                logger.error('[NotificationPolling] Error querying users for inactivity alerts: %s', error.message);
                 return;
             }
 
@@ -373,7 +373,7 @@ class NotificationPollingService {
             logger.info(`[NotificationPolling] Inactivity alerts: checked ${users?.length || 0} users, sent ${sentCount}`);
             
         } catch (error) {
-            logger.error('[NotificationPolling] Error checking inactivity alerts:', error);
+            logger.error('[NotificationPolling] Error checking inactivity alerts: %s', error.message);
         }
     }
 

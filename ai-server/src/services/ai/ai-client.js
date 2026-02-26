@@ -16,6 +16,10 @@ const { logCostTracking } = require('../cost-tracker');
 // AI request timeout (default: 60 seconds)
 const AI_REQUEST_TIMEOUT_MS = parseInt(process.env.AI_REQUEST_TIMEOUT_MS || '60000', 10);
 
+// User email cache for LiteLLM user tracking (TTL: 10 minutes)
+const userEmailCache = new Map();
+const USER_EMAIL_CACHE_TTL = 10 * 60 * 1000;
+
 // Client instances
 let fireworksClient = null;
 let litellmGeminiClient = null;   // For Gemini models
@@ -464,11 +468,42 @@ function getTextModel() {
 }
 
 /**
- * Get user identifier for LiteLLM tracking
- * @returns {string} User email for usage tracking
+ * Get default user identifier for LiteLLM tracking (fallback)
+ * @returns {string} Default user email for usage tracking
  */
-function getLiteLLMUser() {
+function getDefaultLiteLLMUser() {
   return process.env.LITELLM_USER || 'ai-server@amzur.com';
+}
+
+/**
+ * Resolve the actual user email for LiteLLM tracking.
+ * Looks up the user's email from the database by userId, with caching.
+ * Falls back to the default static email if userId is not provided or lookup fails.
+ * @param {string|null} userId - User ID to resolve
+ * @returns {Promise<string>} User email for LiteLLM tracking
+ */
+async function resolveLiteLLMUser(userId) {
+  if (!userId) return getDefaultLiteLLMUser();
+
+  // Check cache first
+  const cached = userEmailCache.get(userId);
+  if (cached && (Date.now() - cached.timestamp) < USER_EMAIL_CACHE_TTL) {
+    return cached.email;
+  }
+
+  try {
+    const { getUserById } = require('../db/user-db-service');
+    const user = await getUserById(userId);
+    const email = user?.email || getDefaultLiteLLMUser();
+
+    // Cache the result
+    userEmailCache.set(userId, { email, timestamp: Date.now() });
+
+    return email;
+  } catch (error) {
+    logger.warn('[AI] Failed to resolve user email for LiteLLM, using default: %s', error.message);
+    return getDefaultLiteLLMUser();
+  }
 }
 
 /**
@@ -536,11 +571,15 @@ function getProviderConfig(providerId) {
  * @param {string} params.userId - User ID for cost tracking (optional)
  * @param {string} params.organizationId - Organization ID for cost tracking (optional)
  * @param {string} params.screenshotId - Screenshot ID for cost tracking (optional)
+ * @param {string} params.apiCallName - Label for the request type sent as LiteLLM metadata (e.g. 'vision-analysis', 'app-classification') (optional)
  * @returns {Promise<Object>} { response, provider, model }
  */
-async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tokens = 800, isVision = false, reasoningEffort = null, userId = null, organizationId = null, screenshotId = null }) {
+async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tokens = 800, isVision = false, reasoningEffort = null, userId = null, organizationId = null, screenshotId = null, apiCallName = null }) {
   const errors = [];
   const requestType = isVision ? 'vision' : 'text';
+
+  // Resolve the actual user email for LiteLLM tracking (once per request)
+  const litellmUser = await resolveLiteLLMUser(userId);
 
   // Get current provider order (automatically checks for expired cooldowns)
   const providerOrder = getProviderOrder();
@@ -592,7 +631,13 @@ async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tok
         max_tokens
       };
       if (config.useLiteLLMUser) {
-        requestParams.user = getLiteLLMUser();
+        requestParams.user = litellmUser;
+        // Send request type as metadata to LiteLLM for tracking/filtering
+        const callLabel = apiCallName || requestType;
+        requestParams.metadata = {
+          request_type: callLabel,
+          organization_id: organizationId || undefined
+        };
       }
       // Disable Gemini thinking for text-only (e.g. OCR) so token budget goes to the JSON response
       if (reasoningEffort && providerId === 'litellm-gemini') {
@@ -675,7 +720,8 @@ module.exports = {
   getFireworksModel,
   getLiteLLMModel,
   getLiteLLMFallbackModel,
-  getLiteLLMUser,
+  getLiteLLMUser: getDefaultLiteLLMUser,
+  resolveLiteLLMUser,
 
   // Main request function with fallback
   chatCompletionWithFallback
