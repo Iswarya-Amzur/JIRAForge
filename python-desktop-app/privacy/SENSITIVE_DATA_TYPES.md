@@ -70,13 +70,13 @@ These types are detected via Microsoft Presidio library with high-precision reco
 
 | Type | Pattern | Example | Confidence |
 |------|---------|---------|------------|
-| Stripe Live Secret | `sk_live_` + 24+ chars | `sk_live_xxxxxxxxxxxxxxxxxxxxxxxxxx` | 0.95 |
-| Stripe Live Public | `pk_live_` + 24+ chars | `pk_live_xxxxxxxxxxxxxxxxxxxxxxxxxx` | 0.95 |
-| Twilio Account SID | `AC` + 32 hex chars | `ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` | 0.95 |
-| Twilio Auth Token | 32 hex after `auth_token=` | `twilio_auth_token=xxxxxxxxxxxxxxx` | 0.90 |
-| SendGrid API Key | `SG.` + base64 | `SG.xxxxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` | 0.95 |
-| Mailchimp API Key | Key + datacenter | `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-us1` | 0.90 |
-| Mailgun API Key | `key-` + 32 hex | `key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` | 0.90 |
+| Stripe Live Secret | `sk_live_` + 24+ chars | `sk_live_[REDACTED_EXAMPLE]` | 0.95 |
+| Stripe Live Public | `pk_live_` + 24+ chars | `pk_live_[REDACTED_EXAMPLE]` | 0.95 |
+| Twilio Account SID | `AC` + 32 hex chars | `AC[32_HEX_CHARS]` | 0.95 |
+| Twilio Auth Token | 32 hex after `auth_token=` | `twilio_auth_token=[32_HEX]` | 0.90 |
+| SendGrid API Key | `SG.` + base64 | `SG.[BASE64_STRING].[BASE64_STRING]` | 0.95 |
+| Mailchimp API Key | Key + datacenter | `[32_CHARS]-us1` | 0.90 |
+| Mailgun API Key | `key-` + 32 hex | `key-[32_HEX_CHARS]` | 0.90 |
 
 ### OAuth & Authentication
 
