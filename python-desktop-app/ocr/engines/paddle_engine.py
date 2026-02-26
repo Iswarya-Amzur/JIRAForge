@@ -30,8 +30,9 @@ def _apply_platform_safe_runtime_defaults():
     """
     import os
     cpu_count = os.cpu_count() or 4
-    # Use half of available cores, min 2, max 4 for balanced performance
-    default_threads = str(min(4, max(2, cpu_count // 2)))
+    # Use quarter of available cores, min 1, max 2 — OCR runs on a low-priority
+    # background thread now, so fewer inference threads reduces CPU saturation.
+    default_threads = str(min(2, max(1, cpu_count // 4)))
     
     def _detect_paddle_gpu_support():
         """Best-effort GPU capability check without hard failing startup."""
