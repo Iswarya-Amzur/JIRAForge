@@ -46,31 +46,34 @@ class PrivacyConfig:
     
     # Detection settings
     min_confidence: float = 0.7
-    detect_pii: bool = False           # Presidio PII (names, emails, etc.) - disabled by default
+    detect_pii: bool = True            # Presidio PII detection - ENABLED for structured data
     detect_secrets: bool = False       # detect-secrets library - disabled (too many false positives)
     detect_custom_patterns: bool = True  # Custom patterns (passwords, API keys) - always on
     
     # PII types to detect (Presidio entity names)
+    # Only high-precision entity types enabled to minimize false positives
     pii_types: List[str] = field(default_factory=lambda: [
-        'CREDIT_CARD',
-        'CRYPTO',
-        'EMAIL_ADDRESS',
-        'IBAN_CODE',
-        'IP_ADDRESS',
-        'PHONE_NUMBER',
-        'US_SSN',
-        'US_BANK_NUMBER',
-        'US_DRIVER_LICENSE',
-        'US_PASSPORT',
-        'NRP',  # National Registration Number
-        'MEDICAL_LICENSE',
-        'URL',
-        # Custom types added by our recognizers
+        # Financial & Identity (High precision - Presidio)
+        'CREDIT_CARD',          # Credit card numbers with Luhn validation
+        'PHONE_NUMBER',         # Phone numbers in international formats
+        'IP_ADDRESS',           # IPv4 and IPv6 addresses
+        'US_BANK_NUMBER',       # US bank account numbers
+        'US_DRIVER_LICENSE',    # US driver's license numbers
+        'US_PASSPORT',          # US passport numbers
+        'IBAN_CODE',            # International Bank Account Numbers
+        'CRYPTO',               # Cryptocurrency wallet addresses
+        'NRP',                  # National Registration Numbers
+        'MEDICAL_LICENSE',      # Medical license numbers
+        # Custom types added by our recognizers (in custom_patterns.py)
         'PASSWORD',
         'API_KEY',
         'PRIVATE_KEY',
         'CONNECTION_STRING',
         'BEARER_TOKEN',
+        'OAUTH_SECRET',
+        'INTERNAL_IP',
+        'DATABASE_PASSWORD',
+        'ENCRYPTION_KEY',
     ])
     
     # Redaction settings

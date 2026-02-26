@@ -6155,27 +6155,28 @@ class TimeTracker:
                     print(f"[UNKNOWN] {app_name} — OCR retry succeeded, using retry text")
             
             if classification == 'unknown':
-                # For browsers, key by (app_name, domain) so different sites can be classified separately
+                # For browsers, key by (app_name, domain, title_key) so different pages can be classified separately
                 # For non-browsers, key by app_name only
                 app_lower = app_name.lower()
                 if app_lower in BROWSER_PROCESSES:
-                    # Extract domain-like identifier from window title for browsers
+                    # Extract domain and normalized title for per-page classification
                     domain = self._extract_domain_from_title(window_title)
-                    app_key = f"{app_lower}|{domain}" if domain else app_lower
+                    title_key = self._extract_title_key_for_classification(window_title, domain)
+                    app_key = f"{app_lower}|{domain}|{title_key}" if domain else f"{app_lower}|{title_key}"
                 else:
                     app_key = app_lower
                 
                 if app_key not in self._unknown_apps_classified:
-                    # First time seeing this app/domain — send to AI for classification suggestion
+                    # First time seeing this app/page — send to AI for classification suggestion
                     self._unknown_apps_classified.add(app_key)
-                    print(f"[UNKNOWN] {app_name} — sending to AI server for classification")
+                    print(f"[UNKNOWN] {app_name} — sending to AI server for classification (key: {app_key[:60]})")
                     threading.Thread(
                         target=self._classify_unknown_app_async,
                         args=(app_name, window_title, ocr_text),
                         daemon=True
                     ).start()
                 else:
-                    print(f"[UNKNOWN] {app_name} — already sent to AI server, skipping")
+                    print(f"[UNKNOWN] {app_name} — already sent to AI server, skipping (key: {app_key[:60]})")
             else:
                 print(f"[PROD] {app_name} — {window_title[:50]}")
 
@@ -6245,6 +6246,58 @@ class TimeTracker:
         except Exception as e:
             print(f"[WARN] Failed to classify unknown app {app_name}: {e}")
             print(f"[INFO] Keeping {app_name} as unknown for project admin classification")
+
+    def _extract_title_key_for_classification(self, window_title, domain=''):
+        """Extract a normalized title key for per-page classification deduplication.
+        
+        This extracts the meaningful page title (before the site name) and normalizes it
+        so that the same content gets the same key, even with minor variations.
+        
+        Examples:
+            "AI Tutorial - YouTube" (domain=youtube) -> "ai_tutorial"
+            "Movie Song - YouTube" (domain=youtube) -> "movie_song"
+            "GitHub - AmzurATG/JIRAForge" (domain=github) -> "amzuratg_jiraforge"
+            "Stack Overflow - How to fix bug" -> "how_to_fix_bug"
+            "Google Search" -> "search"
+        
+        Returns:
+            str: Normalized title key (lowercase, alphanumeric + underscores, max 50 chars)
+        """
+        if not window_title:
+            return 'untitled'
+        
+        title_lower = window_title.lower().strip()
+        
+        # Common separators between page title and site name
+        separators = [' - ', ' | ', ' – ', ' — ', ' : ', ' · ']
+        
+        # Try to extract the page title (content before the site name)
+        page_title = title_lower
+        for sep in separators:
+            if sep in title_lower:
+                parts = title_lower.split(sep)
+                # Site name is usually at the end (e.g., "Video - YouTube")
+                # or at the beginning (e.g., "GitHub - Project")
+                if domain:
+                    # Find which part contains the domain and use the other part(s)
+                    non_domain_parts = [p.strip() for p in parts if domain not in p]
+                    if non_domain_parts:
+                        page_title = ' '.join(non_domain_parts)
+                        break
+                else:
+                    # No domain hint — use the longer part (likely the content)
+                    page_title = max(parts, key=len).strip()
+                    break
+        
+        # Normalize: keep only alphanumeric and spaces, then convert spaces to underscores
+        normalized = re.sub(r'[^a-z0-9\s]', '', page_title)
+        normalized = re.sub(r'\s+', '_', normalized.strip())
+        
+        # Truncate to reasonable length (avoid huge keys)
+        if len(normalized) > 50:
+            normalized = normalized[:50].rsplit('_', 1)[0]  # Don't cut mid-word
+        
+        return normalized if normalized else 'untitled'
 
     def _extract_domain_from_title(self, window_title):
         """Extract domain/site identifier from browser window title.

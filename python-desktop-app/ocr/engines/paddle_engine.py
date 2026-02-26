@@ -25,20 +25,26 @@ def _apply_platform_safe_runtime_defaults():
     user/environment has not explicitly set a value.
 
     - Windows: known to hit intermittent oneDNN/MKL primitive execution issues
-      in some CPU environments. Disable MKLDNN and use a single OMP thread.
+      in some CPU environments. Disable MKLDNN but allow multi-threading.
     - Linux/macOS: keep defaults unless user configured values.
     """
+    import os
+    cpu_count = os.cpu_count() or 4
+    # Use half of available cores, min 2, max 4 for balanced performance
+    default_threads = str(min(4, max(2, cpu_count // 2)))
+    
     if sys.platform == 'win32':
         os.environ.setdefault('OCR_PADDLE_USE_GPU', 'false')
         os.environ.setdefault('FLAGS_use_mkldnn', '0')
-        os.environ.setdefault('OMP_NUM_THREADS', '1')
+        # Use multiple threads for reasonable performance (was 1, too slow)
+        os.environ.setdefault('OMP_NUM_THREADS', default_threads)
         logger.info(
-            "Applied Windows Paddle safe defaults "
-            "(OCR_PADDLE_USE_GPU=false, FLAGS_use_mkldnn=0, OMP_NUM_THREADS=1)"
+            f"Applied Windows Paddle defaults "
+            f"(OCR_PADDLE_USE_GPU=false, FLAGS_use_mkldnn=0, OMP_NUM_THREADS={default_threads})"
         )
     elif sys.platform == 'darwin':
-        # Keep compatible, conservative threading on macOS.
-        os.environ.setdefault('OMP_NUM_THREADS', '1')
+        # Keep compatible threading on macOS.
+        os.environ.setdefault('OMP_NUM_THREADS', default_threads)
     else:
         # Linux and other platforms: no forced MKLDNN/GPU overrides.
         pass
