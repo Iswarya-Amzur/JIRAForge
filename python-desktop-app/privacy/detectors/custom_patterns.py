@@ -183,12 +183,161 @@ class CustomPatternDetector(BaseDetector):
             0.8
         ),
         
-        # Email addresses (for reference - usually OK but context-dependent)
-        # (
-        #     r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
-        #     'EMAIL_ADDRESS',
-        #     0.7
-        # ),
+        # ============================================
+        # OAuth & Authentication Secrets
+        # ============================================
+        
+        # OAuth Client Secret
+        (
+            r'(?i)client[_-]?secret[\s]*[=:]+[\s]*["\']?([A-Za-z0-9_-]{20,})["\']?',
+            'OAUTH_SECRET',
+            0.9
+        ),
+        
+        # Azure AD Tenant ID
+        (
+            r'(?i)(?:tenant[_-]?id|azure[_-]?tenant)[\s]*[=:]+[\s]*["\']?([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})["\']?',
+            'API_KEY',
+            0.85
+        ),
+        
+        # Azure AD Client ID
+        (
+            r'(?i)(?:client[_-]?id|app[_-]?id|application[_-]?id)[\s]*[=:]+[\s]*["\']?([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})["\']?',
+            'API_KEY',
+            0.8
+        ),
+        
+        # ============================================
+        # Cloud Service API Keys
+        # ============================================
+        
+        # Firebase API Key (starts with AIza - same as Google)
+        # Already covered by Google API Key pattern
+        
+        # Firebase Config object
+        (
+            r'(?i)firebase[\s]*[=:]+[\s]*\{[^}]*apiKey[^}]*\}',
+            'API_KEY',
+            0.85
+        ),
+        
+        # Twilio Account SID
+        (
+            r'\b(AC[a-f0-9]{32})\b',
+            'API_KEY',
+            0.95
+        ),
+        
+        # Twilio Auth Token
+        (
+            r'(?i)(?:twilio[_-]?auth[_-]?token|auth[_-]?token)[\s]*[=:]+[\s]*["\']?([a-f0-9]{32})["\']?',
+            'API_KEY',
+            0.9
+        ),
+        
+        # SendGrid API Key
+        (
+            r'\b(SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{32,})\b',
+            'API_KEY',
+            0.95
+        ),
+        
+        # Mailchimp API Key
+        (
+            r'\b([a-f0-9]{32}-us[0-9]{1,2})\b',
+            'API_KEY',
+            0.9
+        ),
+        
+        # Mailgun API Key
+        (
+            r'(?i)(?:mailgun[_-]?api[_-]?key|mailgun[_-]?key)[\s]*[=:]+[\s]*["\']?(key-[a-f0-9]{32})["\']?',
+            'API_KEY',
+            0.9
+        ),
+        
+        # Heroku API Key (UUID format with context)
+        (
+            r'(?i)heroku[_-]?api[_-]?key[\s]*[=:]+[\s]*["\']?([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})["\']?',
+            'API_KEY',
+            0.9
+        ),
+        
+        # ============================================
+        # Package Manager Tokens
+        # ============================================
+        
+        # NPM Token
+        (
+            r'\b(npm_[A-Za-z0-9]{36})\b',
+            'API_KEY',
+            0.95
+        ),
+        
+        # PyPI Token
+        (
+            r'\b(pypi-[A-Za-z0-9_-]{50,})\b',
+            'API_KEY',
+            0.95
+        ),
+        
+        # Docker Registry Auth (base64 encoded)
+        (
+            r'(?i)(?:docker[_-]?auth|registry[_-]?auth)[\s]*[=:]+[\s]*["\']?([A-Za-z0-9+/]{40,}=*)["\']?',
+            'API_KEY',
+            0.85
+        ),
+        
+        # ============================================
+        # Database & Infrastructure Secrets
+        # ============================================
+        
+        # Database Password (various env var names)
+        (
+            r'(?i)(?:db[_-]?password|db[_-]?pass|database[_-]?password|mysql[_-]?pwd|mysql[_-]?password|postgres[_-]?password|pg[_-]?password|sql[_-]?password|redis[_-]?password|mongo[_-]?password)[\s]*[=:]+[\s]*["\']?([^\s"\',;]+)["\']?',
+            'DATABASE_PASSWORD',
+            0.9
+        ),
+        
+        # Encryption Key
+        (
+            r'(?i)(?:encryption[_-]?key|aes[_-]?key|secret[_-]?key|crypto[_-]?key|cipher[_-]?key)[\s]*[=:]+[\s]*["\']?([A-Za-z0-9+/=]{16,})["\']?',
+            'ENCRYPTION_KEY',
+            0.85
+        ),
+        
+        # SSH URLs with password (ssh://user:pass@host)
+        (
+            r'ssh://[^:\s]+:([^@\s]+)@[^\s]+',
+            'PASSWORD',
+            0.9
+        ),
+        
+        # ============================================
+        # Internal Network Information
+        # ============================================
+        
+        # Internal IP - Class A (10.x.x.x)
+        (
+            r'\b(10\.(?:[0-9]{1,3}\.){2}[0-9]{1,3})\b',
+            'INTERNAL_IP',
+            0.75
+        ),
+        
+        # Internal IP - Class B (172.16-31.x.x)
+        (
+            r'\b(172\.(?:1[6-9]|2[0-9]|3[0-1])\.(?:[0-9]{1,3}\.)[0-9]{1,3})\b',
+            'INTERNAL_IP',
+            0.75
+        ),
+        
+        # Internal IP - Class C (192.168.x.x)
+        (
+            r'\b(192\.168\.(?:[0-9]{1,3}\.)[0-9]{1,3})\b',
+            'INTERNAL_IP',
+            0.75
+        ),
     ]
     
     def __init__(self, config=None):
