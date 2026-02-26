@@ -222,6 +222,7 @@ a = Analysis(
         'en_core_web_sm',
         'en_core_web_md',
         'en_core_web_lg',
+        'ocr.engines.easyocr_engine',
         'ocr.engines.mock_engine',
         'ocr.engines.demo_engine',
         # SECURITY: Exclude .env file to prevent credential leaks

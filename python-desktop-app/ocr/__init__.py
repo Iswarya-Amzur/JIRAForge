@@ -64,8 +64,9 @@ __all__ = [
     # Engine implementations
     'PaddleOCREngine',
     'TesseractEngine',
-    'MockOCREngine',
-    
     # Version
     '__version__',
 ]
+
+if MockOCREngine is not None:
+    __all__.append('MockOCREngine')
