@@ -48,8 +48,7 @@ export function registerWorklogResolvers(resolver) {
   resolver.define('syncMyWorklogs', async (req) => {
     const { accountId, cloudId } = req.context;
     try {
-      const result = await syncCurrentUserWorklogs(accountId, cloudId);
-      return { success: true, ...result };
+      return await syncCurrentUserWorklogs(accountId, cloudId);
     } catch (error) {
       console.error('[WorklogResolver] syncMyWorklogs error:', error);
       return { success: false, error: error.message };

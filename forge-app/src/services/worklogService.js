@@ -6,6 +6,7 @@
 import { createJiraWorklog, updateJiraWorklog, deleteJiraWorklog, deleteJiraWorklogAsApp } from '../utils/jira.js';
 import { getSupabaseConfig, supabaseRequest, getOrCreateOrganization, getOrCreateUser } from '../utils/supabase.js';
 import { formatJiraDate } from '../utils/formatters.js';
+import { isValidIssueKey } from '../utils/validators.js';
 
 const MIN_SYNC_SECONDS = 60;
 
@@ -110,11 +111,13 @@ export async function syncCurrentUserWorklogs(accountId, cloudId) {
   // Fetch existing worklog_sync mappings for this user
   let existingMappings = [];
   if (entries.length > 0) {
-    const issueKeys = entries.map(e => e.issueKey);
-    existingMappings = await supabaseRequest(
-      supabaseConfig,
-      `worklog_sync?organization_id=eq.${organizationId}&user_id=eq.${userId}&issue_key=in.(${issueKeys.join(',')})&select=id,issue_key,jira_worklog_id,last_synced_seconds,created_as_user`
-    ) || [];
+    const issueKeys = entries.map(e => e.issueKey).filter(isValidIssueKey);
+    if (issueKeys.length > 0) {
+      existingMappings = await supabaseRequest(
+        supabaseConfig,
+        `worklog_sync?organization_id=eq.${organizationId}&user_id=eq.${userId}&issue_key=in.(${issueKeys.join(',')})&select=id,issue_key,jira_worklog_id,last_synced_seconds,created_as_user`
+      ) || [];
+    }
   }
 
   const mappingByKey = {};

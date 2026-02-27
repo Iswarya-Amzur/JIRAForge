@@ -17,6 +17,7 @@ import {
 } from '../utils/jira.js';
 import { getSupabaseConfig, supabaseRequest } from '../utils/supabase.js';
 import { formatJiraDate } from '../utils/formatters.js';
+import { isValidIssueKey } from '../utils/validators.js';
 
 const SYNC_BATCH_LIMIT = 10; // Max issues per user per run
 const MIN_SYNC_SECONDS = 60;
@@ -198,12 +199,14 @@ async function syncUserIssues(supabaseConfig, organizationId, userId, entries) {
   }
 
   // Fetch existing mappings for this user (include created_as_user for migration detection)
-  const issueKeys = entries.map(e => e.issueKey);
+  const issueKeys = entries.map(e => e.issueKey).filter(isValidIssueKey);
   const keysList = issueKeys.join(',');
-  const existingMappings = await supabaseRequest(
-    supabaseConfig,
-    `worklog_sync?organization_id=eq.${organizationId}&user_id=eq.${userId}&issue_key=in.(${keysList})&select=id,issue_key,jira_worklog_id,last_synced_seconds,created_as_user`
-  );
+  const existingMappings = keysList
+    ? await supabaseRequest(
+        supabaseConfig,
+        `worklog_sync?organization_id=eq.${organizationId}&user_id=eq.${userId}&issue_key=in.(${keysList})&select=id,issue_key,jira_worklog_id,last_synced_seconds,created_as_user`
+      )
+    : [];
 
   const mappingByKey = {};
   if (existingMappings && Array.isArray(existingMappings)) {
