@@ -3325,7 +3325,6 @@ class AppClassificationManager:
 
         except Exception as e:
             print(f"[WARN] Failed to sync classifications from Supabase: {e}")
-            traceback.print_exc()
 
 
 class ActiveSessionManager:
@@ -5650,22 +5649,27 @@ class TimeTracker:
             dict: Tracking settings for the project
         """
         # Use project key or default to current
-        pk = project_key or self.current_project_key
-        
+        pk = project_key if project_key is not None else self.current_project_key
+
+        # When pk is None, fetch_tracking_settings stores results under '_org_default'.
+        # We must use the same key for both the cache check and the return lookup —
+        # using pk=None directly would cause a key mismatch and discard fetched results.
+        cache_key_lookup = pk if pk is not None else '_org_default'
+
         # Check if we have cached settings for this project
-        if pk and pk in self.tracking_settings_cache:
+        if cache_key_lookup in self.tracking_settings_cache:
             # Check if cache is still valid
-            last_fetch = self.tracking_settings_last_fetch.get(pk)
+            last_fetch = self.tracking_settings_last_fetch.get(cache_key_lookup)
             if last_fetch:
                 time_since_fetch = time.time() - last_fetch
                 if time_since_fetch < self.tracking_settings_cache_ttl:
-                    return self.tracking_settings_cache[pk]
-        
+                    return self.tracking_settings_cache[cache_key_lookup]
+
         # If no cache or expired, fetch fresh settings
         self.fetch_tracking_settings(pk)
-        
+
         # Return cached settings or defaults
-        return self.tracking_settings_cache.get(pk, self.default_tracking_settings.copy())
+        return self.tracking_settings_cache.get(cache_key_lookup, self.default_tracking_settings.copy())
     
     @property
     def tracking_settings(self):
@@ -5675,7 +5679,13 @@ class TimeTracker:
     def update_current_project(self):
         """Check if project has changed and reload settings if needed"""
         new_project_key = self.get_user_project_key()
-        
+
+        # When offline, Jira is unreachable so get_user_project_key() returns None
+        # (empty issues/projects list). Do not treat that as a real project change —
+        # retain the current project to keep tracking attribution intact.
+        if new_project_key is None and not self.offline_manager.is_online:
+            return False
+
         if new_project_key != self.current_project_key:
             old_project = self.current_project_key
             self.current_project_key = new_project_key
@@ -5814,7 +5824,12 @@ class TimeTracker:
 
         except Exception as e:
             print(f"[WARN] Failed to fetch tracking settings: {e}")
-            # Return defaults on error
+            # Cache the defaults with a 60-second retry window so we stop hitting
+            # the network on every loop iteration while offline. The TTL math sets
+            # last_fetch to (TTL - 60) seconds ago, meaning the cache expires and
+            # retries after 60 seconds instead of immediately on the next call.
+            self.tracking_settings_cache[cache_key] = self.default_tracking_settings.copy()
+            self.tracking_settings_last_fetch[cache_key] = time.time() - (self.tracking_settings_cache_ttl - 60)
             return self.default_tracking_settings
 
     # ============================================================================
@@ -6394,6 +6409,13 @@ class TimeTracker:
 
     def _maybe_classify_unknown_app(self, app_name, window_title, ocr_text):
         """Check dedup key and fire async AI classification if this is a new unknown app."""
+        # Skip AI call while offline — it will fail and the app_key would be locked
+        # permanently in the dedup set, preventing reclassification when online.
+        # By returning before adding to the set, the next window switch when online
+        # will trigger a fresh classification attempt naturally.
+        if not self.offline_manager.is_online:
+            return
+
         app_lower = app_name.lower()
         if app_lower in BROWSER_PROCESSES:
             domain = self._extract_domain_from_title(window_title)
