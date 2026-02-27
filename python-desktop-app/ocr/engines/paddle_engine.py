@@ -33,14 +33,31 @@ def _apply_platform_safe_runtime_defaults():
     # Use half of available cores, min 2, max 4 for balanced performance
     default_threads = str(min(4, max(2, cpu_count // 2)))
     
+    def _detect_paddle_gpu_support():
+        """Best-effort GPU capability check without hard failing startup."""
+        try:
+            import paddle  # type: ignore
+            if not paddle.is_compiled_with_cuda():
+                return False
+            try:
+                return paddle.device.cuda.device_count() > 0
+            except Exception:
+                # If device count probe fails, still allow CUDA build as signal.
+                return True
+        except Exception:
+            return False
+
     if sys.platform == 'win32':
-        os.environ.setdefault('OCR_PADDLE_USE_GPU', 'false')
+        # Auto-enable GPU on supported systems unless explicitly overridden.
+        default_use_gpu = 'true' if _detect_paddle_gpu_support() else 'false'
+        os.environ.setdefault('OCR_PADDLE_USE_GPU', default_use_gpu)
         os.environ.setdefault('FLAGS_use_mkldnn', '0')
         # Use multiple threads for reasonable performance (was 1, too slow)
         os.environ.setdefault('OMP_NUM_THREADS', default_threads)
         logger.info(
             f"Applied Windows Paddle defaults "
-            f"(OCR_PADDLE_USE_GPU=false, FLAGS_use_mkldnn=0, OMP_NUM_THREADS={default_threads})"
+            f"(OCR_PADDLE_USE_GPU={os.environ.get('OCR_PADDLE_USE_GPU')}, "
+            f"FLAGS_use_mkldnn=0, OMP_NUM_THREADS={default_threads})"
         )
     elif sys.platform == 'darwin':
         # Keep compatible threading on macOS.

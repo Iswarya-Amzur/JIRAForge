@@ -62,6 +62,28 @@ numpy==1.26.4
 pytesseract==0.3.10
 
 # =============================================================================
+# Privacy & Security Dependencies
+# =============================================================================
+# These libraries detect and mask sensitive data (passwords, API keys, PII)
+# in OCR-extracted text before sending to AI analysis.
+#
+# Configuration in .env or privacy/config.py:
+#   PRIVACY_FILTER_ENABLED=true
+#   PRIVACY_DETECT_PII=true
+#   PRIVACY_MIN_CONFIDENCE=0.7
+# =============================================================================
+
+# Microsoft Presidio - PII detection and anonymization
+presidio-analyzer>=2.2.0
+presidio-anonymizer>=2.2.0
+
+# SpaCy NLP removed from desktop build to reduce package size.
+# Presidio detector gracefully degrades when spaCy/NLP backend is unavailable.
+
+# detect-secrets - Secret detection (optional, currently disabled)
+# Uncomment if needed: detect-secrets>=1.4.0
+
+# =============================================================================
 # Platform-Specific Notes
 # =============================================================================
 # 
