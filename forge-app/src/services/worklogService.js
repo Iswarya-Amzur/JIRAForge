@@ -37,7 +37,7 @@ export async function createWorklog(issueKey, timeSpentSeconds, startedAt) {
  *
  * @param {string} accountId - Current user's Atlassian account ID
  * @param {string} cloudId   - Jira Cloud ID
- * @returns {Promise<{success: boolean, synced: number, errors: number}>}
+ * @returns {Promise<{success: boolean, synced?: number, errors?: number, error?: string, message?: string}>}
  */
 export async function syncCurrentUserWorklogs(accountId, cloudId) {
   const supabaseConfig = await getSupabaseConfig(accountId);
@@ -146,11 +146,21 @@ export async function syncCurrentUserWorklogs(accountId, cloudId) {
     const orphaned = allMappings.filter(m => !activeIssueKeys.has(m.issue_key));
     for (const orphan of orphaned) {
       try {
-        const deleteResp = await deleteJiraWorklog(orphan.issue_key, orphan.jira_worklog_id);
-        if (deleteResp.status !== 204 && deleteResp.status !== 404) {
-          console.warn(`[UserSync] Cleanup: unexpected HTTP ${deleteResp.status} for ${orphan.issue_key}`);
+        let deleteResp = await deleteJiraWorklog(orphan.issue_key, orphan.jira_worklog_id);
+
+        if (deleteResp.status === 403) {
+          // User lacks DELETE_ALL_WORKLOGS — retry as app (which owns the worklog)
+          console.log(`[UserSync] Cleanup: user delete 403 for ${orphan.issue_key}, retrying as app`);
+          deleteResp = await deleteJiraWorklogAsApp(orphan.issue_key, orphan.jira_worklog_id);
         }
-        await supabaseRequest(supabaseConfig, `worklog_sync?id=eq.${orphan.id}`, { method: 'DELETE' });
+
+        if (deleteResp.status === 204 || deleteResp.status === 404) {
+          // Worklog deleted (or already gone) — safe to remove mapping
+          await supabaseRequest(supabaseConfig, `worklog_sync?id=eq.${orphan.id}`, { method: 'DELETE' });
+        } else {
+          // Delete failed — keep the mapping so we can retry next session
+          console.warn(`[UserSync] Cleanup: delete HTTP ${deleteResp.status} for ${orphan.issue_key}, keeping mapping`);
+        }
       } catch (err) {
         console.error(`[UserSync] Cleanup error for ${orphan.issue_key}:`, err.message);
       }

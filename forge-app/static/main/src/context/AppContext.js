@@ -34,12 +34,18 @@ export function AppProvider({ children }) {
   useEffect(() => {
     const COOLDOWN_KEY = 'tt_worklog_sync_last_run';
     const COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
-    const lastRun = localStorage.getItem(COOLDOWN_KEY);
-    if (!lastRun || Date.now() - parseInt(lastRun, 10) > COOLDOWN_MS) {
-      localStorage.setItem(COOLDOWN_KEY, String(Date.now()));
-      invoke('syncMyWorklogs').catch(err =>
-        console.warn('[WorklogSync] Background sync failed:', err)
-      );
+    try {
+      const lastRun = localStorage.getItem(COOLDOWN_KEY);
+      const lastRunTs = parseInt(lastRun, 10);
+      const cooldownExpired = !Number.isFinite(lastRunTs) || Date.now() - lastRunTs > COOLDOWN_MS;
+      if (cooldownExpired) {
+        localStorage.setItem(COOLDOWN_KEY, String(Date.now()));
+        invoke('syncMyWorklogs').catch(err =>
+          console.warn('[WorklogSync] Background sync failed:', err)
+        );
+      }
+    } catch (err) {
+      console.warn('[WorklogSync] localStorage unavailable, skipping background sync:', err);
     }
   }, []);
 
