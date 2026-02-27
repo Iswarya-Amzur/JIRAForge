@@ -3,7 +3,7 @@
  * Business logic for creating Jira worklogs and syncing in user context.
  */
 
-import { createJiraWorklog, updateJiraWorklog, deleteJiraWorklog } from '../utils/jira.js';
+import { createJiraWorklog, updateJiraWorklog, deleteJiraWorklog, deleteJiraWorklogAsApp } from '../utils/jira.js';
 import { getSupabaseConfig, supabaseRequest, getOrCreateOrganization, getOrCreateUser } from '../utils/supabase.js';
 import { formatJiraDate } from '../utils/formatters.js';
 
@@ -176,10 +176,16 @@ async function syncSingleEntryAsCurrentUser(supabaseConfig, organizationId, user
     // Worklog was created by the app (scheduled trigger) — delete and recreate as user
     if (existingMapping.created_as_user === false) {
       console.log(`[UserSync] Migrating app-authored worklog for ${issueKey} to user name`);
-      const deleteResp = await deleteJiraWorklog(issueKey, existingMapping.jira_worklog_id);
+      let deleteResp = await deleteJiraWorklog(issueKey, existingMapping.jira_worklog_id);
+
+      if (deleteResp.status === 403) {
+        // User lacks DELETE_ALL_WORKLOGS — the worklog is owned by the app, so delete as app
+        console.log(`[UserSync] User delete returned 403 for ${issueKey}, retrying as app`);
+        deleteResp = await deleteJiraWorklogAsApp(issueKey, existingMapping.jira_worklog_id);
+      }
 
       if (deleteResp.status !== 204 && deleteResp.status !== 404) {
-        // Cannot delete — leave as-is and retry next session
+        // Still cannot delete — leave as-is and retry next session
         console.warn(`[UserSync] Cannot migrate ${issueKey}: delete returned HTTP ${deleteResp.status}`);
         return false;
       }
