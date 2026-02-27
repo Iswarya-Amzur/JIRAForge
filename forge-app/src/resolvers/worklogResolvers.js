@@ -3,7 +3,7 @@
  * Resolver definitions for Jira worklog creation endpoints
  */
 
-import { createWorklog } from '../services/worklogService.js';
+import { createWorklog, syncCurrentUserWorklogs } from '../services/worklogService.js';
 import { runScheduledWorklogSync } from '../services/scheduledWorklogSync.js';
 import { isJiraAdmin } from '../utils/jira.js';
 
@@ -31,6 +31,28 @@ export function registerWorklogResolvers(resolver) {
         success: false,
         error: error.message
       };
+    }
+  });
+
+  /**
+   * Sync worklogs for the CURRENT USER in their live Jira session.
+   *
+   * Uses api.asUser() with no accountId arg, so Jira records the worklog
+   * author as the actual user (not the app).  Any existing worklogs that
+   * were previously created by the app are deleted and recreated under the
+   * user's real name.
+   *
+   * Called automatically when the user opens the project page (with a
+   * 15-minute client-side cooldown to avoid excessive calls).
+   */
+  resolver.define('syncMyWorklogs', async (req) => {
+    const { accountId, cloudId } = req.context;
+    try {
+      const result = await syncCurrentUserWorklogs(accountId, cloudId);
+      return { success: true, ...result };
+    } catch (error) {
+      console.error('[WorklogResolver] syncMyWorklogs error:', error);
+      return { success: false, error: error.message };
     }
   });
 

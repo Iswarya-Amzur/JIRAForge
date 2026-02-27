@@ -29,6 +29,20 @@ export function AppProvider({ children }) {
     loadUserPermissions();
   }, []);
 
+  // Sync worklogs for the current user on mount (fire-and-forget, 15-min cooldown).
+  // Runs in the user's live Jira session so worklogs appear under their real name.
+  useEffect(() => {
+    const COOLDOWN_KEY = 'tt_worklog_sync_last_run';
+    const COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes
+    const lastRun = localStorage.getItem(COOLDOWN_KEY);
+    if (!lastRun || Date.now() - parseInt(lastRun, 10) > COOLDOWN_MS) {
+      localStorage.setItem(COOLDOWN_KEY, String(Date.now()));
+      invoke('syncMyWorklogs').catch(err =>
+        console.warn('[WorklogSync] Background sync failed:', err)
+      );
+    }
+  }, []);
+
   const loadUserPermissions = async () => {
     try {
       const result = await invoke('getUserPermissions');
