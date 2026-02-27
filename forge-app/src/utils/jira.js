@@ -6,17 +6,28 @@
 import api, { route } from '@forge/api';
 import { JQL_ACTIVE_STATUSES, MAX_JIRA_SEARCH_RESULTS } from '../config/constants.js';
 
-/** ADF comment for worklogs created by the app — shown below the author like "Uploaded from Time Doctor 2" */
-const WORKLOG_SOURCE_COMMENT = {
-  type: 'doc',
-  version: 1,
-  content: [
-    {
-      type: 'paragraph',
-      content: [{ type: 'text', text: 'Uploaded from Time Tracker' }]
-    }
-  ]
-};
+/**
+ * Build ADF comment for a worklog.
+ * When displayName is provided (scheduled sync fallback), the comment reads
+ * "Uploaded from Time Tracker — Iswarya Kolimalla" so the actual person is
+ * identifiable even when the Jira worklog author shows as the app.
+ * @param {string|null} displayName - User's display name (optional)
+ */
+function buildWorklogComment(displayName) {
+  const text = displayName
+    ? `Uploaded from Time Tracker — ${displayName}`
+    : 'Uploaded from Time Tracker';
+  return {
+    type: 'doc',
+    version: 1,
+    content: [
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', text }]
+      }
+    ]
+  };
+}
 
 /**
  * Get user's assigned issues from Jira
@@ -163,12 +174,30 @@ export async function createJiraWorklog(issueKey, timeSpentSeconds, startedAt) {
       body: JSON.stringify({
         timeSpentSeconds,
         started: startedAt,
-        comment: WORKLOG_SOURCE_COMMENT
+        comment: buildWorklogComment(null)
       })
     }
   );
 
   return response.json();
+}
+
+/**
+ * Delete a worklog entry for a Jira issue in the current user's interactive context.
+ * Use this in resolvers (not scheduled triggers) where api.asUser() has the live session.
+ * @param {string} issueKey - Jira issue key (e.g., PROJ-123)
+ * @param {string} worklogId - Worklog ID to delete
+ * @returns {Promise<Response>} Raw response (caller checks status)
+ */
+export async function deleteJiraWorklog(issueKey, worklogId) {
+  const response = await api.asUser().requestJira(
+    route`/rest/api/3/issue/${issueKey}/worklog/${worklogId}?adjustEstimate=leave`,
+    {
+      method: 'DELETE',
+      headers: { 'Accept': 'application/json' }
+    }
+  );
+  return response;
 }
 
 /**
@@ -203,7 +232,7 @@ export async function updateJiraWorklog(issueKey, worklogId, timeSpentSeconds) {
  * @param {string} startedAt - ISO timestamp when work started
  * @returns {Promise<Object>} Created worklog response
  */
-export async function createJiraWorklogAsUser(accountId, issueKey, timeSpentSeconds, startedAt) {
+export async function createJiraWorklogAsUser(accountId, issueKey, timeSpentSeconds, startedAt, displayName = null) {
   const response = await api.asUser(accountId).requestJira(
     route`/rest/api/3/issue/${issueKey}/worklog?adjustEstimate=leave`,
     {
@@ -215,7 +244,7 @@ export async function createJiraWorklogAsUser(accountId, issueKey, timeSpentSeco
       body: JSON.stringify({
         timeSpentSeconds,
         started: startedAt,
-        comment: WORKLOG_SOURCE_COMMENT
+        comment: buildWorklogComment(displayName)
       })
     }
   );
@@ -254,7 +283,7 @@ export async function updateJiraWorklogAsUser(accountId, issueKey, worklogId, ti
  * @param {string} startedAt - ISO timestamp when work started
  * @returns {Promise<Object>} Created worklog response
  */
-export async function createJiraWorklogAsApp(issueKey, timeSpentSeconds, startedAt) {
+export async function createJiraWorklogAsApp(issueKey, timeSpentSeconds, startedAt, displayName = null) {
   const response = await api.asApp().requestJira(
     route`/rest/api/3/issue/${issueKey}/worklog?adjustEstimate=leave`,
     {
@@ -266,7 +295,7 @@ export async function createJiraWorklogAsApp(issueKey, timeSpentSeconds, started
       body: JSON.stringify({
         timeSpentSeconds,
         started: startedAt,
-        comment: WORKLOG_SOURCE_COMMENT
+        comment: buildWorklogComment(displayName)
       })
     }
   );

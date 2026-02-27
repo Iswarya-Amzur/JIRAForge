@@ -17,6 +17,7 @@ import {
 } from '../utils/jira.js';
 import { getSupabaseConfig, supabaseRequest } from '../utils/supabase.js';
 import { formatJiraDate } from '../utils/formatters.js';
+import { isValidIssueKey } from '../utils/validators.js';
 
 const SYNC_BATCH_LIMIT = 10; // Max issues per user per run
 const MIN_SYNC_SECONDS = 60;
@@ -182,23 +183,30 @@ async function syncOrganization(supabaseConfig, organizationId) {
  * Sync a single user's issues to Jira worklogs.
  */
 async function syncUserIssues(supabaseConfig, organizationId, userId, entries) {
-  // Fetch user's Atlassian account ID for worklog author attribution (user name instead of app name)
+  // Fetch user's Atlassian account ID and display name.
+  // accountId is used for api.asUser(accountId) impersonation (may not affect authorship in
+  // scheduled trigger context — see syncCurrentUserWorklogs for the reliable user-context path).
+  // displayName is embedded in the worklog comment so the person is identifiable even when
+  // the Jira worklog author shows as the app.
   const userRows = await supabaseRequest(
     supabaseConfig,
-    `users?id=eq.${userId}&select=atlassian_account_id&limit=1`
+    `users?id=eq.${userId}&select=atlassian_account_id,display_name&limit=1`
   );
   const accountId = userRows?.[0]?.atlassian_account_id || null;
+  const displayName = userRows?.[0]?.display_name || null;
   if (!accountId) {
     console.warn(`[ScheduledSync] No atlassian_account_id for user ${userId} — worklogs will show as app`);
   }
 
-  // Fetch existing mappings for this user
-  const issueKeys = entries.map(e => e.issueKey);
+  // Fetch existing mappings for this user (include created_as_user for migration detection)
+  const issueKeys = entries.map(e => e.issueKey).filter(isValidIssueKey);
   const keysList = issueKeys.join(',');
-  const existingMappings = await supabaseRequest(
-    supabaseConfig,
-    `worklog_sync?organization_id=eq.${organizationId}&user_id=eq.${userId}&issue_key=in.(${keysList})&select=id,issue_key,jira_worklog_id,last_synced_seconds`
-  );
+  const existingMappings = keysList
+    ? await supabaseRequest(
+        supabaseConfig,
+        `worklog_sync?organization_id=eq.${organizationId}&user_id=eq.${userId}&issue_key=in.(${keysList})&select=id,issue_key,jira_worklog_id,last_synced_seconds,created_as_user`
+      )
+    : [];
 
   const mappingByKey = {};
   if (existingMappings && Array.isArray(existingMappings)) {
@@ -211,7 +219,7 @@ async function syncUserIssues(supabaseConfig, organizationId, userId, entries) {
   for (const entry of entries) {
     try {
       const mapping = mappingByKey[entry.issueKey];
-      const didSync = await syncSingleEntry(supabaseConfig, organizationId, userId, accountId, entry, mapping);
+      const didSync = await syncSingleEntry(supabaseConfig, organizationId, userId, accountId, displayName, entry, mapping);
       if (didSync) synced++;
     } catch (err) {
       console.error(`[ScheduledSync] Error syncing ${entry.issueKey} for user ${userId}:`, err.message);
@@ -223,11 +231,13 @@ async function syncUserIssues(supabaseConfig, organizationId, userId, entries) {
 }
 
 /**
- * Sync a single user+issue entry to Jira.
- * Uses user impersonation when accountId is available so worklogs show the user's name.
+ * Sync a single user+issue entry to Jira via the scheduled trigger.
+ * Uses api.asUser(accountId) when available (offline impersonation), but in
+ * scheduled trigger context Jira may still record the author as the app.
+ * The displayName is embedded in the worklog comment as a fallback identifier.
  * @returns {boolean} true if an actual Jira API call was made
  */
-async function syncSingleEntry(supabaseConfig, organizationId, userId, accountId, entry, existingMapping) {
+async function syncSingleEntry(supabaseConfig, organizationId, userId, accountId, displayName, entry, existingMapping) {
   const { issueKey, timeTracked, lastWorkedOn } = entry;
 
   if (existingMapping) {
@@ -267,8 +277,8 @@ async function syncSingleEntry(supabaseConfig, organizationId, userId, accountId
   // Uses formatStartedForJira to format the UTC timestamp from the DB into Jira's expected format
   const startedAt = formatStartedForJira(lastWorkedOn);
   const worklogResult = accountId
-    ? await createJiraWorklogAsUser(accountId, issueKey, timeTracked, startedAt)
-    : await createJiraWorklogAsApp(issueKey, timeTracked, startedAt);
+    ? await createJiraWorklogAsUser(accountId, issueKey, timeTracked, startedAt, displayName)
+    : await createJiraWorklogAsApp(issueKey, timeTracked, startedAt, displayName);
 
   if (worklogResult && worklogResult.id) {
     const now = new Date().toISOString();
@@ -284,6 +294,7 @@ async function syncSingleEntry(supabaseConfig, organizationId, userId, accountId
           jira_worklog_id: String(worklogResult.id),
           last_synced_seconds: timeTracked,
           started_at: startedAt,
+          created_as_user: false,  // Scheduled trigger context — will be migrated by syncMyWorklogs
           created_at: now,
           updated_at: now
         }
