@@ -8,6 +8,8 @@ import re
 import sys
 import time
 import json
+import queue
+import atexit
 import threading
 import webbrowser
 import tempfile
@@ -3561,11 +3563,158 @@ class LocalOCRProcessor:
         self._last_ocr_time = 0
         self._min_interval = 3  # seconds between OCR calls
         print("[OCR] LocalOCRProcessor initialized - using dynamic engine selection")
-        
+
         # Log which OCR engines are configured
         primary = os.getenv('OCR_PRIMARY_ENGINE', 'paddle')
         fallback = os.getenv('OCR_FALLBACK_ENGINES', 'tesseract')
         print(f"[OCR] Primary engine: {primary}, Fallback: {fallback}")
+
+        # Async OCR worker infrastructure
+        self._ocr_queue = queue.Queue(maxsize=1)
+        self._ocr_done_event = threading.Event()
+        self._ocr_done_event.set()  # No job in-flight initially
+        self._ocr_worker_thread = threading.Thread(
+            target=self._ocr_worker, daemon=True, name="OCR-Worker"
+        )
+        self._ocr_worker_thread.start()
+        print("[OCR] Async OCR worker thread started")
+
+    def _ocr_worker(self):
+        """Background worker thread that runs OCR inference at below-normal priority."""
+        # Lower thread priority on Windows to reduce UI lag during OCR
+        if sys.platform == 'win32':
+            try:
+                import ctypes
+                handle = ctypes.windll.kernel32.GetCurrentThread()
+                THREAD_PRIORITY_BELOW_NORMAL = -1
+                ctypes.windll.kernel32.SetThreadPriority(handle, THREAD_PRIORITY_BELOW_NORMAL)
+                print("[OCR] Worker thread priority set to BELOW_NORMAL")
+            except Exception as e:
+                print(f"[OCR] Could not lower worker thread priority: {e}")
+
+        while True:
+            job = self._ocr_queue.get()
+            if job is None:
+                # Sentinel — shutdown requested
+                break
+            screenshot, callback = job
+            try:
+                ocr_start = time.perf_counter()
+                ocr_result = extract_text_from_image(
+                    screenshot,
+                    window_title='',
+                    app_name='',
+                    screenshot_mode=True
+                )
+                ocr_elapsed_ms = (time.perf_counter() - ocr_start) * 1000.0
+                self._last_ocr_time = time.time()
+
+                text = ocr_result.get('text', '')
+                method = ocr_result.get('method', 'unknown')
+                confidence = ocr_result.get('confidence', 0.0)
+                success = ocr_result.get('success', False)
+                prep_ms = ocr_result.get('prep_ms')
+                infer_ms = ocr_result.get('infer_ms')
+                total_ms = ocr_result.get('total_ms')
+
+                if text and len(text) > 2000:
+                    text = text[:2000]
+
+                if success and text:
+                    print(
+                        f"[OCR-ASYNC] {method} "
+                        f"(confidence: {confidence:.2f}, took: {ocr_elapsed_ms:.1f}ms, "
+                        f"prep: {prep_ms if prep_ms is not None else 'NA'}ms, "
+                        f"infer: {infer_ms if infer_ms is not None else 'NA'}ms, "
+                        f"total: {total_ms if total_ms is not None else 'NA'}ms)"
+                    )
+                else:
+                    print(
+                        f"[OCR-ASYNC] capture failed ({method}) "
+                        f"(took: {ocr_elapsed_ms:.1f}ms)"
+                    )
+
+                final_result = {
+                    'text': text.strip() if text else None,
+                    'method': method,
+                    'confidence': confidence,
+                    'error_message': None if success else f"OCR failed with method: {method}",
+                    'prep_ms': prep_ms,
+                    'infer_ms': infer_ms,
+                    'total_ms': total_ms,
+                    'screenshot': None
+                }
+                callback(final_result)
+            except Exception as e:
+                print(f"[OCR-ASYNC] Worker error: {e}")
+                try:
+                    callback({
+                        'text': None, 'method': 'error', 'confidence': 0.0,
+                        'error_message': str(e), 'screenshot': None
+                    })
+                except Exception:
+                    pass
+            finally:
+                del screenshot
+                self._ocr_done_event.set()
+
+        print("[OCR] Worker thread exiting")
+
+    def submit_ocr_async(self, screenshot, callback):
+        """Submit a screenshot for async OCR processing.
+
+        Args:
+            screenshot: PIL.Image to OCR
+            callback: callable(ocr_result_dict) invoked from worker thread when done
+        """
+        self._ocr_done_event.clear()
+        try:
+            self._ocr_queue.put_nowait((screenshot, callback))
+        except queue.Full:
+            print("[OCR-ASYNC] Queue full — previous OCR still running, skipping this frame")
+            self._ocr_done_event.set()
+
+    def wait_for_ocr(self, timeout=5.0):
+        """Block until any in-flight async OCR job finishes.
+
+        Returns True if OCR completed (or no job was running), False on timeout.
+        """
+        return self._ocr_done_event.wait(timeout=timeout)
+
+    def capture_screenshot_only(self, force=False):
+        """Capture screenshot without running OCR (for async dispatch).
+
+        Returns:
+            dict with 'screenshot' (PIL.Image or None) and 'throttled' (bool)
+        """
+        now = time.time()
+        if not force and (now - self._last_ocr_time) < self._min_interval:
+            try:
+                screenshot = ImageGrab.grab()
+            except Exception:
+                screenshot = None
+            return {'screenshot': screenshot, 'throttled': True}
+
+        try:
+            screenshot = ImageGrab.grab()
+            return {'screenshot': screenshot, 'throttled': False}
+        except Exception as e:
+            print(f"[OCR] Screenshot capture failed: {e}")
+            return {'screenshot': None, 'throttled': False}
+
+    def shutdown(self):
+        """Stop the OCR worker thread gracefully."""
+        try:
+            self._ocr_queue.put_nowait(None)
+        except queue.Full:
+            # Queue is full with a real job; wait for it, then re-send sentinel
+            self._ocr_done_event.wait(timeout=30)
+            try:
+                self._ocr_queue.put_nowait(None)
+            except queue.Full:
+                pass
+        self._ocr_worker_thread.join(timeout=10)
+        print("[OCR] Worker thread shut down")
 
     def capture_and_ocr(self, force=False):
         """Capture screenshot in memory and extract text via OCR facade.
@@ -3875,6 +4024,7 @@ class TimeTracker:
         self.classification_manager = AppClassificationManager(self.offline_manager.db_path)
         self.session_manager = ActiveSessionManager(self.offline_manager.db_path)
         self.ocr_processor = LocalOCRProcessor()
+        atexit.register(self._shutdown_cleanup)
         self.batch_upload_interval = 300  # 5 min default (overridden by project settings)
         self.last_batch_upload_time = time.time()
         self.batch_start_time = datetime.now(timezone.utc)
@@ -5296,31 +5446,9 @@ class TimeTracker:
                     else:
                         print("!!!DEBUG!!! Fallback JQL (open sprints) query failed or returned no issues.")
 
-                    # Option 2: Issues not in any sprint
-                    fallback_jql_empty = 'assignee = currentUser() AND Sprint is EMPTY AND statusCategory = "In Progress"'
-                    print(f"[INFO] Retrying with fallback JQL for issues not in any sprint")
-                    fallback_resp_empty = requests.post(
-                        f'https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/search/jql',
-                        json={
-                            'jql': fallback_jql_empty,
-                            'maxResults': 50,
-                            'fields': ['summary', 'status', 'project', 'description', 'labels']
-                        },
-                        headers={
-                            'Authorization': f'Bearer {access_token}',
-                            'Accept': 'application/json',
-                            'Content-Type': 'application/json'
-                        }
-                    )
-                    if fallback_resp_empty.status_code == 200:
-                        fallback_data_empty = fallback_resp_empty.json()
-                        empty_issues = fallback_data_empty.get('issues', [])
-                        issues.extend(empty_issues)
-                        print(f"!!!DEBUG!!! Fallback JQL (no sprint) issues: {[i['key'] for i in empty_issues]}")
-                        if empty_issues:
-                            print(f"[OK] Fallback JQL (no sprint) returned {len(empty_issues)} issues")
-                    else:
-                        print("!!!DEBUG!!! Fallback JQL (no sprint) query failed or returned no issues.")
+                    # No-sprint fallback removed: backlog issues (Sprint is EMPTY)
+                    # were polluting user_assigned_issues with items the user isn't
+                    # actively working on, causing poor AI issue matching.
 
                     # Debug: print all combined fallback issues
                     print(f"!!!DEBUG!!! Combined fallback issues: {[i['key'] for i in issues]}")
@@ -6031,6 +6159,10 @@ class TimeTracker:
         authenticate via Atlassian OAuth, not Supabase Auth).
         """
         try:
+            # Wait briefly for any in-flight async OCR to finish before uploading
+            if not self.ocr_processor.wait_for_ocr(timeout=5.0):
+                print("[BATCH] Async OCR still running after 5s timeout — uploading without it")
+
             # Backfill OCR for any sessions that were throttled during rapid window switches.
             # Uses the ORIGINAL screenshot captured at throttle time, not a new one,
             # so the OCR text matches the window the user was actually viewing.
@@ -6214,54 +6346,72 @@ class TimeTracker:
             print(f"[NON-PROD] {app_name} — {window_title[:50]}")
 
         elif classification in ('productive', 'unknown'):
-            # Productive or unknown: capture OCR (returns dict with text, method, confidence, error_message)
-            # If window title contains Jira issue key (e.g., SCRUM-123), force OCR
-            # and bypass short throttling so issue-context windows always get text.
+            # Productive or unknown: capture screenshot (fast, ~50ms) then dispatch OCR async
             issue_key_in_title = bool(re.search(r'\b[A-Z][A-Z0-9]+-\d+\b', window_title or ''))
             spreadsheet_processes = {'excel.exe', 'libreofficecalc.exe', 'soffice.bin'}
-            # Unknown apps should bypass OCR throttling so AI classification has text context.
             force_ocr = (classification == 'unknown') or issue_key_in_title or (app_name.lower() in spreadsheet_processes)
-            ocr_result = self.ocr_processor.capture_and_ocr(force=force_ocr)
-            ocr_text = ocr_result.get('text') if ocr_result else None
 
-            # Unknown apps sometimes still return empty OCR (e.g., transient OCR engine failure).
-            # Retry once with forced OCR before sending to AI classification.
-            if classification == 'unknown' and not ocr_text:
-                retry_result = self.ocr_processor.capture_and_ocr(force=True)
-                retry_text = retry_result.get('text') if retry_result else None
-                if retry_text:
-                    ocr_result = retry_result
-                    ocr_text = retry_text
-                    print(f"[UNKNOWN] {app_name} — OCR retry succeeded, using retry text")
-            
-            if classification == 'unknown':
-                # For browsers, key by (app_name, domain, title_key) so different pages can be classified separately
-                # For non-browsers, key by app_name only
-                app_lower = app_name.lower()
-                if app_lower in BROWSER_PROCESSES:
-                    # Extract domain and normalized title for per-page classification
-                    domain = self._extract_domain_from_title(window_title)
-                    title_key = self._extract_title_key_for_classification(window_title, domain)
-                    app_key = f"{app_lower}|{domain}|{title_key}" if domain else f"{app_lower}|{title_key}"
-                else:
-                    app_key = app_lower
-                
-                if app_key not in self._unknown_apps_classified:
-                    # First time seeing this app/page — send to AI for classification suggestion
-                    self._unknown_apps_classified.add(app_key)
-                    print(f"[UNKNOWN] {app_name} — sending to AI server for classification (key: {app_key[:60]})")
-                    threading.Thread(
-                        target=self._classify_unknown_app_async,
-                        args=(app_name, window_title, ocr_text),
-                        daemon=True
-                    ).start()
-                else:
-                    print(f"[UNKNOWN] {app_name} — already sent to AI server, skipping (key: {app_key[:60]})")
+            capture_result = self.ocr_processor.capture_screenshot_only(force=force_ocr)
+            screenshot = capture_result.get('screenshot')
+            throttled = capture_result.get('throttled', False)
+
+            if screenshot and not throttled:
+                # Build callback that backfills OCR text and triggers unknown-app classification
+                _cb_title = display_title
+                _cb_app = app_name
+                _cb_classification = classification
+                _cb_window_title = window_title
+
+                def _ocr_callback(ocr_res, _title=_cb_title, _app=_cb_app,
+                                  _cls=_cb_classification, _wtitle=_cb_window_title):
+                    # Backfill OCR text into the session
+                    self.session_manager.backfill_ocr(_title, _app, ocr_res)
+                    # If unknown app, trigger AI classification now that we have OCR text
+                    if _cls == 'unknown':
+                        ocr_text = ocr_res.get('text') if ocr_res else None
+                        self._maybe_classify_unknown_app(_app, _wtitle, ocr_text)
+
+                self.ocr_processor.submit_ocr_async(screenshot, _ocr_callback)
+                print(f"[OCR-ASYNC] Dispatched async OCR for {app_name}")
+            elif throttled and screenshot:
+                # Throttled: save screenshot for batch backfill (existing behavior)
+                ocr_result = {
+                    'text': None, 'method': None, 'confidence': 0.0,
+                    'error_message': None, 'throttled': True,
+                    'screenshot': screenshot
+                }
             else:
-                print(f"[PROD] {app_name} — {window_title[:50]}")
+                if classification == 'unknown':
+                    self._maybe_classify_unknown_app(app_name, window_title, None)
 
-        # Update session manager with OCR result (includes text, method, confidence, error_message)
+            if classification == 'productive':
+                print(f"[PROD] {app_name} — {window_title[:50]}")
+            elif classification == 'unknown' and not throttled:
+                print(f"[UNKNOWN] {app_name} — async OCR dispatched")
+
+        # Create session immediately (no blocking on OCR); OCR text arrives via backfill callback
         self.session_manager.on_window_switch(display_title, app_name, classification, ocr_result)
+
+    def _maybe_classify_unknown_app(self, app_name, window_title, ocr_text):
+        """Check dedup key and fire async AI classification if this is a new unknown app."""
+        app_lower = app_name.lower()
+        if app_lower in BROWSER_PROCESSES:
+            domain = self._extract_domain_from_title(window_title)
+            title_key = self._extract_title_key_for_classification(window_title, domain)
+            app_key = f"{app_lower}|{domain}|{title_key}" if domain else f"{app_lower}|{title_key}"
+        else:
+            app_key = app_lower
+
+        if app_key not in self._unknown_apps_classified:
+            self._unknown_apps_classified.add(app_key)
+            print(f"[UNKNOWN] {app_name} — sending to AI server for classification (key: {app_key[:60]})")
+            threading.Thread(
+                target=self._classify_unknown_app_async,
+                args=(app_name, window_title, ocr_text),
+                daemon=True
+            ).start()
+        else:
+            print(f"[UNKNOWN] {app_name} — already sent to AI server, skipping (key: {app_key[:60]})")
 
     def _classify_unknown_app_async(self, app_name, window_title, ocr_text):
         """Background thread: calls POST /api/classify-app on AI server."""
@@ -8146,10 +8296,27 @@ class TimeTracker:
         except Exception as e:
             print(f"[ERROR] Failed to open feedback form: {e}")
 
+    def _shutdown_cleanup(self):
+        """Gracefully shut down OCR worker and flush remaining sessions."""
+        if getattr(self, '_shutdown_done', False):
+            return
+        self._shutdown_done = True
+        try:
+            print("[SHUTDOWN] Stopping OCR worker thread...")
+            self.ocr_processor.shutdown()
+        except Exception as e:
+            print(f"[SHUTDOWN] OCR worker shutdown error: {e}")
+        try:
+            print("[SHUTDOWN] Flushing remaining activity sessions...")
+            self.upload_activity_batch()
+        except Exception as e:
+            print(f"[SHUTDOWN] Final batch upload error: {e}")
+
     def _exit_app(self):
         """Exit the application from tray menu"""
         print("[INFO] Exit requested from tray menu")
         self._close_pause_popup()  # Close popup if open
+        self._shutdown_cleanup()
         self.stop()
         if self.tray:
             self.tray.stop()
@@ -8215,6 +8382,7 @@ class TimeTracker:
         # Update desktop status to logged out before quitting
         self._update_desktop_status(logged_in=False)
 
+        self._shutdown_cleanup()
         self.stop_tracking()
         if self.tray:
             self.tray.stop()
