@@ -15,7 +15,7 @@ const logger = require('../../utils/logger');
 
 // Configuration (can be overridden via environment variables)
 const POLLING_INTERVAL = parseInt(process.env.NOTIFICATION_POLLING_INTERVAL || '900000', 10); // 15 minutes
-const INACTIVITY_THRESHOLD_HOURS = parseFloat(process.env.INACTIVITY_THRESHOLD_HOURS || '3.5');
+const INACTIVITY_THRESHOLD_HOURS = parseFloat(process.env.INACTIVITY_THRESHOLD_HOURS || '4');
 const LOGIN_REMINDER_DAYS = parseInt(process.env.LOGIN_REMINDER_DAYS || '7', 10);
 
 class NotificationPollingService {
@@ -311,7 +311,9 @@ class NotificationPollingService {
 
     /**
      * Check and send inactivity alerts
-     * Users with desktop app logged in but no activity for 3.5+ hours
+     * Users with desktop app logged in but no activity for INACTIVITY_THRESHOLD_HOURS+.
+     * Uses combined signal: MAX(desktop_last_heartbeat, activity_records.batch_end)
+     * so users who are actively uploading activity batches are not incorrectly flagged.
      */
     async checkInactivityAlerts() {
         try {
@@ -324,42 +326,79 @@ class NotificationPollingService {
             const thresholdTime = new Date();
             thresholdTime.setHours(thresholdTime.getHours() - INACTIVITY_THRESHOLD_HOURS);
 
-            // Find users who:
-            // - Are active
-            // - Have an email
-            // - Are logged into desktop app
-            // - Haven't had a heartbeat recently
+            // Query 1: all logged-in users (no heartbeat filter — we filter below after
+            // combining with activity_records.batch_end)
             const { data: users, error } = await supabase
                 .from('users')
                 .select('id, organization_id, email, display_name, desktop_last_heartbeat')
                 .eq('is_active', true)
                 .eq('desktop_logged_in', true)
                 .not('email', 'is', null)
-                .not('desktop_last_heartbeat', 'is', null)
-                .lt('desktop_last_heartbeat', thresholdTime.toISOString());
+                .not('desktop_last_heartbeat', 'is', null);
 
             if (error) {
                 logger.error('[NotificationPolling] Error querying users for inactivity alerts: %s', error.message);
                 return;
             }
 
+            if (!users?.length) {
+                logger.info('[NotificationPolling] Inactivity alerts: no logged-in users found');
+                return;
+            }
+
+            // Query 2: any activity_records with batch_end newer than threshold (one bulk
+            // query for all users — avoids N+1 per-user queries)
+            const userIds = users.map(u => u.id);
+            const { data: recentActivity } = await supabase
+                .from('activity_records')
+                .select('user_id, batch_end')
+                .in('user_id', userIds)
+                .gt('batch_end', thresholdTime.toISOString());
+
+            // Set of users who have uploaded at least one recent activity batch
+            const usersWithRecentActivity = new Set((recentActivity || []).map(r => r.user_id));
+
+            // Map: user_id → latest batch_end timestamp string (for hoursInactive calc)
+            const latestBatchByUser = {};
+            for (const r of (recentActivity || [])) {
+                if (!latestBatchByUser[r.user_id] || r.batch_end > latestBatchByUser[r.user_id]) {
+                    latestBatchByUser[r.user_id] = r.batch_end;
+                }
+            }
+
+            // Only alert users where BOTH the heartbeat AND activity_records are stale
+            const inactiveUsers = users.filter(user => {
+                const heartbeatOld = new Date(user.desktop_last_heartbeat) < thresholdTime;
+                const hasRecentActivity = usersWithRecentActivity.has(user.id);
+                return heartbeatOld && !hasRecentActivity;
+            });
+
             let sentCount = 0;
-            for (const user of (users || [])) {
+            for (const user of inactiveUsers) {
                 try {
-                    // Check if within work hours for this user
                     const isWorkHours = await this._isWithinWorkHours(user.id);
                     if (!isWorkHours) {
                         continue;
                     }
 
-                    const lastActivity = new Date(user.desktop_last_heartbeat);
-                    const hoursInactive = Math.round((Date.now() - lastActivity.getTime()) / (1000 * 60 * 60) * 10) / 10;
+                    // effective last active = MAX(heartbeat, latest batch_end)
+                    const heartbeatTime = new Date(user.desktop_last_heartbeat);
+                    const batchTime = latestBatchByUser[user.id]
+                        ? new Date(latestBatchByUser[user.id])
+                        : null;
+                    const effectiveLastActive = batchTime && batchTime > heartbeatTime
+                        ? batchTime
+                        : heartbeatTime;
+
+                    const hoursInactive = Math.round(
+                        (Date.now() - effectiveLastActive.getTime()) / (1000 * 60 * 60) * 10
+                    ) / 10;
 
                     const result = await notificationService.sendInactivityAlert(
-                        user.id, 
-                        user.organization_id, 
+                        user.id,
+                        user.organization_id,
                         {
-                            lastActivityTime: lastActivity.toLocaleString(),
+                            lastActivityTime: effectiveLastActive.toLocaleString(),
                             hoursInactive
                         }
                     );
@@ -370,8 +409,8 @@ class NotificationPollingService {
             }
 
             this.stats.notificationsSent.inactivity_alert += sentCount;
-            logger.info(`[NotificationPolling] Inactivity alerts: checked ${users?.length || 0} users, sent ${sentCount}`);
-            
+            logger.info(`[NotificationPolling] Inactivity alerts: checked ${users.length} users, ${inactiveUsers.length} inactive, sent ${sentCount}`);
+
         } catch (error) {
             logger.error('[NotificationPolling] Error checking inactivity alerts: %s', error.message);
         }

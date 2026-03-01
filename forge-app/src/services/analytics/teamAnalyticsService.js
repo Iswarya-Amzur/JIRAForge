@@ -403,17 +403,40 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
     }
   }
 
-  const screenshots = await supabaseRequest(supabaseConfig, query);
+  // Run all three queries in parallel. activity_records.batch_end is updated every 5 min
+  // during active tracking (vs desktop_last_heartbeat every 4h) — used to compute a more
+  // accurate effectiveLastActive signal for status dots.
+  const activityThreshold = new Date(Date.now() - 270 * 60 * 1000).toISOString();
+  const [screenshots, allUsers, recentActivity] = await Promise.all([
+    supabaseRequest(supabaseConfig, query),
+    supabaseRequest(
+      supabaseConfig,
+      `users?organization_id=eq.${organization.id}&select=id,display_name,email,desktop_logged_in,desktop_last_heartbeat`
+    ),
+    supabaseRequest(
+      supabaseConfig,
+      `activity_records?organization_id=eq.${organization.id}&batch_end=gt.${activityThreshold}&select=user_id,batch_end`
+    )
+  ]);
 
   console.log('[TeamTimeline] Found screenshots count:', screenshots?.length || 0);
-
-  // Fetch all users for display names
-  const allUsers = await supabaseRequest(
-    supabaseConfig,
-    `users?organization_id=eq.${organization.id}&select=id,display_name,email,desktop_logged_in,desktop_last_heartbeat`
-  );
-
   console.log('[TeamTimeline] Found users count:', allUsers?.length || 0);
+
+  // Build map: user_id → latest batch_end within the threshold window
+  const latestBatchByUser = {};
+  for (const r of (recentActivity || [])) {
+    if (!latestBatchByUser[r.user_id] || r.batch_end > latestBatchByUser[r.user_id]) {
+      latestBatchByUser[r.user_id] = r.batch_end;
+    }
+  }
+
+  // Helper: effective last active = MAX(desktop_last_heartbeat, latest batch_end)
+  const getEffectiveLastActive = (userId, heartbeat) => {
+    const hb = heartbeat ? new Date(heartbeat) : null;
+    const ba = latestBatchByUser[userId] ? new Date(latestBatchByUser[userId]) : null;
+    if (hb && ba) return new Date(Math.max(hb.getTime(), ba.getTime())).toISOString();
+    return (hb || ba)?.toISOString() || null;
+  };
 
   // Group screenshots by user
   const userTimelineMap = {};
@@ -428,6 +451,7 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
         displayName: userInfo?.display_name || userInfo?.email || 'Unknown User',
         desktopLoggedIn: userInfo?.desktop_logged_in || false,
         lastHeartbeat: userInfo?.desktop_last_heartbeat,
+        effectiveLastActive: getEffectiveLastActive(userId, userInfo?.desktop_last_heartbeat),
         sessions: []
       };
     }
@@ -482,6 +506,7 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
         displayName: u.display_name || u.email || 'Unknown User',
         desktopLoggedIn: u.desktop_logged_in || false,
         lastHeartbeat: u.desktop_last_heartbeat,
+        effectiveLastActive: getEffectiveLastActive(u.id, u.desktop_last_heartbeat),
         sessions: [],
         totalHours: 0,
         totalSessions: 0,

@@ -85,11 +85,20 @@ export function registerUserResolvers(resolver) {
       // Get user ID
       const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
 
-      // Query user's desktop status
-      const userResult = await supabaseRequest(
-        supabaseConfig,
-        `users?id=eq.${userId}&select=desktop_logged_in,desktop_last_heartbeat,desktop_app_version`
-      );
+      // Query user's desktop status and recent activity_records in parallel.
+      // activity_records.batch_end is updated every 5 min when tracking is active,
+      // while desktop_last_heartbeat is only updated every 4 hours.
+      const activityThreshold = new Date(Date.now() - 270 * 60 * 1000).toISOString();
+      const [userResult, latestActivity] = await Promise.all([
+        supabaseRequest(
+          supabaseConfig,
+          `users?id=eq.${userId}&select=desktop_logged_in,desktop_last_heartbeat,desktop_app_version`
+        ),
+        supabaseRequest(
+          supabaseConfig,
+          `activity_records?user_id=eq.${userId}&batch_end=gt.${activityThreshold}&select=batch_end&order=batch_end.desc&limit=1`
+        )
+      ]);
 
       if (!userResult || userResult.length === 0) {
         return {
@@ -105,6 +114,16 @@ export function registerUserResolvers(resolver) {
 
       const user = userResult[0];
       const { desktop_logged_in, desktop_last_heartbeat, desktop_app_version } = user;
+
+      // Compute effective last active = MAX(heartbeat, latest batch_end).
+      // batch_end is uploaded every 5 min during active tracking; heartbeat every 4h.
+      const latestBatchEnd = latestActivity?.[0]?.batch_end || null;
+      const effectiveLastActive = (() => {
+        const hb = desktop_last_heartbeat ? new Date(desktop_last_heartbeat) : null;
+        const ba = latestBatchEnd ? new Date(latestBatchEnd) : null;
+        if (hb && ba) return new Date(Math.max(hb.getTime(), ba.getTime()));
+        return hb || ba || null;
+      })();
 
       // Check if update is available
       const updateAvailable = desktop_app_version && latestVersionInfo?.latestVersion
@@ -124,10 +143,12 @@ export function registerUserResolvers(resolver) {
         };
       }
 
-      // Case 2: Desktop app is logged in - check if heartbeat is recent (within 4.5 hours)
+      // Case 2: Desktop app is logged in - check if effective last active is within 4.5 hours.
+      // effectiveLastActive = MAX(desktop_last_heartbeat, activity_records.batch_end)
       if (desktop_logged_in) {
-        const lastHeartbeat = new Date(desktop_last_heartbeat);
-        const minutesAgo = (Date.now() - lastHeartbeat.getTime()) / 60000;
+        const minutesAgo = effectiveLastActive
+          ? (Date.now() - effectiveLastActive.getTime()) / 60000
+          : Infinity;
 
         if (minutesAgo < 270) {  // 4.5 hours = 270 minutes (gives buffer for 4-hour heartbeat)
           // Active - desktop app is running
