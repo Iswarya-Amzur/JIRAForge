@@ -253,17 +253,52 @@ async function upsertApplicationClassificationsFromTrackingSettings(
     privateSites
   });
 
+  // Pre-fetch all default and org-level classifications to get proper display names
+  // This avoids using identifier as display_name when a proper name exists in defaults
+  const displayNameLookup = new Map();
+  try {
+    // Fetch defaults (is_default=true)
+    const defaults = await supabaseRequest(
+      supabaseConfig,
+      `application_classifications?is_default=eq.true&select=identifier,display_name,match_by`
+    );
+    if (defaults && Array.isArray(defaults)) {
+      for (const d of defaults) {
+        const key = `${d.identifier}|${d.match_by || 'process'}`;
+        displayNameLookup.set(key, d.display_name);
+      }
+    }
+    // Also fetch org-level (project_key is null) which may have custom display names
+    const orgLevel = await supabaseRequest(
+      supabaseConfig,
+      `application_classifications?organization_id=eq.${organizationId}&project_key=is.null&select=identifier,display_name,match_by`
+    );
+    if (orgLevel && Array.isArray(orgLevel)) {
+      for (const o of orgLevel) {
+        const key = `${o.identifier}|${o.match_by || 'process'}`;
+        // Org-level overrides defaults if present
+        displayNameLookup.set(key, o.display_name);
+      }
+    }
+  } catch (lookupErr) {
+    console.warn('[TrackingSettings] Could not pre-fetch display names:', lookupErr.message);
+  }
+
   for (const entry of uniqueEntries) {
     const existing = await supabaseRequest(
       supabaseConfig,
       `application_classifications?organization_id=eq.${organizationId}&${projectFilter}&identifier=eq.${encodeURIComponent(entry.identifier)}&match_by=eq.${entry.match_by}&limit=1`
     );
 
+    // Use display name from lookup if available, otherwise fall back to identifier
+    const lookupKey = `${entry.identifier}|${entry.match_by}`;
+    const resolvedDisplayName = displayNameLookup.get(lookupKey) || entry.identifier;
+
     const payload = {
       organization_id: organizationId,
       project_key: projectKey || null,
       identifier: entry.identifier,
-      display_name: entry.display_name,
+      display_name: resolvedDisplayName,
       classification: entry.classification,
       match_by: entry.match_by,
       is_default: false,
