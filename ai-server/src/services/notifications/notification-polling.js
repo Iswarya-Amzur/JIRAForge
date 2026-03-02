@@ -382,11 +382,16 @@ class NotificationPollingService {
             // Query 2: any activity_records with batch_end newer than threshold (one bulk
             // query for all users — avoids N+1 per-user queries)
             const userIds = users.map(u => u.id);
-            const { data: recentActivity } = await supabase
+            const { data: recentActivity, error: activityError } = await supabase
                 .from('activity_records')
                 .select('user_id, batch_end')
                 .in('user_id', userIds)
                 .gt('batch_end', thresholdTime.toISOString());
+
+            if (activityError) {
+                logger.error('[NotificationPolling] Error querying activity_records for inactivity alerts: %s', activityError.message);
+                return;
+            }
 
             // Set of users who have uploaded at least one recent activity batch
             const usersWithRecentActivity = new Set((recentActivity || []).map(r => r.user_id));
@@ -509,9 +514,14 @@ class NotificationPollingService {
             if (error || !data) return [];
             // Deduplicate — same person may have configured multiple projects
             const seen = new Set();
-            return data
-                .map(r => r.users)
-                .filter(u => u && u.email && !seen.has(u.id) && seen.add(u.id));
+            const admins = [];
+            for (const row of data) {
+                const u = row.users;
+                if (!u || !u.email || seen.has(u.id)) continue;
+                seen.add(u.id);
+                admins.push(u);
+            }
+            return admins;
         } catch (err) {
             logger.warn('[NotificationPolling] Error fetching project admins:', err.message);
             return [];

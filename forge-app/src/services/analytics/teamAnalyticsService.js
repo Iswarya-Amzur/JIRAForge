@@ -436,6 +436,12 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
     return (hb || ba)?.toISOString() || null;
   };
 
+  // Pre-build user lookup map to avoid O(n²) scanning inside the records loop
+  const userById = {};
+  for (const u of (allUsers || [])) {
+    if (u && u.id) userById[u.id] = u;
+  }
+
   // Group activity records by user
   const userTimelineMap = {};
 
@@ -443,7 +449,7 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
     const userId = record.user_id;
 
     if (!userTimelineMap[userId]) {
-      const userInfo = (allUsers || []).find(u => u.id === userId);
+      const userInfo = userById[userId];
       userTimelineMap[userId] = {
         userId,
         displayName: userInfo?.display_name || userInfo?.email || 'Unknown User',
