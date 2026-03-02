@@ -384,18 +384,16 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
   console.log('[TeamTimeline] Fetching timeline for date:', date, 'org:', organization.id, 
     'filterByProjects:', filterByProjects, 'projectCount:', projectsToFilter.length);
 
-  // Build query for screenshots on the specified date
-  // Uses idx_screenshots_org_user_work_date index for optimal performance
-  // Include start_time and end_time for accurate timeline visualization
-  // Note: Idle time creates GAPS in the data (no screenshots during idle)
-  // Also include project_key for filtering
-  let query = `screenshots?organization_id=eq.${organization.id}&work_date=eq.${date}&deleted_at=is.null&select=user_id,timestamp,start_time,end_time,duration_seconds,project_key&order=user_id,timestamp.asc&limit=5000`;
+  // Build query for activity_records on the specified date
+  // Uses start_time ordering for accurate timeline visualization
+  // Excludes private classifications — those should not appear in the team timeline
+  let query = `activity_records?organization_id=eq.${organization.id}&work_date=eq.${date}&classification=neq.private&select=user_id,start_time,end_time,duration_seconds,project_key&order=user_id,start_time.asc&limit=5000`;
   
   // Add project filter when filtering is enabled
-  // For project admins, use OR filter to include their own screenshots + admin project screenshots
+  // For project admins, use OR filter to include their own records + admin project records
   if (filterByProjects && projectsToFilter.length > 0) {
     if (currentUserId) {
-      // Project admin: user's own screenshots OR screenshots from admin projects
+      // Project admin: user's own records OR records from admin projects
       query += `&or=(user_id.eq.${currentUserId},project_key.in.(${projectsToFilter.join(',')}))`;
     } else {
       // Fallback: just filter by project (shouldn't happen)
@@ -403,24 +401,47 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
     }
   }
 
-  const screenshots = await supabaseRequest(supabaseConfig, query);
+  // Run all three queries in parallel. activity_records.batch_end is updated every 5 min
+  // during active tracking (vs desktop_last_heartbeat every 4h) — used to compute a more
+  // accurate effectiveLastActive signal for status dots.
+  const activityThreshold = new Date(Date.now() - 270 * 60 * 1000).toISOString();
+  const [activityRecords, allUsers, recentActivity] = await Promise.all([
+    supabaseRequest(supabaseConfig, query),
+    supabaseRequest(
+      supabaseConfig,
+      `users?organization_id=eq.${organization.id}&select=id,display_name,email,desktop_logged_in,desktop_last_heartbeat`
+    ),
+    supabaseRequest(
+      supabaseConfig,
+      `activity_records?organization_id=eq.${organization.id}&batch_end=gt.${activityThreshold}&select=user_id,batch_end`
+    )
+  ]);
 
-  console.log('[TeamTimeline] Found screenshots count:', screenshots?.length || 0);
-
-  // Fetch all users for display names
-  const allUsers = await supabaseRequest(
-    supabaseConfig,
-    `users?organization_id=eq.${organization.id}&select=id,display_name,email,desktop_logged_in,desktop_last_heartbeat`
-  );
-
+  console.log('[TeamTimeline] Found activity records count:', activityRecords?.length || 0);
   console.log('[TeamTimeline] Found users count:', allUsers?.length || 0);
 
-  // Group screenshots by user
+  // Build map: user_id → latest batch_end within the threshold window
+  const latestBatchByUser = {};
+  for (const r of (recentActivity || [])) {
+    if (!latestBatchByUser[r.user_id] || r.batch_end > latestBatchByUser[r.user_id]) {
+      latestBatchByUser[r.user_id] = r.batch_end;
+    }
+  }
+
+  // Helper: effective last active = MAX(desktop_last_heartbeat, latest batch_end)
+  const getEffectiveLastActive = (userId, heartbeat) => {
+    const hb = heartbeat ? new Date(heartbeat) : null;
+    const ba = latestBatchByUser[userId] ? new Date(latestBatchByUser[userId]) : null;
+    if (hb && ba) return new Date(Math.max(hb.getTime(), ba.getTime())).toISOString();
+    return (hb || ba)?.toISOString() || null;
+  };
+
+  // Group activity records by user
   const userTimelineMap = {};
-  
-  (screenshots || []).forEach(screenshot => {
-    const userId = screenshot.user_id;
-    
+
+  (activityRecords || []).forEach(record => {
+    const userId = record.user_id;
+
     if (!userTimelineMap[userId]) {
       const userInfo = (allUsers || []).find(u => u.id === userId);
       userTimelineMap[userId] = {
@@ -428,17 +449,17 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
         displayName: userInfo?.display_name || userInfo?.email || 'Unknown User',
         desktopLoggedIn: userInfo?.desktop_logged_in || false,
         lastHeartbeat: userInfo?.desktop_last_heartbeat,
+        effectiveLastActive: getEffectiveLastActive(userId, userInfo?.desktop_last_heartbeat),
         sessions: []
       };
     }
-    
+
     // Add session with start_time, end_time for accurate timeline rendering
-    // Use actual duration_seconds from the DB; only fall back to a small default for legacy data
+    // duration_seconds = accumulated real work time (not simply end_time - start_time)
     userTimelineMap[userId].sessions.push({
-      timestamp: screenshot.timestamp,
-      startTime: screenshot.start_time,
-      endTime: screenshot.end_time,
-      durationSeconds: screenshot.duration_seconds || 0
+      startTime: record.start_time,
+      endTime: record.end_time,
+      durationSeconds: record.duration_seconds || 0
     });
   });
 
@@ -456,8 +477,8 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
       ...user,
       totalHours,
       totalSessions: user.sessions.length,
-      firstActivity: firstSession?.timestamp,
-      lastActivity: lastSession?.timestamp
+      firstActivity: firstSession?.startTime || null,
+      lastActivity: lastSession?.endTime || null
     };
   });
 
@@ -482,6 +503,7 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
         displayName: u.display_name || u.email || 'Unknown User',
         desktopLoggedIn: u.desktop_logged_in || false,
         lastHeartbeat: u.desktop_last_heartbeat,
+        effectiveLastActive: getEffectiveLastActive(u.id, u.desktop_last_heartbeat),
         sessions: [],
         totalHours: 0,
         totalSessions: 0,
@@ -553,16 +575,14 @@ export async function fetchMyDayTimeline(accountId, cloudId, date) {
   const userId = currentUser[0].id;
   const displayName = currentUser[0].display_name || currentUser[0].email || 'User';
 
-  // Fetch screenshots for current user on the specified date
-  // Uses idx_screenshots_org_user_work_date index for optimal performance
-  // Include start_time and end_time for accurate timeline visualization
-  // Note: Idle time creates GAPS in the data (no screenshots during idle)
-  const screenshots = await supabaseRequest(
+  // Fetch activity records for current user on the specified date
+  // Excludes private classifications — those should not appear in the user's own timeline
+  const activityRecords = await supabaseRequest(
     supabaseConfig,
-    `screenshots?organization_id=eq.${organization.id}&user_id=eq.${userId}&work_date=eq.${date}&deleted_at=is.null&select=timestamp,start_time,end_time,duration_seconds&order=timestamp.asc&limit=500`
+    `activity_records?organization_id=eq.${organization.id}&user_id=eq.${userId}&work_date=eq.${date}&classification=neq.private&select=start_time,end_time,duration_seconds&order=start_time.asc&limit=500`
   );
 
-  if (!screenshots || screenshots.length === 0) {
+  if (!activityRecords || activityRecords.length === 0) {
     return {
       date,
       userId,
@@ -576,15 +596,12 @@ export async function fetchMyDayTimeline(accountId, cloudId, date) {
   }
 
   // Build sessions array with start_time, end_time for accurate timeline rendering
-  // Use actual duration_seconds from the DB; only fall back to a small default for legacy data
-  const sessions = screenshots.map(screenshot => {
-    return {
-      timestamp: screenshot.timestamp,
-      startTime: screenshot.start_time,
-      endTime: screenshot.end_time,
-      durationSeconds: screenshot.duration_seconds || 0
-    };
-  });
+  // duration_seconds = accumulated real work time (not simply end_time - start_time)
+  const sessions = activityRecords.map(record => ({
+    startTime: record.start_time,
+    endTime: record.end_time,
+    durationSeconds: record.duration_seconds || 0
+  }));
 
   // Calculate stats
   const totalSeconds = sessions.reduce((sum, s) => sum + s.durationSeconds, 0);
@@ -597,7 +614,7 @@ export async function fetchMyDayTimeline(accountId, cloudId, date) {
     sessions,
     totalHours,
     totalSessions: sessions.length,
-    firstActivity: sessions[0]?.timestamp || null,
-    lastActivity: sessions[sessions.length - 1]?.timestamp || null
+    firstActivity: sessions[0]?.startTime || null,
+    lastActivity: sessions[sessions.length - 1]?.endTime || null
   };
 }

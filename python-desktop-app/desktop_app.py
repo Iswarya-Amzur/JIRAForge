@@ -7191,6 +7191,7 @@ class TimeTracker:
                             print("[INFO] System sleep detected — finalizing session")
                             if not self.is_idle:
                                 self._finalize_active_session("system sleep")
+                                self.session_manager.stop_current_timer()  # Stop SQLite activity timer so idle time isn't counted in activity_records
                                 self.is_idle = True
                                 self.update_tray_icon()
                                 self.add_admin_log('INFO', 'System sleep detected — entered idle')
@@ -7202,6 +7203,7 @@ class TimeTracker:
                             print("[INFO] Screen lock detected — finalizing session")
                             if not self.is_idle:
                                 self._finalize_active_session("screen lock")
+                                self.session_manager.stop_current_timer()  # Stop SQLite activity timer so idle time isn't counted in activity_records
                                 self.is_idle = True
                                 self.update_tray_icon()
                                 self.add_admin_log('INFO', 'Screen locked — entered idle')
@@ -7423,6 +7425,7 @@ class TimeTracker:
                     print(f"[INFO] Large time gap detected: {int(time_since_last_loop)}s — system was likely suspended")
                     # Finalize current session using last known activity time
                     self._finalize_active_session("system suspension detected")
+                    self.session_manager.stop_current_timer()  # Stop SQLite activity timer so suspension time isn't counted in activity_records
                     # Reset ALL tracking state — new session starts fresh
                     self.is_idle = False
                     self.needs_idle_resume = False
@@ -7533,7 +7536,8 @@ class TimeTracker:
                         # Finalize the current window's duration BEFORE going idle
                         # This prevents idle time from being counted as work time
                         self._finalize_active_session("idle timeout")
-                        
+                        self.session_manager.stop_current_timer()  # Stop SQLite activity timer so idle time isn't counted in activity_records
+
                         self.is_idle = True
                         self.update_tray_icon()
                         self.add_admin_log('INFO', f'User idle (no activity for {int(idle_duration)}s)')
