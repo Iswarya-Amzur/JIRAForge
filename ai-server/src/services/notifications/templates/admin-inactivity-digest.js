@@ -6,6 +6,7 @@
  */
 
 module.exports = {
+    type: 'admin_inactivity_digest',
     subject: ({ orgName }) => `[JIRAForge] ${orgName}: Team members inactive`,
 
     text: ({ displayName, orgName, inactiveUsers }) => {
@@ -16,11 +17,12 @@ module.exports = {
     },
 
     html: ({ displayName, orgName, inactiveUsers }) => {
+        const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         const rows = inactiveUsers.map(u => `
             <tr>
-              <td style="padding:8px 12px;border-bottom:1px solid #eee">${u.name}</td>
-              <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#d97706;font-weight:600">${u.hoursInactive}h inactive</td>
-              <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#999;font-size:13px">${u.lastActivity}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #eee">${esc(u.name)}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#d97706;font-weight:600">${esc(u.hoursInactive)}h inactive</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#999;font-size:13px">${esc(u.lastActivity)}</td>
             </tr>`).join('');
 
         return `<!DOCTYPE html>
@@ -28,10 +30,10 @@ module.exports = {
 <body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;padding:20px">
   <div style="background:#fff7ed;border-left:4px solid #f97316;padding:16px 20px;border-radius:4px;margin-bottom:24px">
     <h2 style="margin:0;color:#c2410c;font-size:18px">Team Inactivity Alert</h2>
-    <p style="margin:6px 0 0;color:#92400e;font-size:14px">${orgName}</p>
+    <p style="margin:6px 0 0;color:#92400e;font-size:14px">${esc(orgName)}</p>
   </div>
-  <p>Hi ${displayName},</p>
-  <p>The following team members in <strong>${orgName}</strong> have been inactive and may need a nudge:</p>
+  <p>Hi ${esc(displayName)},</p>
+  <p>The following team members in <strong>${esc(orgName)}</strong> have been inactive and may need a nudge:</p>
   <table style="width:100%;border-collapse:collapse;font-size:14px;margin:16px 0">
     <thead>
       <tr style="background:#f5f5f5">
@@ -43,7 +45,7 @@ module.exports = {
     <tbody>${rows}</tbody>
   </table>
   <p style="color:#666;font-size:13px;margin-top:24px">
-    You are receiving this because you are an admin of <strong>${orgName}</strong> on JIRAForge.
+    You are receiving this because you are an admin of <strong>${esc(orgName)}</strong> on JIRAForge.
   </p>
 </body>
 </html>`;
