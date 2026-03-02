@@ -187,7 +187,7 @@ load_dotenv()
 
 # Application version - IMPORTANT: Update this when releasing new versions
 # This is used for update checking and notifications
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.0.0"
 
 # Hard-disable screenshot monitoring/storage in desktop app.
 # OCR text extraction for activity records still runs via event-based flow.
@@ -3364,6 +3364,14 @@ class ActiveSessionManager:
             self._pending_ocr_keys.clear()
             return keys
 
+    def add_pending_ocr_screenshot(self, title, app_name, screenshot):
+        """Add a screenshot for later OCR backfill (used when OCR queue is full after session created)."""
+        with self._lock:
+            key = (title, app_name)
+            self._pending_ocr_keys.add(key)
+            if screenshot is not None:
+                self._pending_ocr_screenshots[key] = screenshot
+
     def backfill_ocr(self, title, app_name, ocr_result):
         """Fill in OCR data for a session that was previously throttled."""
         if not ocr_result or ocr_result.get('throttled'):
@@ -3671,13 +3679,19 @@ class LocalOCRProcessor:
         Args:
             screenshot: PIL.Image to OCR
             callback: callable(ocr_result_dict) invoked from worker thread when done
+
+        Returns:
+            bool: True if job was submitted, False if queue was full (caller should
+                  save the screenshot for batch backfill instead of losing it).
         """
         self._ocr_done_event.clear()
         try:
             self._ocr_queue.put_nowait((screenshot, callback))
+            return True
         except queue.Full:
-            print("[OCR-ASYNC] Queue full — previous OCR still running, skipping this frame")
+            print("[OCR-ASYNC] Queue full — previous OCR still running, saving for batch backfill")
             self._ocr_done_event.set()
+            return False
 
     def wait_for_ocr(self, timeout=5.0):
         """Block until any in-flight async OCR job finishes.
@@ -6376,8 +6390,31 @@ class TimeTracker:
             screenshot = capture_result.get('screenshot')
             throttled = capture_result.get('throttled', False)
 
-            if screenshot and not throttled:
-                # Build callback that backfills OCR text and triggers unknown-app classification
+            if throttled and screenshot:
+                # Throttled: save screenshot for batch backfill
+                ocr_result = {
+                    'text': None, 'method': None, 'confidence': 0.0,
+                    'error_message': None, 'throttled': True,
+                    'screenshot': screenshot
+                }
+            elif not screenshot:
+                if classification == 'unknown':
+                    self._maybe_classify_unknown_app(app_name, window_title, None)
+
+            if classification == 'productive':
+                print(f"[PROD] {app_name} — {window_title[:50]}")
+            elif classification == 'unknown':
+                print(f"[UNKNOWN] {app_name}")
+
+        # CRITICAL: Create session FIRST so it exists when async OCR callback fires.
+        # This fixes race condition where OCR completes before session is created.
+        self.session_manager.on_window_switch(display_title, app_name, classification, ocr_result)
+
+        # Now dispatch async OCR AFTER session exists (only for productive/unknown with valid screenshot)
+        if classification in ('productive', 'unknown'):
+            # Re-check if we have a non-throttled screenshot to process
+            if 'capture_result' in dir() and capture_result.get('screenshot') and not capture_result.get('throttled'):
+                screenshot = capture_result.get('screenshot')
                 _cb_title = display_title
                 _cb_app = app_name
                 _cb_classification = classification
@@ -6385,33 +6422,21 @@ class TimeTracker:
 
                 def _ocr_callback(ocr_res, _title=_cb_title, _app=_cb_app,
                                   _cls=_cb_classification, _wtitle=_cb_window_title):
-                    # Backfill OCR text into the session
+                    # Backfill OCR text into the session (session guaranteed to exist now)
                     self.session_manager.backfill_ocr(_title, _app, ocr_res)
                     # If unknown app, trigger AI classification now that we have OCR text
                     if _cls == 'unknown':
                         ocr_text = ocr_res.get('text') if ocr_res else None
                         self._maybe_classify_unknown_app(_app, _wtitle, ocr_text)
 
-                self.ocr_processor.submit_ocr_async(screenshot, _ocr_callback)
-                print(f"[OCR-ASYNC] Dispatched async OCR for {app_name}")
-            elif throttled and screenshot:
-                # Throttled: save screenshot for batch backfill (existing behavior)
-                ocr_result = {
-                    'text': None, 'method': None, 'confidence': 0.0,
-                    'error_message': None, 'throttled': True,
-                    'screenshot': screenshot
-                }
-            else:
-                if classification == 'unknown':
-                    self._maybe_classify_unknown_app(app_name, window_title, None)
-
-            if classification == 'productive':
-                print(f"[PROD] {app_name} — {window_title[:50]}")
-            elif classification == 'unknown' and not throttled:
-                print(f"[UNKNOWN] {app_name} — async OCR dispatched")
-
-        # Create session immediately (no blocking on OCR); OCR text arrives via backfill callback
-        self.session_manager.on_window_switch(display_title, app_name, classification, ocr_result)
+                submitted = self.ocr_processor.submit_ocr_async(screenshot, _ocr_callback)
+                if submitted:
+                    print(f"[OCR-ASYNC] Dispatched async OCR for {app_name}")
+                else:
+                    # Queue full: save screenshot for batch backfill (same as throttled)
+                    # Need to update the session we just created to add the pending screenshot
+                    self.session_manager.add_pending_ocr_screenshot(display_title, app_name, screenshot)
+                    print(f"[OCR-ASYNC] Queue full for {app_name}, saved for batch backfill")
 
     def _maybe_classify_unknown_app(self, app_name, window_title, ocr_text):
         """Check dedup key and fire async AI classification if this is a new unknown app."""
