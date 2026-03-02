@@ -189,10 +189,36 @@ function formatAssignedIssues(userAssignedIssues) {
     .join('\n');
 }
 
+/**
+ * System prompt for app identification
+ * Used when admin searches for an app and psutil can't find it,
+ * LLM identifies the executable/process name.
+ */
+const APP_IDENTIFICATION_SYSTEM_PROMPT = `You are an expert at identifying software applications. Given an app name search term, identify the correct executable/process name and display name. Respond ONLY with valid JSON.`;
+
+/**
+ * Build prompt for app identification
+ */
+function buildAppIdentificationPrompt(searchTerm) {
+  return `Identify the desktop application matching: "${searchTerm}"
+
+Return ONLY valid JSON:
+{
+  "identified": true or false,
+  "identifier": "executable name (e.g., code.exe, slack.exe, zoom.exe)",
+  "display_name": "User-friendly name (e.g., Visual Studio Code)",
+  "confidence": 0.0-1.0
+}
+
+If unknown, return: {"identified": false, "identifier": null, "display_name": null, "confidence": 0}`;
+}
+
 module.exports = {
   VISION_SYSTEM_PROMPT,
   OCR_SYSTEM_PROMPT,
   buildVisionUserPrompt,
   buildOCRUserPrompt,
-  formatAssignedIssues
+  formatAssignedIssues,
+  APP_IDENTIFICATION_SYSTEM_PROMPT,
+  buildAppIdentificationPrompt
 };

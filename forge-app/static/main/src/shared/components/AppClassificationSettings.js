@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@forge/bridge';
 import './AppClassificationSettings.css';
-import { searchAppAliases } from './appAliasDatabase';
 
 const DEFAULT_VISIBLE_APPS = 24;
 
@@ -136,10 +135,12 @@ function AppClassificationSettings({ projectKey }) {
   const [nonProductiveVisibleCount, setNonProductiveVisibleCount] = useState(DEFAULT_VISIBLE_APPS);
   const [privateVisibleCount, setPrivateVisibleCount] = useState(DEFAULT_VISIBLE_APPS);
 
-  const [message, setMessage] = useState({ type: '', text: '' });
+  // App identifier search state (for adding apps not in DB)
+  const [searchingAppSection, setSearchingAppSection] = useState(null); // 'productive', 'nonProductive', or 'private'
+  const [identifiedApp, setIdentifiedApp] = useState(null);
+  const [addingIdentifiedApp, setAddingIdentifiedApp] = useState(false);
 
-  // State for saving alias selections
-  const [savingAlias, setSavingAlias] = useState({});
+  const [message, setMessage] = useState({ type: '', text: '' });
 
   // Store the full tracking settings so we can merge when saving
   const [fullTrackingSettings, setFullTrackingSettings] = useState(null);
@@ -338,6 +339,110 @@ function AppClassificationSettings({ projectKey }) {
     );
   };
 
+  /**
+   * Search for app identifier using psutil + LLM fallback.
+   * Called when user searches for an app that's not in the DB.
+   */
+  const searchForAppIdentifier = async (searchTerm, section) => {
+    if (!searchTerm || searchTerm.trim().length < 2) return;
+
+    setSearchingAppSection(section);
+    setIdentifiedApp(null);
+
+    try {
+      const result = await invoke('searchAppIdentifier', {
+        searchTerm: searchTerm.trim(),
+        projectKey: projectKey || null
+      });
+
+      if (result.success && result.found && result.best_match) {
+        setIdentifiedApp({
+          ...result.best_match,
+          section,
+          originalSearch: searchTerm
+        });
+      } else {
+        setIdentifiedApp({
+          notFound: true,
+          section,
+          originalSearch: searchTerm,
+          message: result.message || 'Could not identify this application'
+        });
+      }
+    } catch (err) {
+      console.error('App identification failed:', err);
+      setIdentifiedApp({
+        notFound: true,
+        section,
+        originalSearch: searchTerm,
+        message: `Search failed: ${err.message}`
+      });
+    } finally {
+      setSearchingAppSection(null);
+    }
+  };
+
+  /**
+   * Add the identified app to the classification database and select it.
+   */
+  const addIdentifiedApp = async (app, targetClassification) => {
+    if (!app || !app.identifier) return;
+
+    setAddingIdentifiedApp(true);
+    setMessage({ type: '', text: '' });
+
+    try {
+      // First save to database
+      const saveResult = await invoke('saveClassification', {
+        classification: {
+          identifier: app.identifier,
+          displayName: app.display_name || app.identifier,
+          classification: targetClassification,
+          matchBy: 'process',
+        },
+        projectKey: projectKey || null,
+      });
+
+      if (!saveResult.success) {
+        throw new Error(saveResult.error || 'Failed to save classification');
+      }
+
+      // Add to the appropriate list
+      const listField = targetClassification === 'productive'
+        ? 'productiveAppsSelected'
+        : targetClassification === 'non_productive'
+          ? 'nonProductiveAppsSelected'
+          : 'privateSites';
+
+      toggleCommonApp(listField, app.identifier);
+
+      // Refresh classifications to include new app
+      await loadClassifications();
+
+      // Clear the identified app state
+      setIdentifiedApp(null);
+
+      setMessage({
+        type: 'success',
+        text: `Added "${app.display_name || app.identifier}" as ${targetClassification.replace('_', '-')}`
+      });
+
+      // Clear the search in the relevant section
+      if (app.section === 'productive') setProductiveSearch('');
+      else if (app.section === 'nonProductive') setNonProductiveSearch('');
+      else if (app.section === 'private') setPrivateSearch('');
+
+    } catch (err) {
+      console.error('Failed to add identified app:', err);
+      setMessage({
+        type: 'error',
+        text: `Failed to add app: ${err.message}`
+      });
+    } finally {
+      setAddingIdentifiedApp(false);
+    }
+  };
+
   const filteredProductiveApps = filterAppsBySearch(productiveApps, productiveSearch);
   const filteredNonProductiveApps = filterAppsBySearch(nonProductiveApps, nonProductiveSearch);
   const filteredPrivateApps = filterAppsBySearch(privateApps, privateSearch);
@@ -383,108 +488,6 @@ function AppClassificationSettings({ projectKey }) {
       setTimeout(() => setMessage({ type: '', text: '' }), 3000);
     }
   };
-
-  /**
-   * Add an application from alias database to classifications
-   * @param {string} identifier - The identifier to save (e.g., 'code.exe')
-   * @param {string} displayName - Human readable name
-   * @param {string} classification - 'productive', 'non_productive', or 'private'
-   * @param {string} listField - The state field to add to after saving
-   */
-  const addAppFromAlias = async (identifier, displayName, classification, listField) => {
-    const aliasKey = `${identifier}-${classification}`;
-    setSavingAlias(prev => ({ ...prev, [aliasKey]: true }));
-    setMessage({ type: '', text: '' });
-
-    try {
-      const result = await invoke('saveClassification', {
-        classification: {
-          identifier: identifier,
-          displayName: displayName,
-          classification: classification,
-          matchBy: 'process',
-        },
-        projectKey: projectKey || null,
-      });
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to save classification');
-      }
-
-      setMessage({
-        type: 'success',
-        text: `Added "${displayName}" (${identifier}) as ${classification.replace('_', ' ')}.`,
-      });
-
-      // Clear the search and reload classifications
-      if (listField === 'productiveAppsSelected') {
-        setProductiveSearch('');
-      } else if (listField === 'nonProductiveAppsSelected') {
-        setNonProductiveSearch('');
-      } else if (listField === 'privateSites') {
-        setPrivateSearch('');
-      }
-
-      // Reload classifications to include the new one
-      await loadClassifications();
-
-      // Auto-select the newly added app
-      setSettings(prev => {
-        const classificationLists = ['productiveAppsSelected', 'nonProductiveAppsSelected', 'privateSites'];
-        const updated = { ...prev };
-        // Remove from other lists first
-        for (const field of classificationLists) {
-          updated[field] = (updated[field] || []).filter(item => item !== identifier);
-        }
-        // Add to the target list
-        updated[listField] = [...(updated[listField] || []), identifier];
-        saveSettings(updated);
-        return updated;
-      });
-
-    } catch (err) {
-      console.error('Failed to add app from alias:', err);
-      setMessage({
-        type: 'error',
-        text: `Failed to add ${displayName}: ${err.message}`,
-      });
-    } finally {
-      setSavingAlias(prev => ({ ...prev, [aliasKey]: false }));
-      setTimeout(() => setMessage({ type: '', text: '' }), 4000);
-    }
-  };
-
-  // Get alias suggestions when search doesn't have an EXACT match in existing classifications
-  // Show aliases as "Add new" option even if there are partial matches
-  const getAliasSuggestionsForSearch = (searchQuery, filteredApps, allApps) => {
-    if (!searchQuery.trim() || searchQuery.trim().length < 2) return [];
-    
-    const query = searchQuery.trim().toLowerCase();
-    
-    // Check if there's an exact match (identifier or display name matches query exactly)
-    const hasExactMatch = filteredApps.some(app => 
-      app.name.toLowerCase() === query || 
-      app.value.toLowerCase() === query ||
-      app.value.toLowerCase().replace(/\.(exe|app)$/i, '') === query
-    );
-    
-    // If there's an exact match, no need for aliases
-    if (hasExactMatch) return [];
-    
-    // Get alias suggestions
-    const aliases = searchAppAliases(searchQuery);
-    
-    // Filter out aliases that already have their identifiers in the classification DB
-    const existingIdentifiers = new Set(allApps.map(app => app.value.toLowerCase()));
-    return aliases.filter(alias => {
-      // Keep alias if at least one of its identifiers is NOT in the DB
-      return alias.identifiers.some(id => !existingIdentifiers.has(id.toLowerCase()));
-    });
-  };
-
-  const productiveAliasSuggestions = getAliasSuggestionsForSearch(productiveSearch, filteredProductiveApps, productiveApps);
-  const nonProductiveAliasSuggestions = getAliasSuggestionsForSearch(nonProductiveSearch, filteredNonProductiveApps, nonProductiveApps);
-  const privateAliasSuggestions = getAliasSuggestionsForSearch(privateSearch, filteredPrivateApps, privateApps);
 
   if (loadingSettings || loadingClassifications) {
     return (
@@ -564,51 +567,45 @@ function AppClassificationSettings({ projectKey }) {
                     </div>
                   )}
                   
-                  {/* Alias suggestions - show when aliases available */}
-                  {productiveAliasSuggestions.length > 0 && (
-                    <div className="alias-suggestions">
-                      <p className="alias-hint">
-                        {filteredProductiveApps.length > 0 
-                          ? 'Add a new application variant:' 
-                          : 'App not found in classifications. Select an alias to add it:'}
-                      </p>
-                      {productiveAliasSuggestions.slice(0, 5).map(alias => (
-                        <div key={alias.canonicalKey} className="alias-suggestion-item">
-                          <div className="alias-header">
-                            <span className="alias-name">{alias.displayName}</span>
-                            <span className="alias-category">{alias.category}</span>
+                  {/* No matches found - offer to search for app */}
+                  {filteredProductiveApps.length === 0 && productiveSearch.trim().length >= 2 && (
+                    <div className="no-matches-message">
+                      {searchingAppSection === 'productive' ? (
+                        <p className="field-hint">Searching for "{productiveSearch}"...</p>
+                      ) : identifiedApp && identifiedApp.section === 'productive' ? (
+                        identifiedApp.notFound ? (
+                          <p className="field-hint">{identifiedApp.message}</p>
+                        ) : (
+                          <div className="identified-app-result">
+                            <p className="field-hint">Found: <strong>{identifiedApp.display_name || identifiedApp.identifier}</strong></p>
+                            <div className="identified-app-actions">
+                              <button
+                                className="add-app-button productive"
+                                onClick={() => addIdentifiedApp(identifiedApp, 'productive')}
+                                disabled={addingIdentifiedApp}
+                              >
+                                {addingIdentifiedApp ? 'Adding...' : 'Add as Productive'}
+                              </button>
+                              <button
+                                className="add-app-button secondary"
+                                onClick={() => setIdentifiedApp(null)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
                           </div>
-                          <div className="alias-identifiers">
-                            {alias.identifiers.map(id => {
-                              const isSaving = savingAlias[`${id}-productive`];
-                              return (
-                                <button
-                                  key={id}
-                                  className="alias-identifier-btn"
-                                  disabled={isSaving}
-                                  onClick={() => addAppFromAlias(id, alias.displayName, 'productive', 'productiveAppsSelected')}
-                                >
-                                  {isSaving ? 'Adding...' : id}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  
-                  {/* No matches - offer to add custom app */}
-                  {filteredProductiveApps.length === 0 && productiveAliasSuggestions.length === 0 && productiveSearch.trim().length >= 2 && (
-                    <div className="custom-app-add">
-                      <p className="field-hint">No matching applications found.</p>
-                      <button
-                        className="add-custom-btn productive"
-                        disabled={savingAlias[`${productiveSearch.trim()}-productive`]}
-                        onClick={() => addAppFromAlias(productiveSearch.trim(), productiveSearch.trim(), 'productive', 'productiveAppsSelected')}
-                      >
-                        {savingAlias[`${productiveSearch.trim()}-productive`] ? 'Adding...' : `Add "${productiveSearch.trim()}" as productive app`}
-                      </button>
+                        )
+                      ) : (
+                        <>
+                          <p className="field-hint">No matching applications found for "{productiveSearch}".</p>
+                          <button
+                            className="search-app-button"
+                            onClick={() => searchForAppIdentifier(productiveSearch, 'productive')}
+                          >
+                            Search for this app
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
                 </>
@@ -792,51 +789,45 @@ function AppClassificationSettings({ projectKey }) {
                     </div>
                   )}
                   
-                  {/* Alias suggestions - show when aliases available */}
-                  {nonProductiveAliasSuggestions.length > 0 && (
-                    <div className="alias-suggestions">
-                      <p className="alias-hint">
-                        {filteredNonProductiveApps.length > 0 
-                          ? 'Add a new application variant:' 
-                          : 'App not found in classifications. Select an alias to add it:'}
-                      </p>
-                      {nonProductiveAliasSuggestions.slice(0, 5).map(alias => (
-                        <div key={alias.canonicalKey} className="alias-suggestion-item">
-                          <div className="alias-header">
-                            <span className="alias-name">{alias.displayName}</span>
-                            <span className="alias-category">{alias.category}</span>
+                  {/* No matches found - offer to search for app */}
+                  {filteredNonProductiveApps.length === 0 && nonProductiveSearch.trim().length >= 2 && (
+                    <div className="no-matches-message">
+                      {searchingAppSection === 'nonProductive' ? (
+                        <p className="field-hint">Searching for "{nonProductiveSearch}"...</p>
+                      ) : identifiedApp && identifiedApp.section === 'nonProductive' ? (
+                        identifiedApp.notFound ? (
+                          <p className="field-hint">{identifiedApp.message}</p>
+                        ) : (
+                          <div className="identified-app-result">
+                            <p className="field-hint">Found: <strong>{identifiedApp.display_name || identifiedApp.identifier}</strong></p>
+                            <div className="identified-app-actions">
+                              <button
+                                className="add-app-button non-productive"
+                                onClick={() => addIdentifiedApp(identifiedApp, 'non_productive')}
+                                disabled={addingIdentifiedApp}
+                              >
+                                {addingIdentifiedApp ? 'Adding...' : 'Add as Non-Productive'}
+                              </button>
+                              <button
+                                className="add-app-button secondary"
+                                onClick={() => setIdentifiedApp(null)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
                           </div>
-                          <div className="alias-identifiers">
-                            {alias.identifiers.map(id => {
-                              const isSaving = savingAlias[`${id}-non_productive`];
-                              return (
-                                <button
-                                  key={id}
-                                  className="alias-identifier-btn non-productive"
-                                  disabled={isSaving}
-                                  onClick={() => addAppFromAlias(id, alias.displayName, 'non_productive', 'nonProductiveAppsSelected')}
-                                >
-                                  {isSaving ? 'Adding...' : id}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  
-                  {/* No matches - offer to add custom app */}
-                  {filteredNonProductiveApps.length === 0 && nonProductiveAliasSuggestions.length === 0 && nonProductiveSearch.trim().length >= 2 && (
-                    <div className="custom-app-add">
-                      <p className="field-hint">No matching applications found.</p>
-                      <button
-                        className="add-custom-btn non-productive"
-                        disabled={savingAlias[`${nonProductiveSearch.trim()}-non_productive`]}
-                        onClick={() => addAppFromAlias(nonProductiveSearch.trim(), nonProductiveSearch.trim(), 'non_productive', 'nonProductiveAppsSelected')}
-                      >
-                        {savingAlias[`${nonProductiveSearch.trim()}-non_productive`] ? 'Adding...' : `Add "${nonProductiveSearch.trim()}" as non-productive app`}
-                      </button>
+                        )
+                      ) : (
+                        <>
+                          <p className="field-hint">No matching applications found for "{nonProductiveSearch}".</p>
+                          <button
+                            className="search-app-button"
+                            onClick={() => searchForAppIdentifier(nonProductiveSearch, 'nonProductive')}
+                          >
+                            Search for this app
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
                 </>
@@ -983,78 +974,47 @@ function AppClassificationSettings({ projectKey }) {
                       </button>
                     ))}
                   </div>
-                  
-                  {/* Alias suggestions - show when aliases available */}
-                  {privateAliasSuggestions.length > 0 && (
-                    <div className="alias-suggestions">
-                      <p className="alias-hint">Add a new application variant:</p>
-                      {privateAliasSuggestions.slice(0, 5).map(alias => (
-                        <div key={alias.canonicalKey} className="alias-suggestion-item">
-                          <div className="alias-header">
-                            <span className="alias-name">{alias.displayName}</span>
-                            <span className="alias-category">{alias.category}</span>
-                          </div>
-                          <div className="alias-identifiers">
-                            {alias.identifiers.map(id => {
-                              const isSaving = savingAlias[`${id}-private`];
-                              return (
-                                <button
-                                  key={id}
-                                  className="alias-identifier-btn private"
-                                  disabled={isSaving}
-                                  onClick={() => addAppFromAlias(id, alias.displayName, 'private', 'privateSites')}
-                                >
-                                  {isSaving ? 'Adding...' : id}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
                 </>
-              ) : privateAliasSuggestions.length > 0 ? (
-                <div className="alias-suggestions">
-                  <p className="alias-hint">App not found in classifications. Select an alias to add it:</p>
-                  {privateAliasSuggestions.slice(0, 5).map(alias => (
-                    <div key={alias.canonicalKey} className="alias-suggestion-item">
-                      <div className="alias-header">
-                        <span className="alias-name">{alias.displayName}</span>
-                        <span className="alias-category">{alias.category}</span>
+              ) : privateSearch.trim().length >= 2 ? (
+                <div className="no-matches-message">
+                  {searchingAppSection === 'private' ? (
+                    <p className="field-hint">Searching for "{privateSearch}"...</p>
+                  ) : identifiedApp && identifiedApp.section === 'private' ? (
+                    identifiedApp.notFound ? (
+                      <p className="field-hint">{identifiedApp.message}</p>
+                    ) : (
+                      <div className="identified-app-result">
+                        <p className="field-hint">Found: <strong>{identifiedApp.display_name || identifiedApp.identifier}</strong></p>
+                        <div className="identified-app-actions">
+                          <button
+                            className="add-app-button private"
+                            onClick={() => addIdentifiedApp(identifiedApp, 'private')}
+                            disabled={addingIdentifiedApp}
+                          >
+                            {addingIdentifiedApp ? 'Adding...' : 'Add as Private'}
+                          </button>
+                          <button
+                            className="add-app-button secondary"
+                            onClick={() => setIdentifiedApp(null)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
                       </div>
-                      <div className="alias-identifiers">
-                        {alias.identifiers.map(id => {
-                          const isSaving = savingAlias[`${id}-private`];
-                          return (
-                            <button
-                              key={id}
-                              className="alias-identifier-btn private"
-                              disabled={isSaving}
-                              onClick={() => addAppFromAlias(id, alias.displayName, 'private', 'privateSites')}
-                            >
-                              {isSaving ? 'Adding...' : id}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="custom-app-add">
-                  <p className="field-hint">No matching applications found.</p>
-                  {privateSearch.trim().length >= 2 && (
-                    <button
-                      className="add-custom-btn private"
-                      disabled={savingAlias[`${privateSearch.trim()}-private`]}
-                      onClick={() => addAppFromAlias(privateSearch.trim(), privateSearch.trim(), 'private', 'privateSites')}
-                    >
-                      {savingAlias[`${privateSearch.trim()}-private`] ? 'Adding...' : `Add "${privateSearch.trim()}" as private app`}
-                    </button>
+                    )
+                  ) : (
+                    <>
+                      <p className="field-hint">No matching applications found for "{privateSearch}".</p>
+                      <button
+                        className="search-app-button"
+                        onClick={() => searchForAppIdentifier(privateSearch, 'private')}
+                      >
+                        Search for this app
+                      </button>
+                    </>
                   )}
                 </div>
-              )}
+              ) : null}
               {privateSearch.trim() && filteredPrivateApps.length > DEFAULT_VISIBLE_APPS && (
                 <button
                   className="load-more-button"

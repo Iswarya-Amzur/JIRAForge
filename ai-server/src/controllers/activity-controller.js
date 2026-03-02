@@ -81,4 +81,35 @@ async function classifyApp(req, res, next) {
   }
 }
 
-module.exports = { analyzeBatch, classifyApp };
+/**
+ * POST /api/identify-app
+ * Accepts a search term (app name) and uses LLM to identify
+ * what application it likely refers to. Used when:
+ * 1. Admin searches for an app not in the database
+ * 2. psutil can't find it (app is not currently running)
+ * 
+ * LLM fallback provides best-guess identification.
+ */
+async function identifyApp(req, res, next) {
+  try {
+    const { search_term } = req.body;
+
+    if (!search_term || search_term.trim().length < 2) {
+      return res.status(400).json({
+        success: false,
+        error: 'search_term is required and must be at least 2 characters'
+      });
+    }
+
+    logger.info(`[ActivityController] Identifying app by search term: "${search_term}"`);
+
+    const result = await activityService.identifyAppByName(search_term.trim());
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    logger.error('[ActivityController] Error in identifyApp:', error);
+    next(error);
+  }
+}
+
+module.exports = { analyzeBatch, classifyApp, identifyApp };

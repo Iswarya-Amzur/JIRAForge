@@ -7,7 +7,7 @@
 module.exports = {
     type: 'login_reminder',
     
-    subject: 'Reminder: Login to JIRAForge Time Tracker',
+    subject: 'We miss you! Come back to TimeTracker 😊',
     
     /**
      * Generate plain text email body
@@ -18,26 +18,28 @@ module.exports = {
      * @returns {string} Plain text email body
      */
     text: ({ displayName, loginUrl, lastLoginDate }) => `
-Hi ${displayName},
+Hello ${displayName},
 
-We noticed you haven't logged into JIRAForge Time Tracker recently.${lastLoginDate ? `\n\nYour last activity was on ${lastLoginDate}.` : ''}
+I hope you're doing well! 😊
 
-Login now to continue tracking your work time and stay productive:
+We noticed it's been a while since you've logged into TimeTracker, and we wanted to reach out.${lastLoginDate ? `\n\nYour last visit was on ${lastLoginDate}.` : ''}
+
+Whenever you're ready, we'd love to see you back:
 ${loginUrl}
 
-Why use JIRAForge?
-- Automatic time tracking linked to Jira issues
-- Easy worklog synchronization
-- Detailed productivity insights
+Here's what's waiting for you:
+- Automatic time tracking that links directly to your Jira issues
+- Easy worklog synchronization (no more manual entry!)
+- Detailed productivity insights to help you work smarter
 
-If you're having trouble logging in, please contact support.
+If you're having any trouble logging in or have questions, we're here to help - just reach out to our friendly support team!
 
-Best regards,
-The JIRAForge Team
+Warm regards,
+The TimeTracker Team
 
 ---
-You're receiving this email because you have a JIRAForge account.
-To stop receiving these reminders, update your notification settings.
+You're receiving this because you have a JIRAForge account.
+You can update your notification preferences anytime in your settings.
     `.trim(),
     
     /**
@@ -136,34 +138,34 @@ To stop receiving these reminders, update your notification settings.
                 <h1>🚀 JIRAForge</h1>
             </div>
             
-            <h2>Hi ${displayName},</h2>
+            <h2>Hello ${displayName}! 👋</h2>
             
-            <p>We noticed you haven't logged into JIRAForge Time Tracker recently.</p>
+            <p>I hope this message finds you well! We noticed it's been a little while since you've logged into JIRAForge Time Tracker, and we wanted to reach out.</p>
             
-            ${lastLoginDate ? `<div class="last-login">📅 Your last activity was on <strong>${lastLoginDate}</strong></div>` : ''}
+            ${lastLoginDate ? `<div class="last-login">📅 Your last visit was on <strong>${lastLoginDate}</strong></div>` : ''}
             
-            <p>Login now to continue tracking your work time and stay productive:</p>
+            <p>Whenever you're ready, we'd love to see you back! Login to continue tracking your work time:</p>
             
             <p style="text-align: center;">
                 <a href="${loginUrl}" class="button">Login to JIRAForge</a>
             </p>
             
             <div class="features">
-                <strong>Why use JIRAForge?</strong>
+                <strong>Here's what's waiting for you:</strong>
                 <ul>
-                    <li>Automatic time tracking linked to Jira issues</li>
-                    <li>Easy worklog synchronization</li>
-                    <li>Detailed productivity insights</li>
+                    <li>Automatic time tracking that links directly to your Jira issues</li>
+                    <li>Easy worklog synchronization (no more manual entry!)</li>
+                    <li>Detailed productivity insights to help you work smarter</li>
                 </ul>
             </div>
             
-            <p>If you're having trouble logging in, please contact support.</p>
+            <p>Having any trouble logging in? No worries! Our friendly support team is here to help - just reach out anytime.</p>
             
-            <p>Best regards,<br><strong>The JIRAForge Team</strong></p>
+            <p>Warm regards,<br><strong>The JIRAForge Team</strong></p>
             
             <div class="footer">
                 <p>You're receiving this email because you have a JIRAForge account.</p>
-                <p>To stop receiving these reminders, update your notification settings.</p>
+                <p>You can update your notification preferences anytime in your settings.</p>
             </div>
         </div>
     </div>

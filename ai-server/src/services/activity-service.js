@@ -3,13 +3,14 @@
  * Handles text-only AI analysis for the new event-based activity tracking pipeline.
  * - analyzeBatch(): Matches productive activity records to Jira issues (single LLM call)
  * - classifyUnknownApp(): Classifies unknown applications via LLM
+ * - identifyAppByName(): Identifies apps by search term using LLM (for admin app classification)
  *
  * Uses the existing AI client with 3-tier fallback (Fireworks → LiteLLM).
  * No vision model needed — all analysis is text-only.
  */
 
 const { chatCompletionWithFallback, isActivityAIEnabled } = require('./ai/ai-client');
-const { formatAssignedIssues } = require('./ai/prompts');
+const { formatAssignedIssues, APP_IDENTIFICATION_SYSTEM_PROMPT, buildAppIdentificationPrompt } = require('./ai/prompts');
 const activityDbService = require('./db/activity-db-service');
 const logger = require('../utils/logger');
 
@@ -343,7 +344,88 @@ async function classifyUnknownApp(appName, windowTitle, ocrText, userId = null, 
   }
 }
 
+/**
+ * Identify an application by name/search term using LLM.
+ * Used when admin searches for an app that:
+ * 1. Is not in the database
+ * 2. Is not currently running (psutil can't find it)
+ *
+ * LLM identifies the executable name and display name only.
+ * Classification is determined by which section the admin is searching in.
+ *
+ * @param {string} searchTerm - App name or search term from admin
+ * @returns {Promise<Object>} Identification result with identifier, display_name
+ */
+async function identifyAppByName(searchTerm) {
+  if (!isActivityAIEnabled()) {
+    throw new Error('AI client not initialized - check API keys');
+  }
+
+  const userPrompt = buildAppIdentificationPrompt(searchTerm);
+
+  const messages = [
+    { role: 'system', content: APP_IDENTIFICATION_SYSTEM_PROMPT },
+    { role: 'user', content: userPrompt }
+  ];
+
+  try {
+    const { response, provider, model } = await chatCompletionWithFallback({
+      messages,
+      temperature: 0.2,
+      max_tokens: 150,
+      isVision: false,
+      reasoningEffort: 'none',
+      apiCallName: 'app-identification'
+    });
+
+    const content = response.choices[0].message.content.trim();
+    logger.info(`[ActivityService] App identification done | ${provider} (${model}) | search: "${searchTerm}"`);
+
+    // Parse JSON response
+    let result;
+    try {
+      result = JSON.parse(content);
+    } catch (e) {
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        result = JSON.parse(jsonMatch[0]);
+      } else {
+        logger.error('[ActivityService] Failed to parse app identification response:', content.substring(0, 200));
+        throw new Error('Failed to parse AI response');
+      }
+    }
+
+    if (!result.identified) {
+      return {
+        identified: false,
+        source: 'llm',
+        aiProvider: provider,
+        aiModel: model
+      };
+    }
+
+    return {
+      identified: true,
+      identifier: result.identifier,
+      display_name: result.display_name,
+      confidence: result.confidence || 0.7,
+      source: 'llm',
+      aiProvider: provider,
+      aiModel: model
+    };
+
+  } catch (error) {
+    logger.error('[ActivityService] App identification failed:', error.message);
+    return {
+      identified: false,
+      source: 'llm',
+      error: error.message
+    };
+  }
+}
+
 module.exports = {
   analyzeBatch,
-  classifyUnknownApp
+  classifyUnknownApp,
+  identifyAppByName
 };

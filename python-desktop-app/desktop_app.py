@@ -61,6 +61,7 @@ try:
     import win32con
     import win32event
     import winerror
+    import win32api
     WIN32_AVAILABLE = True
 except ImportError:
     WIN32_AVAILABLE = False
@@ -4806,6 +4807,132 @@ class TimeTracker:
             })
 
         # ============================================================================
+        # APPLICATION DETECTION API (for Admin App Classification)
+        # ============================================================================
+
+        @self.app.route('/api/search-running-app', methods=['POST'])
+        def search_running_app():
+            """
+            Search running processes for an application matching the search term.
+            Used when admin searches for an app not in the database.
+            
+            Request body:
+                { "search_term": "Zoom" }
+            
+            Returns matching running process with metadata if found.
+            """
+            try:
+                data = request.get_json()
+                search_term = (data.get('search_term') or '').strip().lower() if data else ''
+                
+                if not search_term or len(search_term) < 2:
+                    return jsonify({
+                        'success': False,
+                        'error': 'search_term must be at least 2 characters'
+                    }), 400
+                
+                # System processes to skip
+                SYSTEM_PROCESSES = {
+                    'svchost.exe', 'conhost.exe', 'csrss.exe', 'dwm.exe',
+                    'system', 'registry', 'idle', 'smss.exe', 'lsass.exe',
+                    'services.exe', 'wininit.exe', 'winlogon.exe', 'fontdrvhost.exe',
+                    'spoolsv.exe', 'searchindexer.exe', 'audiodg.exe', 'runtimebroker.exe',
+                    'searchhost.exe', 'sihost.exe', 'taskhostw.exe', 'ctfmon.exe',
+                    'securityhealthservice.exe', 'sgrmbroker.exe', 'searchprotocolhost.exe'
+                }
+                
+                matches = []
+                seen_names = set()
+                
+                for proc in psutil.process_iter(['pid', 'name', 'exe']):
+                    try:
+                        info = proc.info
+                        name = info.get('name', '')
+                        exe_path = info.get('exe')
+                        
+                        # Skip system processes
+                        if name.lower() in SYSTEM_PROCESSES:
+                            continue
+                        
+                        # Skip duplicates
+                        name_lower = name.lower()
+                        if name_lower in seen_names:
+                            continue
+                        seen_names.add(name_lower)
+                        
+                        # Skip processes without exe path
+                        if not exe_path:
+                            continue
+                        
+                        # Check if search term matches process name or display name
+                        name_without_ext = name_lower.replace('.exe', '').replace('.app', '')
+                        
+                        # Try to get display name for better matching
+                        display_name = None
+                        description = None
+                        company = None
+                        version = None
+                        
+                        if WIN32_AVAILABLE:
+                            try:
+                                version_info = self._get_file_version_info(exe_path)
+                                if version_info:
+                                    display_name = version_info.get('ProductName', '')
+                                    description = version_info.get('FileDescription', '')
+                                    company = version_info.get('CompanyName', '')
+                                    version = version_info.get('FileVersion', '')
+                            except Exception:
+                                pass
+                        
+                        # Match against process name, display name, or description
+                        searchable = f"{name_without_ext} {display_name or ''} {description or ''}".lower()
+                        
+                        if search_term in searchable:
+                            match_score = 1.0 if search_term == name_without_ext else 0.8
+                            if display_name and search_term in display_name.lower():
+                                match_score = 0.95
+                            
+                            matches.append({
+                                'identifier': name,  # The actual process name (e.g., "Zoom.exe")
+                                'display_name': display_name or name.replace('.exe', '').replace('.app', '').title(),
+                                'description': description,
+                                'company': company,
+                                'version': version,
+                                'executable_path': exe_path,
+                                'match_score': match_score,
+                                'source': 'psutil',
+                                'confidence': 'high' if display_name else 'medium'
+                            })
+                            
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        continue
+                
+                # Sort by match score (best matches first)
+                matches.sort(key=lambda x: x['match_score'], reverse=True)
+                
+                if matches:
+                    return jsonify({
+                        'success': True,
+                        'found': True,
+                        'matches': matches[:5],  # Return top 5 matches
+                        'best_match': matches[0]
+                    })
+                else:
+                    return jsonify({
+                        'success': True,
+                        'found': False,
+                        'matches': [],
+                        'message': f'No running process found matching "{search_term}"'
+                    })
+                
+            except Exception as e:
+                self.add_admin_log('ERROR', f'search_running_app failed: {str(e)}')
+                return jsonify({
+                    'success': False,
+                    'error': str(e)
+                }), 500
+
+        # ============================================================================
         # USER SETTINGS PAGE (Accessible to all users via system tray)
         # ============================================================================
 
@@ -4935,6 +5062,48 @@ class TimeTracker:
         self._save_cached_user_info(atlassian_user, user_id)
         
         return user_id
+
+    def _get_file_version_info(self, exe_path):
+        """
+        Extract file version information from an executable using Windows API.
+        Returns dict with ProductName, FileDescription, CompanyName, FileVersion.
+        """
+        if not WIN32_AVAILABLE:
+            return None
+        
+        try:
+            # Get the fixed file info
+            info = {}
+            
+            try:
+                # Get the file version info block
+                fixed_info = win32api.GetFileVersionInfo(exe_path, '\\')
+                
+                # Get the language and codepage
+                lang_info = win32api.GetFileVersionInfo(exe_path, '\\VarFileInfo\\Translation')
+                if lang_info:
+                    # Use the first language/codepage pair
+                    lang, codepage = lang_info[0]
+                    
+                    # String file info keys we want
+                    keys = ['ProductName', 'FileDescription', 'CompanyName', 'FileVersion', 'ProductVersion']
+                    
+                    for key in keys:
+                        try:
+                            str_info_path = f'\\StringFileInfo\\{lang:04x}{codepage:04x}\\{key}'
+                            value = win32api.GetFileVersionInfo(exe_path, str_info_path)
+                            if value:
+                                info[key] = value.strip()
+                        except Exception:
+                            pass
+                            
+            except Exception:
+                pass
+            
+            return info if info else None
+            
+        except Exception as e:
+            return None
 
     def _get_user_cache_path(self):
         """Get path to user cache file"""

@@ -26,27 +26,27 @@ module.exports = {
      * @returns {string} Plain text email body
      */
     text: ({ displayName, version, currentVersion, releaseNotes, downloadUrl, isMandatory }) => `
-Hi ${displayName},
+Hello ${displayName},
 
-A new version of the JIRAForge Desktop App is available!
+We're excited to share that a new version of the TimeTracker Desktop App is ready for you! 🎉
 
 Current version: ${currentVersion}
 New version: ${version}${isMandatory ? ' (Required Update)' : ''}
 
-What's new in v${version}:
+What's new and improved in v${version}:
 ${releaseNotes || '- Bug fixes and performance improvements'}
 
-Download the update: ${downloadUrl}
+Ready to update? Download here: ${downloadUrl}
 
-${isMandatory ? '⚠️ This is a required update. Please update as soon as possible to continue using JIRAForge.\n' : ''}
-We recommend updating to get the latest features and security improvements.
+${isMandatory ? '⚠️ This is a required update to ensure everything works smoothly. Please update at your earliest convenience to continue enjoying TimeTracker.\n' : ''}
+We recommend updating to enjoy the latest features, improvements, and security enhancements.
 
-Best regards,
+Warm regards,
 The JIRAForge Team
 
 ---
-You're receiving this email because you have the JIRAForge Desktop App installed.
-To stop receiving update notifications, update your notification settings.
+You're receiving this because you have the JIRAForge Desktop App installed.
+You can manage your notification preferences anytime in your settings.
     `.trim(),
     
     /**
@@ -175,9 +175,9 @@ To stop receiving update notifications, update your notification settings.
                 <h1>🚀 JIRAForge</h1>
             </div>
             
-            <h2>Hi ${displayName},</h2>
+            <h2>Hello ${displayName}! 👋</h2>
             
-            <p>A new version of the JIRAForge Desktop App is available!</p>
+            <p>We're excited to let you know that a new version of the JIRAForge Desktop App is ready for you!</p>
             
             <div class="version-box">
                 <span class="old-version">${currentVersion}</span>
@@ -188,12 +188,12 @@ To stop receiving update notifications, update your notification settings.
             ${isMandatory ? `
             <div class="mandatory-warning">
                 <strong>⚠️ Required Update</strong>
-                This update is required. Please update as soon as possible to continue using JIRAForge.
+                To ensure everything continues to work smoothly, this update is required. Please update at your earliest convenience!
             </div>
             ` : ''}
             
             <div class="release-notes">
-                <h4>📋 What's new in v${version}:</h4>
+                <h4>📋 What's new and improved in v${version}:</h4>
                 <pre>${releaseNotes || '• Bug fixes and performance improvements'}</pre>
             </div>
             
@@ -201,13 +201,13 @@ To stop receiving update notifications, update your notification settings.
                 <a href="${downloadUrl}" class="button">⬇️ Download Update</a>
             </p>
             
-            <p>We recommend updating to get the latest features and security improvements.</p>
+            <p>We recommend updating to enjoy the latest features, improvements, and security enhancements!</p>
             
-            <p>Best regards,<br><strong>The JIRAForge Team</strong></p>
+            <p>Warm regards,<br><strong>The JIRAForge Team</strong></p>
             
             <div class="footer">
                 <p>You're receiving this email because you have the JIRAForge Desktop App installed.</p>
-                <p>To stop receiving update notifications, update your notification settings.</p>
+                <p>You can manage your notification preferences anytime in your settings.</p>
             </div>
         </div>
     </div>
