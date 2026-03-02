@@ -104,7 +104,7 @@ class SheetsLogger {
     this.enabled = config.enabled !== false;
     this.projectName = config.projectName || 'Jira AI Server';
     this.employeeName = config.employeeName || 'AI Server';
-    this.apiAccountEmail = config.apiAccountEmail || process.env.LITELLM_USER || 'ai-server@amzur.com';
+    this.apiAccountEmail = config.apiAccountEmail || process.env.SHEETS_API_ACCOUNT_EMAIL || 'ai-server@amzur.com';
     this._sheets = null;
     this._auth = null;
   }
@@ -307,7 +307,7 @@ function initializeSheetsLogger() {
   const credentials = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   const projectName = process.env.SHEETS_PROJECT_NAME || 'Jira AI Server';
   const employeeName = process.env.SHEETS_EMPLOYEE_NAME || 'AI Server';
-  const apiAccountEmail = process.env.SHEETS_API_ACCOUNT_EMAIL || process.env.LITELLM_USER || 'ai-server@amzur.com';
+  const apiAccountEmail = process.env.SHEETS_API_ACCOUNT_EMAIL || 'ai-server@amzur.com';
 
   if (!enabled) {
     logger.info('[SheetsLogger] Disabled (SHEETS_LOGGING_ENABLED != true)');

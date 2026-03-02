@@ -1,11 +1,10 @@
 /**
  * AI Client Module
- * Centralized AI client management with 3-tier fallback
+ * Centralized AI client management with 2-tier fallback
  *
  * Flow:
- * 1. LiteLLM with Gemini (primary) - gemini/gemini-2.0-flash
- * 2. LiteLLM with GPT-4o (fallback 1) - gpt-4o
- * 3. Fireworks AI (fallback 2) - Qwen2.5-VL-32B
+ * 1. Portkey (primary) - @jira/gemini-2.0-flash (via Portkey AI Gateway)
+ * 2. Fireworks AI (fallback) - Qwen2.5-VL-32B
  */
 
 const OpenAI = require('openai');
@@ -16,29 +15,23 @@ const { logCostTracking } = require('../cost-tracker');
 // AI request timeout (default: 60 seconds)
 const AI_REQUEST_TIMEOUT_MS = parseInt(process.env.AI_REQUEST_TIMEOUT_MS || '60000', 10);
 
-// User email cache for LiteLLM user tracking (TTL: 10 minutes)
-const userEmailCache = new Map();
-const USER_EMAIL_CACHE_TTL = 10 * 60 * 1000;
-
 // Client instances
 let fireworksClient = null;
-let litellmGeminiClient = null;   // For Gemini models
-let litellmOpenAIClient = null;   // For GPT-4o models
+let portKeyClient = null;
 
 // Dynamic provider management
 const providerState = {
   // Track failures per provider
   failures: {
-    'litellm-gemini': 0,
-    'litellm-gpt4o': 0,
+    'portkey-gemini': 0,
     'fireworks': 0
   },
   // Track demoted providers and when they were demoted
-  demoted: {}, // { 'litellm-gemini': { demotedAt: timestamp, originalIndex: 0 } }
+  demoted: {}, // { 'portkey-gemini': { demotedAt: timestamp, originalIndex: 0 } }
   // Current provider order (will be reordered dynamically)
-  order: ['litellm-gemini', 'litellm-gpt4o', 'fireworks'],
+  order: ['portkey-gemini', 'fireworks'],
   // Original order for restoration
-  originalOrder: ['litellm-gemini', 'litellm-gpt4o', 'fireworks']
+  originalOrder: ['portkey-gemini', 'fireworks']
 };
 
 // Configuration (with defaults)
@@ -54,11 +47,11 @@ function isFireworksEnabled() {
 }
 
 /**
- * Check if LiteLLM is enabled via environment variable
- * @returns {boolean} True if USE_LITELLM is set to 'true'
+ * Check if Portkey is enabled via environment variable
+ * @returns {boolean} True if USE_PORTKEY is set to 'true'
  */
-function isLiteLLMEnabled() {
-  return process.env.USE_LITELLM === 'true';
+function isPortkeyEnabled() {
+  return process.env.USE_PORTKEY === 'true';
 }
 
 /**
@@ -91,59 +84,34 @@ function initializeFireworksClient() {
 }
 
 /**
- * Initialize the LiteLLM Gemini client
- * @returns {OpenAI|null} LiteLLM Gemini client or null if not configured
+ * Initialize the Portkey client
+ * Uses the OpenAI SDK with Portkey's gateway URL and API key header.
+ * Model routing is handled by the model string (e.g. @jira/gemini-2.0-flash).
+ * @returns {OpenAI|null} Portkey client or null if not configured
  */
-function initializeLiteLLMGeminiClient() {
-  const geminiApiKey = process.env.LITELLM_GEMINI_API_KEY;
-  const litellmBaseUrl = process.env.LITELLM_BASE_URL || 'https://litellm.amzur.com';
+function initializePortkeyClient() {
+  const portKeyApiKey = process.env.PORTKEY_API_KEY;
 
-  if (!geminiApiKey) {
-    logger.warn('[AI] LiteLLM Gemini API key not configured');
+  if (!portKeyApiKey) {
+    logger.warn('[AI] Portkey API key not configured');
     return null;
   }
 
   try {
-    litellmGeminiClient = new OpenAI({
-      apiKey: geminiApiKey,
-      baseURL: litellmBaseUrl,
+    portKeyClient = new OpenAI({
+      apiKey: 'portkey',  // Not used by Portkey — auth is via x-portkey-api-key header
+      baseURL: 'https://api.portkey.ai/v1',
+      defaultHeaders: {
+        'x-portkey-api-key': portKeyApiKey,
+      },
       timeout: AI_REQUEST_TIMEOUT_MS,
       maxRetries: 0
     });
-    logger.info('[AI] LiteLLM/Gemini initialized | Endpoint: %s | Key: %s...',
-      litellmBaseUrl, geminiApiKey.substring(0, 10));
-    return litellmGeminiClient;
+    const model = getPortkeyModel();
+    logger.info('[AI] Portkey initialized | Model: %s', getShortModelName(model));
+    return portKeyClient;
   } catch (error) {
-    logger.error('[AI] LiteLLM/Gemini init failed: %s', error.message);
-    return null;
-  }
-}
-
-/**
- * Initialize the LiteLLM OpenAI/GPT-4o client
- * @returns {OpenAI|null} LiteLLM OpenAI client or null if not configured
- */
-function initializeLiteLLMOpenAIClient() {
-  const openaiApiKey = process.env.LITELLM_OPENAI_API_KEY;
-  const litellmBaseUrl = process.env.LITELLM_BASE_URL || 'https://litellm.amzur.com';
-
-  if (!openaiApiKey) {
-    logger.warn('[AI] LiteLLM OpenAI API key not configured');
-    return null;
-  }
-
-  try {
-    litellmOpenAIClient = new OpenAI({
-      apiKey: openaiApiKey,
-      baseURL: litellmBaseUrl,
-      timeout: AI_REQUEST_TIMEOUT_MS,
-      maxRetries: 0
-    });
-    logger.info('[AI] LiteLLM/OpenAI initialized | Endpoint: %s | Key: %s...',
-      litellmBaseUrl, openaiApiKey.substring(0, 10));
-    return litellmOpenAIClient;
-  } catch (error) {
-    logger.error('[AI] LiteLLM/OpenAI init failed: %s', error.message);
+    logger.error('[AI] Portkey init failed: %s', error.message);
     return null;
   }
 }
@@ -154,37 +122,35 @@ function initializeLiteLLMOpenAIClient() {
  */
 function initializeClient() {
   logger.info('[AI] Initializing AI clients...');
-  logger.info('[AI] Config: USE_FIREWORKS=%s | USE_LITELLM=%s',
-    process.env.USE_FIREWORKS || 'false',
-    process.env.USE_LITELLM || 'false');
+  logger.info('[AI] Config: USE_PORTKEY=%s | USE_FIREWORKS=%s',
+    process.env.USE_PORTKEY || 'false',
+    process.env.USE_FIREWORKS || 'false');
+
+  // Initialize Portkey if enabled
+  if (isPortkeyEnabled()) {
+    initializePortkeyClient();
+  }
 
   // Initialize Fireworks if enabled
   if (isFireworksEnabled()) {
     initializeFireworksClient();
   }
 
-  // Initialize LiteLLM clients if enabled (separate keys for Gemini and OpenAI)
-  if (isLiteLLMEnabled()) {
-    initializeLiteLLMGeminiClient();
-    initializeLiteLLMOpenAIClient();
-  }
-
-  // Log the 3-tier fallback mode
-  const litellmEnabled = isLiteLLMEnabled();
+  // Log the fallback chain
+  const portKeyEnabled = isPortkeyEnabled();
   const fireworksEnabled = isFireworksEnabled();
 
-  if (!litellmEnabled && !fireworksEnabled) {
+  if (!portKeyEnabled && !fireworksEnabled) {
     logger.warn('[AI] WARNING: No AI providers enabled! AI features will not work.');
   } else {
     const chain = [];
-    if (litellmEnabled) {
-      chain.push(`LiteLLM/Gemini (${getShortModelName(getLiteLLMModel())})`);
-      chain.push(`LiteLLM/GPT-4o (${getShortModelName(getLiteLLMFallbackModel())})`);
+    if (portKeyEnabled) {
+      chain.push(`Portkey (${getShortModelName(getPortkeyModel())})`);
     }
     if (fireworksEnabled) {
       chain.push(`Fireworks (${getShortModelName(getFireworksModel())})`);
     }
-    logger.info('[AI] 3-Tier Fallback Chain: %s', chain.join(' -> '));
+    logger.info('[AI] Fallback Chain: %s', chain.join(' -> '));
   }
 
   return getClient();
@@ -203,35 +169,15 @@ function getFireworksClient() {
 }
 
 /**
- * Get the LiteLLM Gemini client instance
- * @returns {OpenAI|null} LiteLLM Gemini client or null
+ * Get the Portkey client instance
+ * @returns {OpenAI|null} Portkey client or null
  */
-function getLiteLLMGeminiClient() {
-  if (!litellmGeminiClient && isLiteLLMEnabled() && process.env.LITELLM_GEMINI_API_KEY) {
-    logger.info('[AI] getLiteLLMGeminiClient() lazy init');
-    initializeLiteLLMGeminiClient();
+function getPortkeyClient() {
+  if (!portKeyClient && isPortkeyEnabled() && process.env.PORTKEY_API_KEY) {
+    logger.info('[AI] getPortkeyClient() lazy init');
+    initializePortkeyClient();
   }
-  return litellmGeminiClient;
-}
-
-/**
- * Get the LiteLLM OpenAI/GPT-4o client instance
- * @returns {OpenAI|null} LiteLLM OpenAI client or null
- */
-function getLiteLLMOpenAIClient() {
-  if (!litellmOpenAIClient && isLiteLLMEnabled() && process.env.LITELLM_OPENAI_API_KEY) {
-    logger.info('[AI] getLiteLLMOpenAIClient() lazy init');
-    initializeLiteLLMOpenAIClient();
-  }
-  return litellmOpenAIClient;
-}
-
-/**
- * Get the primary LiteLLM client (Gemini by default, for backward compatibility)
- * @returns {OpenAI|null} LiteLLM client or null
- */
-function getLiteLLMClient() {
-  return getLiteLLMGeminiClient() || getLiteLLMOpenAIClient();
+  return portKeyClient;
 }
 
 /**
@@ -246,8 +192,7 @@ function getClient() {
       return config.client;
     }
   }
-  // Fallback to any available client
-  return getLiteLLMGeminiClient() || getLiteLLMOpenAIClient() || getFireworksClient();
+  return getPortkeyClient() || getFireworksClient();
 }
 
 /**
@@ -256,7 +201,7 @@ function getClient() {
  * @returns {boolean} True if any AI client is available and screenshot AI is enabled
  */
 function isAIEnabled() {
-  const hasClient = getFireworksClient() !== null || getLiteLLMClient() !== null;
+  const hasClient = getPortkeyClient() !== null || getFireworksClient() !== null;
   return hasClient && process.env.USE_AI_FOR_SCREENSHOTS !== 'false';
 }
 
@@ -267,7 +212,7 @@ function isAIEnabled() {
  * @returns {boolean} True if any AI client is available and activity AI is enabled
  */
 function isActivityAIEnabled() {
-  const hasClient = getFireworksClient() !== null || getLiteLLMClient() !== null;
+  const hasClient = getPortkeyClient() !== null || getFireworksClient() !== null;
   return hasClient && process.env.USE_AI_FOR_ACTIVITIES !== 'false';
 }
 
@@ -278,8 +223,7 @@ function isActivityAIEnabled() {
  */
 function getProviderDisplayName(providerId) {
   const names = {
-    'litellm-gemini': 'Gemini',
-    'litellm-gpt4o': 'GPT-4o',
+    'portkey-gemini': 'Portkey/Gemini',
     'fireworks': 'Fireworks/Qwen'
   };
   return names[providerId] || providerId;
@@ -308,7 +252,6 @@ function checkAndRestoreDemotedProviders() {
       providerState.failures[providerId] = 0;
       delete providerState.demoted[providerId];
 
-      const newPrimary = getProviderDisplayName(providerState.order[0]);
       logger.info('[AI] CIRCUIT BREAKER RESET - %s cooldown complete (%d min), restored to position %d',
         getProviderDisplayName(providerId), getCooldownMinutes(), targetIndex + 1);
       logger.info('[AI] Current provider order: %s', providerState.order.map(getProviderDisplayName).join(' -> '));
@@ -339,7 +282,7 @@ function getProviderOrder() {
  * Handle provider request failure
  * Tracks consecutive failures and demotes provider if threshold reached
  * @param {Error} error - The error that occurred
- * @param {string} providerId - The provider ID (litellm-gemini, litellm-gpt4o, fireworks)
+ * @param {string} providerId - The provider ID (portkey-gemini, fireworks)
  */
 function handleProviderFailure(error, providerId) {
   providerState.failures[providerId] = (providerState.failures[providerId] || 0) + 1;
@@ -407,19 +350,12 @@ function getFireworksModel() {
 }
 
 /**
- * Get the LiteLLM primary model name (Gemini)
- * @returns {string} Model name for LiteLLM requests
+ * Get the Portkey model name
+ * Includes virtual key slug, e.g. @jira/gemini-2.0-flash
+ * @returns {string} Model name for Portkey requests
  */
-function getLiteLLMModel() {
-  return process.env.LITELLM_MODEL || 'gemini/gemini-2.0-flash';
-}
-
-/**
- * Get the LiteLLM fallback model name (GPT-4o)
- * @returns {string} Fallback model name for LiteLLM requests
- */
-function getLiteLLMFallbackModel() {
-  return process.env.LITELLM_FALLBACK_MODEL || 'gpt-4o';
+function getPortkeyModel() {
+  return process.env.PORTKEY_MODEL || '@jira/gemini-2.0-flash';
 }
 
 /**
@@ -428,6 +364,11 @@ function getLiteLLMFallbackModel() {
  * @returns {string} Short model name
  */
 function getShortModelName(model) {
+  // Portkey @slug/model format — strip the virtual key slug
+  if (model.startsWith('@')) {
+    const slashIdx = model.indexOf('/', 1);
+    return slashIdx !== -1 ? model.slice(slashIdx + 1) : model;
+  }
   // Fireworks models
   if (model.includes('qwen2p5-vl-32b')) return 'Qwen2.5-VL-32B';
   if (model.includes('qwen2p5-vl-72b')) return 'Qwen2.5-VL-72B';
@@ -454,9 +395,7 @@ function getVisionModel() {
   const order = getProviderOrder();
   const primary = order[0];
   if (primary === 'fireworks') return getFireworksModel();
-  if (primary === 'litellm-gemini') return getLiteLLMModel();
-  if (primary === 'litellm-gpt4o') return getLiteLLMFallbackModel();
-  return getLiteLLMModel();
+  return getPortkeyModel();
 }
 
 /**
@@ -468,53 +407,14 @@ function getTextModel() {
 }
 
 /**
- * Get default user identifier for LiteLLM tracking (fallback)
- * @returns {string} Default user email for usage tracking
- */
-function getDefaultLiteLLMUser() {
-  return process.env.LITELLM_USER || 'ai-server@amzur.com';
-}
-
-/**
- * Resolve the actual user email for LiteLLM tracking.
- * Looks up the user's email from the database by userId, with caching.
- * Falls back to the default static email if userId is not provided or lookup fails.
- * @param {string|null} userId - User ID to resolve
- * @returns {Promise<string>} User email for LiteLLM tracking
- */
-async function resolveLiteLLMUser(userId) {
-  if (!userId) return getDefaultLiteLLMUser();
-
-  // Check cache first
-  const cached = userEmailCache.get(userId);
-  if (cached && (Date.now() - cached.timestamp) < USER_EMAIL_CACHE_TTL) {
-    return cached.email;
-  }
-
-  try {
-    const { getUserById } = require('../db/user-db-service');
-    const user = await getUserById(userId);
-    const email = user?.email || getDefaultLiteLLMUser();
-
-    // Cache the result
-    userEmailCache.set(userId, { email, timestamp: Date.now() });
-
-    return email;
-  } catch (error) {
-    logger.warn('[AI] Failed to resolve user email for LiteLLM, using default: %s', error.message);
-    return getDefaultLiteLLMUser();
-  }
-}
-
-/**
  * Get current provider status for logging/monitoring
  * @returns {Object} Current AI provider status
  */
 function getProviderStatus() {
   const order = getProviderOrder();
   return {
+    portKeyEnabled: isPortkeyEnabled(),
     fireworksEnabled: isFireworksEnabled(),
-    litellmEnabled: isLiteLLMEnabled(),
     providerOrder: order,
     demotedProviders: Object.keys(providerState.demoted),
     failures: { ...providerState.failures },
@@ -529,29 +429,19 @@ function getProviderStatus() {
  */
 function getProviderConfig(providerId) {
   switch (providerId) {
-    case 'litellm-gemini':
-      if (!isLiteLLMEnabled()) return null;
+    case 'portkey-gemini':
+      if (!isPortkeyEnabled()) return null;
       return {
-        client: getLiteLLMGeminiClient(),  // Uses LITELLM_GEMINI_API_KEY
-        model: getLiteLLMModel(),
-        displayName: 'Gemini',
-        useLiteLLMUser: true
-      };
-    case 'litellm-gpt4o':
-      if (!isLiteLLMEnabled()) return null;
-      return {
-        client: getLiteLLMOpenAIClient(),  // Uses LITELLM_OPENAI_API_KEY
-        model: getLiteLLMFallbackModel(),
-        displayName: 'GPT-4o',
-        useLiteLLMUser: true
+        client: getPortkeyClient(),
+        model: getPortkeyModel(),
+        displayName: 'Portkey/Gemini'
       };
     case 'fireworks':
       if (!isFireworksEnabled()) return null;
       return {
         client: getFireworksClient(),
         model: getFireworksModel(),
-        displayName: 'Fireworks/Qwen',
-        useLiteLLMUser: false
+        displayName: 'Fireworks/Qwen'
       };
     default:
       return null;
@@ -571,15 +461,12 @@ function getProviderConfig(providerId) {
  * @param {string} params.userId - User ID for cost tracking (optional)
  * @param {string} params.organizationId - Organization ID for cost tracking (optional)
  * @param {string} params.screenshotId - Screenshot ID for cost tracking (optional)
- * @param {string} params.apiCallName - Label for the request type sent as LiteLLM metadata (e.g. 'vision-analysis', 'app-classification') (optional)
+ * @param {string} params.apiCallName - Label for the request type (e.g. 'vision-analysis', 'app-classification') (optional)
  * @returns {Promise<Object>} { response, provider, model }
  */
 async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tokens = 800, isVision = false, reasoningEffort = null, userId = null, organizationId = null, screenshotId = null, apiCallName = null }) {
   const errors = [];
   const requestType = isVision ? 'vision' : 'text';
-
-  // Resolve the actual user email for LiteLLM tracking (once per request)
-  const litellmUser = await resolveLiteLLMUser(userId);
 
   // Get current provider order (automatically checks for expired cooldowns)
   const providerOrder = getProviderOrder();
@@ -596,18 +483,17 @@ async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tok
   // Try each provider in order
   for (let i = 0; i < providerOrder.length; i++) {
     const providerId = providerOrder[i];
-    
+
     // Skip demoted providers (they're in the order but shouldn't be tried)
     if (isProviderDemoted(providerId)) {
       continue;
     }
-    
+
     const config = getProviderConfig(providerId);
 
     // Skip if provider not available
     if (!config || !config.client) continue;
 
-    const isFirstAttempt = i === 0;
     const previousFailed = errors.length > 0;
 
     try {
@@ -630,17 +516,9 @@ async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tok
         temperature,
         max_tokens
       };
-      if (config.useLiteLLMUser) {
-        requestParams.user = litellmUser;
-        // Send request type as metadata to LiteLLM for tracking/filtering
-        const callLabel = apiCallName || requestType;
-        requestParams.metadata = {
-          request_type: callLabel,
-          organization_id: organizationId || undefined
-        };
-      }
+
       // Disable Gemini thinking for text-only (e.g. OCR) so token budget goes to the JSON response
-      if (reasoningEffort && providerId === 'litellm-gemini') {
+      if (reasoningEffort && providerId === 'portkey-gemini') {
         requestParams.reasoning_effort = reasoningEffort;
       }
 
@@ -653,7 +531,7 @@ async function chatCompletionWithFallback({ messages, temperature = 0.3, max_tok
 
       logger.info('[AI] %s request completed | %s | %dms', requestType, config.displayName, duration);
 
-      // Log to Google Sheets for Fireworks (async) - existing logging
+      // Log to Google Sheets for Fireworks (async)
       if (providerId === 'fireworks') {
         const usage = response.usage || {};
         logLLMRequest({
@@ -703,13 +581,13 @@ module.exports = {
   // Client getters
   getClient,
   getFireworksClient,
-  getLiteLLMClient,
+  getPortkeyClient,
 
   // Status checks
   isAIEnabled,
   isActivityAIEnabled,
   isFireworksEnabled,
-  isLiteLLMEnabled,
+  isPortkeyEnabled,
   getProviderStatus,
   getProviderOrder,
   isProviderDemoted,
@@ -718,10 +596,7 @@ module.exports = {
   getVisionModel,
   getTextModel,
   getFireworksModel,
-  getLiteLLMModel,
-  getLiteLLMFallbackModel,
-  getLiteLLMUser: getDefaultLiteLLMUser,
-  resolveLiteLLMUser,
+  getPortkeyModel,
 
   // Main request function with fallback
   chatCompletionWithFallback
