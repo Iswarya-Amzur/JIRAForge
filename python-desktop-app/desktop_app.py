@@ -7425,6 +7425,7 @@ class TimeTracker:
                     print(f"[INFO] Large time gap detected: {int(time_since_last_loop)}s — system was likely suspended")
                     # Finalize current session using last known activity time
                     self._finalize_active_session("system suspension detected")
+                    self.session_manager.stop_current_timer()  # Stop SQLite activity timer so suspension time isn't counted in activity_records
                     # Reset ALL tracking state — new session starts fresh
                     self.is_idle = False
                     self.needs_idle_resume = False

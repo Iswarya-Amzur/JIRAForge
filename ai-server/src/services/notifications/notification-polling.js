@@ -30,7 +30,9 @@ class NotificationPollingService {
                 login_reminder: 0,
                 download_reminder: 0,
                 new_version: 0,
-                inactivity_alert: 0
+                inactivity_alert: 0,
+                admin_inactivity_digest: 0,
+                admin_download_digest: 0
             }
         };
     }
@@ -227,7 +229,38 @@ class NotificationPollingService {
 
             this.stats.notificationsSent.download_reminder += sentCount;
             logger.info(`[NotificationPolling] Download reminders: checked ${users?.length || 0} users, sent ${sentCount}`);
-            
+
+            // Admin download digest: group no-app users by org, send one digest per org
+            const byOrg = {};
+            for (const user of (users || [])) {
+                if (!byOrg[user.organization_id]) byOrg[user.organization_id] = [];
+                byOrg[user.organization_id].push(user);
+            }
+
+            let adminSentCount = 0;
+            for (const [orgId, orgUsers] of Object.entries(byOrg)) {
+                const [admins, orgName] = await Promise.all([
+                    this._getOrgAdmins(orgId),
+                    this._getOrgName(orgId)
+                ]);
+                const digestUsers = orgUsers.map(u => ({
+                    name: u.display_name || u.email,
+                    email: u.email
+                }));
+                for (const admin of admins) {
+                    try {
+                        const result = await notificationService.sendAdminDownloadDigest(
+                            admin.id, orgId, { orgName, users: digestUsers }
+                        );
+                        if (result.success) adminSentCount++;
+                    } catch (err) {
+                        logger.warn(`[NotificationPolling] Error sending admin download digest to ${admin.id}:`, err.message);
+                    }
+                }
+            }
+            this.stats.notificationsSent.admin_download_digest += adminSentCount;
+            logger.info(`[NotificationPolling] Admin download digests sent: ${adminSentCount}`);
+
         } catch (error) {
             logger.error('[NotificationPolling] Error checking download reminders: %s', error.message);
         }
@@ -411,8 +444,97 @@ class NotificationPollingService {
             this.stats.notificationsSent.inactivity_alert += sentCount;
             logger.info(`[NotificationPolling] Inactivity alerts: checked ${users.length} users, ${inactiveUsers.length} inactive, sent ${sentCount}`);
 
+            // Admin inactivity digest: group inactive users by org, send one digest per org
+            const byOrg = {};
+            for (const user of inactiveUsers) {
+                if (!byOrg[user.organization_id]) byOrg[user.organization_id] = [];
+                byOrg[user.organization_id].push(user);
+            }
+
+            let adminSentCount = 0;
+            for (const [orgId, orgInactiveUsers] of Object.entries(byOrg)) {
+                const [admins, orgName] = await Promise.all([
+                    this._getOrgAdmins(orgId),
+                    this._getOrgName(orgId)
+                ]);
+                const digestUsers = orgInactiveUsers.map(user => {
+                    const heartbeatTime = new Date(user.desktop_last_heartbeat);
+                    const batchTime = latestBatchByUser[user.id] ? new Date(latestBatchByUser[user.id]) : null;
+                    const effectiveLastActive = batchTime && batchTime > heartbeatTime ? batchTime : heartbeatTime;
+                    const hoursInactive = Math.round(
+                        (Date.now() - effectiveLastActive.getTime()) / (1000 * 60 * 60) * 10
+                    ) / 10;
+                    return {
+                        name: user.display_name || user.email,
+                        hoursInactive,
+                        lastActivity: effectiveLastActive.toLocaleString()
+                    };
+                });
+                for (const admin of admins) {
+                    try {
+                        const result = await notificationService.sendAdminInactivityDigest(
+                            admin.id, orgId, { orgName, inactiveUsers: digestUsers }
+                        );
+                        if (result.success) adminSentCount++;
+                    } catch (err) {
+                        logger.warn(`[NotificationPolling] Error sending admin inactivity digest to ${admin.id}:`, err.message);
+                    }
+                }
+            }
+            this.stats.notificationsSent.admin_inactivity_digest += adminSentCount;
+            logger.info(`[NotificationPolling] Admin inactivity digests sent: ${adminSentCount}`);
+
         } catch (error) {
             logger.error('[NotificationPolling] Error checking inactivity alerts: %s', error.message);
+        }
+    }
+
+    /**
+     * Get all owner/admin users for an organization
+     * @param {string} orgId - Organization ID
+     * @returns {Promise<Array>} Array of {id, email, display_name}
+     */
+    async _getOrgAdmins(orgId) {
+        try {
+            const supabase = getClient();
+            if (!supabase) return [];
+            // Use project_settings.configured_by — the user who configured each project
+            // must have ADMINISTER_PROJECTS permission in Jira, making them the true
+            // project admin (not just an org-level admin who may be a regular employee).
+            const { data, error } = await supabase
+                .from('project_settings')
+                .select('users!configured_by(id, email, display_name)')
+                .eq('organization_id', orgId)
+                .not('configured_by', 'is', null);
+            if (error || !data) return [];
+            // Deduplicate — same person may have configured multiple projects
+            const seen = new Set();
+            return data
+                .map(r => r.users)
+                .filter(u => u && u.email && !seen.has(u.id) && seen.add(u.id));
+        } catch (err) {
+            logger.warn('[NotificationPolling] Error fetching project admins:', err.message);
+            return [];
+        }
+    }
+
+    /**
+     * Get the display name of an organization
+     * @param {string} orgId - Organization ID
+     * @returns {Promise<string>} Organization name
+     */
+    async _getOrgName(orgId) {
+        try {
+            const supabase = getClient();
+            if (!supabase) return 'Your Organization';
+            const { data } = await supabase
+                .from('organizations')
+                .select('org_name')
+                .eq('id', orgId)
+                .single();
+            return data?.org_name || 'Your Organization';
+        } catch (err) {
+            return 'Your Organization';
         }
     }
 

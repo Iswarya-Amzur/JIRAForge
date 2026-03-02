@@ -219,6 +219,42 @@ class NotificationService {
     }
 
     /**
+     * Send inactivity digest to an org admin
+     * Lists all inactive team members for that org in one email.
+     * @param {string} adminUserId - Admin's user ID
+     * @param {string} organizationId - Organization ID
+     * @param {Object} payload
+     * @param {string} payload.orgName - Organization display name
+     * @param {Array} payload.inactiveUsers - [{name, hoursInactive, lastActivity}]
+     * @returns {Promise<Object>} Send result
+     */
+    async sendAdminInactivityDigest(adminUserId, organizationId, { orgName, inactiveUsers }) {
+        return this.sendNotification(adminUserId, organizationId, 'admin_inactivity_digest', {
+            orgName,
+            inactiveUsers
+        });
+    }
+
+    /**
+     * Send download reminder digest to an org admin
+     * Lists all team members who haven't installed the Desktop App.
+     * @param {string} adminUserId - Admin's user ID
+     * @param {string} organizationId - Organization ID
+     * @param {Object} payload
+     * @param {string} payload.orgName - Organization display name
+     * @param {Array} payload.users - [{name, email}]
+     * @returns {Promise<Object>} Send result
+     */
+    async sendAdminDownloadDigest(adminUserId, organizationId, { orgName, users }) {
+        const downloadUrl = process.env.DOWNLOAD_URL || 'https://jiraforge.io/download';
+        return this.sendNotification(adminUserId, organizationId, 'admin_download_digest', {
+            orgName,
+            users,
+            downloadUrl
+        });
+    }
+
+    /**
      * Get supported notification types
      * @returns {Array<string>} Array of notification type names
      */

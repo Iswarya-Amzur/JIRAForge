@@ -8,19 +8,25 @@ const loginReminder = require('./login-reminder');
 const downloadReminder = require('./download-reminder');
 const newVersion = require('./new-version');
 const inactivityAlert = require('./inactivity-alert');
+const adminInactivityDigest = require('./admin-inactivity-digest');
+const adminDownloadDigest = require('./admin-download-digest');
 
 module.exports = {
     loginReminder,
     downloadReminder,
     newVersion,
     inactivityAlert,
-    
+    adminInactivityDigest,
+    adminDownloadDigest,
+
     // Map by type for easy lookup
     byType: {
         'login_reminder': loginReminder,
         'download_reminder': downloadReminder,
         'new_version': newVersion,
-        'inactivity_alert': inactivityAlert
+        'inactivity_alert': inactivityAlert,
+        'admin_inactivity_digest': adminInactivityDigest,
+        'admin_download_digest': adminDownloadDigest
     },
     
     // Get template by type
