@@ -3208,7 +3208,7 @@ class AppClassificationManager:
 
         # Check if it's a browser
         if app_lower in BROWSER_PROCESSES or app_canonical_key in BROWSER_PROCESS_NORMALIZED_KEYS:
-            # Browser: check window title against URL entries
+            # Browser: check window title against URL entries first (most specific)
             title_lower = window_title.lower() if window_title else ''
 
             # Check exact URL matches first
@@ -3225,8 +3225,14 @@ class AppClassificationManager:
                     if fnmatch.fnmatch(word, pattern):
                         return (classification, 'url')
 
-            # No URL match — browser is unknown until admin classifies
-            # OCR + AI will still capture data; admin decides productive/non_productive
+            # No URL match — check if browser itself has a process-level classification
+            # This allows admins to classify "chrome.exe" as productive/non_productive overall
+            if app_lower in self.process_classifications:
+                return (self.process_classifications[app_lower], 'process')
+            if app_canonical_key in self.normalized_process_classifications:
+                return (self.normalized_process_classifications[app_canonical_key], 'process')
+
+            # No URL or process match — browser is unknown
             return ('unknown', 'browser_default')
 
         # Non-browser: check process name
