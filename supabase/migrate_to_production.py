@@ -44,21 +44,21 @@ except ImportError:
 
 # Project References
 DEV_PROJECT_REF = "jvijitdewbypqbatfboi"
-PROD_PROJECT_REF = "iwbfxptbprbzoyqdqhez"  # NEW PROD PROJECT (Feb 2026)
+PROD_PROJECT_REF = "bzdoztgfozxkhkvctvdk"  # jira_forge_prod (PRODUCTION)
 
 # URLs
 DEV_URL = f"https://{DEV_PROJECT_REF}.supabase.co"
-PROD_URL = f"https://{PROD_PROJECT_REF}.supabase.co"
+PROD_URL = f"https://{PROD_PROJECT_REF}.supabase.co"  # https://bzdoztgfozxkhkvctvdk.supabase.co
 
 # Management API URL
 MANAGEMENT_API_URL = "https://api.supabase.com"
 
 # Service Role Keys
 DEV_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2aWppdGRld2J5cHFiYXRmYm9pIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2Mjc1NTU5MCwiZXhwIjoyMDc4MzMxNTkwfQ.2Pbdo2DHHfCIpUVPP390P2Y3rF7_hdsYM-38g26XTUY"
-PROD_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3YmZ4cHRicHJiem95cWRxaGV6Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2OTYwMzc3OSwiZXhwIjoyMDg1MTc5Nzc5fQ.26vymNQD8paLRJoqEq-SDiO9wlBWhYp3HYten2V6m7g"
+PROD_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ6ZG96dGdmb3p4a2hrdmN0dmRrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjQyNDg2NiwiZXhwIjoyMDg4MDAwODY2fQ.GeXbQt2zIvcRqMWiOv9sLp8Govl9eoB-svJEsHo_8_Q"
 
 # Anon Key (for reference - use this in client apps)
-PROD_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3YmZ4cHRicHJiem95cWRxaGV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk2MDM3NzksImV4cCI6MjA4NTE3OTc3OX0.O9KwZ9H9tLOPygDlgAL_vAJ4I-IEGnnoJNSaKFXn04s"
+PROD_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ6ZG96dGdmb3p4a2hrdmN0dmRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0MjQ4NjYsImV4cCI6MjA4ODAwMDg2Nn0.0uz_MVRJHCz_MZk-5p3RlmTEo9ue5NQkBE4awoKN3-k"
 
 # Management API Token (will be prompted)
 MANAGEMENT_API_TOKEN = ""
