@@ -2,23 +2,25 @@
  * Navigation utility functions for Jira integration
  */
 
+import { router } from '@forge/bridge';
+
 /**
  * Navigate to a Jira issue (works within Forge iframe)
+ * Uses @forge/bridge router for proper navigation within Jira
  * @param {string} issueKey - The Jira issue key (e.g., "PROJ-123")
  */
 export const navigateToIssue = (issueKey) => {
   try {
-    if (window.parent && window.parent !== window) {
-      // Use parent window to navigate (works in Forge iframe)
-      window.parent.location.href = `/browse/${issueKey}`;
-    } else {
-      // Fallback to same window
-      window.location.href = `/browse/${issueKey}`;
-    }
+    // Use Forge router.navigate for in-app navigation
+    router.navigate(`/browse/${issueKey}`);
   } catch (e) {
-    // If cross-origin restrictions prevent parent navigation,
-    // the link href will handle it as a fallback
-    console.warn('Could not navigate programmatically, using link fallback');
+    console.warn('Navigation failed:', e);
+    // Fallback to router.open if navigate fails
+    try {
+      router.open(`/browse/${issueKey}`);
+    } catch (e2) {
+      console.error('Could not navigate to issue:', e2);
+    }
   }
 };
 
