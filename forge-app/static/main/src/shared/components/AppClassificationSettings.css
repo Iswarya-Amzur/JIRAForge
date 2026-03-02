@@ -406,38 +406,93 @@
 
 /* Unknown Apps Review */
 .classification-section .unknown-apps-list {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0;
 }
 
 .classification-section .unknown-app-card {
-  display: block;
-  margin-bottom: 10px;
-  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #FFFFFF;
+  border: 1px solid #DFE1E6;
+  border-radius: 6px;
+  padding: 12px 16px;
+  gap: 16px;
+}
+
+.classification-section .unknown-app-card:hover {
+  border-color: #B3BAC5;
+}
+
+.classification-section .unknown-app-info {
+  flex: 1;
+  min-width: 0;
 }
 
 .classification-section .unknown-app-name {
-  font-weight: 600;
+  font-weight: 500;
+  font-size: 14px;
   color: #172B4D;
+  word-break: break-word;
 }
 
 .classification-section .unknown-app-meta {
   margin-top: 4px;
+  font-size: 12px;
+  color: #6B778C;
 }
 
 .classification-section .unknown-app-actions {
-  margin-top: 8px;
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .classification-section .unknown-app-action-btn {
-  width: auto;
-  min-width: 140px;
-  height: 36px;
-  padding: 0 12px;
-  font-size: 13px;
-  font-weight: 600;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  white-space: nowrap;
+}
+
+.classification-section .unknown-app-action-btn.productive-btn {
+  background: #E3FCEF;
+  color: #006644;
+}
+
+.classification-section .unknown-app-action-btn.productive-btn:hover:not(:disabled) {
+  background: #ABF5D1;
+}
+
+.classification-section .unknown-app-action-btn.non-productive-btn {
+  background: #FFEBE6;
+  color: #BF2600;
+}
+
+.classification-section .unknown-app-action-btn.non-productive-btn:hover:not(:disabled) {
+  background: #FFBDAD;
+}
+
+.classification-section .unknown-app-action-btn.private-btn {
+  background: #EAE6FF;
+  color: #403294;
+}
+
+.classification-section .unknown-app-action-btn.private-btn:hover:not(:disabled) {
+  background: #C0B6F2;
+}
+
+.classification-section .unknown-app-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Threshold Section */
@@ -586,4 +641,166 @@
     flex-direction: column;
     gap: 4px;
   }
+}
+
+/* Alias Suggestions Styles */
+.alias-suggestions {
+  background: #F4F5F7;
+  border: 1px dashed #DFE1E6;
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 8px;
+}
+
+.alias-hint {
+  font-size: 13px;
+  color: #5E6C84;
+  margin: 0 0 12px 0;
+  font-weight: 500;
+}
+
+.alias-suggestion-item {
+  background: #FFFFFF;
+  border: 1px solid #DFE1E6;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 10px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.alias-suggestion-item:last-child {
+  margin-bottom: 0;
+}
+
+.alias-suggestion-item:hover {
+  border-color: #0052CC;
+  box-shadow: 0 2px 4px rgba(0, 82, 204, 0.1);
+}
+
+.alias-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.alias-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #172B4D;
+}
+
+.alias-category {
+  font-size: 11px;
+  color: #6B778C;
+  background: #EBECF0;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.alias-identifiers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.alias-identifier-btn {
+  padding: 6px 12px;
+  border: 1px solid #0052CC;
+  background: #DEEBFF;
+  color: #0052CC;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Mono', monospace;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.alias-identifier-btn:hover:not(:disabled) {
+  background: #0052CC;
+  color: #FFFFFF;
+}
+
+.alias-identifier-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.alias-identifier-btn.non-productive {
+  border-color: #FF8B00;
+  background: #FFFAE6;
+  color: #FF8B00;
+}
+
+.alias-identifier-btn.non-productive:hover:not(:disabled) {
+  background: #FF8B00;
+  color: #FFFFFF;
+}
+
+.alias-identifier-btn.private {
+  border-color: #6B778C;
+  background: #F4F5F7;
+  color: #5E6C84;
+}
+
+.alias-identifier-btn.private:hover:not(:disabled) {
+  background: #6B778C;
+  color: #FFFFFF;
+}
+
+/* Custom app add button */
+.custom-app-add {
+  margin-top: 12px;
+  text-align: center;
+}
+
+.custom-app-add .field-hint {
+  margin-bottom: 8px;
+}
+
+.add-custom-btn {
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 2px dashed #36B37E;
+  background: #E3FCEF;
+  color: #006644;
+}
+
+.add-custom-btn:hover:not(:disabled) {
+  background: #36B37E;
+  color: #FFFFFF;
+  border-style: solid;
+}
+
+.add-custom-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.add-custom-btn.non-productive {
+  border-color: #FF5630;
+  background: #FFEBE6;
+  color: #BF2600;
+}
+
+.add-custom-btn.non-productive:hover:not(:disabled) {
+  background: #FF5630;
+  color: #FFFFFF;
+}
+
+.add-custom-btn.private {
+  border-color: #6B778C;
+  background: #F4F5F7;
+  color: #5E6C84;
+}
+
+.add-custom-btn.private:hover:not(:disabled) {
+  background: #6B778C;
+  color: #FFFFFF;
 }
