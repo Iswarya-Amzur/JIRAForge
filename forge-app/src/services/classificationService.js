@@ -416,7 +416,11 @@ export async function bulkImportClassifications(classifications, projectKey, clo
  * @returns {Promise<Object>} Search result with identifier, display_name, source, etc.
  */
 export async function searchAppIdentifier(searchTerm, cloudId, accountId, options = {}) {
+  console.log('[Classification Service] ========== searchAppIdentifier START ==========');
+  console.log('[Classification Service] Input params:', { searchTerm, cloudId, accountId: accountId?.substring(0, 10) + '...', options });
+
   const isAdmin = await isJiraAdmin();
+  console.log('[Classification Service] isAdmin check:', isAdmin);
   if (!isAdmin) {
     throw new Error('Access denied: Only Jira Administrators can search for applications');
   }
@@ -426,7 +430,7 @@ export async function searchAppIdentifier(searchTerm, cloudId, accountId, option
     throw new Error('Search term must be at least 2 characters');
   }
 
-  console.log(`[Classification] searchAppIdentifier called for: "${searchTerm}"`);
+  console.log(`[Classification Service] Searching for: "${searchTerm}" (normalized: "${normalizedSearchTerm}")`);
 
   // STEP 1: Check DB for existing classification
   try {
@@ -444,8 +448,9 @@ export async function searchAppIdentifier(searchTerm, cloudId, accountId, option
 
       // Search in application_classifications
       // Use ilike for case-insensitive partial matching
-      const searchPattern = `%${normalizedSearchTerm}%`;
-      let endpoint = `application_classifications?or=(identifier.ilike.${encodeURIComponent(searchPattern)},display_name.ilike.${encodeURIComponent(searchPattern)})&limit=5`;
+      // PostgREST uses * as wildcard, not %
+      const searchPattern = `*${normalizedSearchTerm}*`;
+      let endpoint = `application_classifications?or=(identifier.ilike.${searchPattern},display_name.ilike.${searchPattern})&limit=5`;
 
       const dbResults = await supabaseRequest(supabaseConfig, endpoint);
 
@@ -506,13 +511,16 @@ export async function searchAppIdentifier(searchTerm, cloudId, accountId, option
 
   // STEP 3: Fallback to LLM identification via AI server
   try {
-    console.log('[Classification] Falling back to LLM identification');
+    console.log('[Classification Service] STEP 3: Falling back to LLM identification via AI server');
+    console.log('[Classification Service] Calling remoteRequest to /api/identify-app with search_term:', searchTerm);
     const llmResult = await remoteRequest('/api/identify-app', {
       body: { search_term: searchTerm }
     });
+    console.log('[Classification Service] LLM response:', JSON.stringify(llmResult, null, 2));
 
     if (llmResult && llmResult.identified) {
-      console.log(`[Classification] LLM identified: ${llmResult.identifier}`);
+      console.log('[Classification Service] LLM successfully identified app:', llmResult.identifier);
+      console.log('[Classification Service] ========== searchAppIdentifier END (LLM success) ==========');
       return {
         success: true,
         found: true,
@@ -531,7 +539,8 @@ export async function searchAppIdentifier(searchTerm, cloudId, accountId, option
         }
       };
     } else {
-      console.log('[Classification] LLM could not identify app');
+      console.log('[Classification Service] LLM could not identify app');
+      console.log('[Classification Service] ========== searchAppIdentifier END (LLM no match) ==========');
       return {
         success: true,
         found: false,
@@ -541,7 +550,9 @@ export async function searchAppIdentifier(searchTerm, cloudId, accountId, option
       };
     }
   } catch (err) {
-    console.error('[Classification] LLM identification error:', err.message);
+    console.error('[Classification Service] LLM identification error:', err.message);
+    console.error('[Classification Service] Full error:', err);
+    console.log('[Classification Service] ========== searchAppIdentifier END (LLM error) ==========');
     return {
       success: false,
       found: false,

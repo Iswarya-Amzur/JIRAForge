@@ -357,17 +357,27 @@ async function classifyUnknownApp(appName, windowTitle, ocrText, userId = null, 
  * @returns {Promise<Object>} Identification result with identifier, display_name
  */
 async function identifyAppByName(searchTerm) {
-  if (!isActivityAIEnabled()) {
+  logger.info('[ActivityService] ========== identifyAppByName START ==========');
+  logger.info(`[ActivityService] Search term: "${searchTerm}"`);
+  
+  const aiEnabled = isActivityAIEnabled();
+  logger.info(`[ActivityService] AI enabled check: ${aiEnabled}`);
+  
+  if (!aiEnabled) {
+    logger.error('[ActivityService] AI client not initialized - check API keys');
     throw new Error('AI client not initialized - check API keys');
   }
 
   const userPrompt = buildAppIdentificationPrompt(searchTerm);
+  logger.info('[ActivityService] Built user prompt:', userPrompt);
 
   const messages = [
     { role: 'system', content: APP_IDENTIFICATION_SYSTEM_PROMPT },
     { role: 'user', content: userPrompt }
   ];
 
+  logger.info('[ActivityService] Calling chatCompletionWithFallback...');
+  
   try {
     const { response, provider, model } = await chatCompletionWithFallback({
       messages,
@@ -379,16 +389,20 @@ async function identifyAppByName(searchTerm) {
     });
 
     const content = response.choices[0].message.content.trim();
-    logger.info(`[ActivityService] App identification done | ${provider} (${model}) | search: "${searchTerm}"`);
+    logger.info(`[ActivityService] LLM Response received | Provider: ${provider} | Model: ${model}`);
+    logger.info(`[ActivityService] Raw LLM content: ${content}`);
 
     // Parse JSON response
     let result;
     try {
       result = JSON.parse(content);
+      logger.info('[ActivityService] Parsed JSON result:', JSON.stringify(result));
     } catch (e) {
+      logger.warn('[ActivityService] Direct JSON parse failed, trying regex extraction');
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         result = JSON.parse(jsonMatch[0]);
+        logger.info('[ActivityService] Regex extracted JSON:', JSON.stringify(result));
       } else {
         logger.error('[ActivityService] Failed to parse app identification response:', content.substring(0, 200));
         throw new Error('Failed to parse AI response');
@@ -396,6 +410,8 @@ async function identifyAppByName(searchTerm) {
     }
 
     if (!result.identified) {
+      logger.info('[ActivityService] LLM says app NOT identified');
+      logger.info('[ActivityService] ========== identifyAppByName END (not identified) ==========');
       return {
         identified: false,
         source: 'llm',
@@ -404,6 +420,9 @@ async function identifyAppByName(searchTerm) {
       };
     }
 
+    logger.info(`[ActivityService] LLM identified app: identifier="${result.identifier}", display_name="${result.display_name}"`);
+    logger.info('[ActivityService] ========== identifyAppByName END (success) ==========');
+    
     return {
       identified: true,
       identifier: result.identifier,
@@ -415,7 +434,10 @@ async function identifyAppByName(searchTerm) {
     };
 
   } catch (error) {
-    logger.error('[ActivityService] App identification failed:', error.message);
+    logger.error('[ActivityService] App identification FAILED');
+    logger.error('[ActivityService] Error message:', error.message);
+    logger.error('[ActivityService] Stack trace:', error.stack);
+    logger.info('[ActivityService] ========== identifyAppByName END (error) ==========');
     return {
       identified: false,
       source: 'llm',

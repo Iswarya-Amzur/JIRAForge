@@ -346,22 +346,33 @@ function AppClassificationSettings({ projectKey }) {
   const searchForAppIdentifier = async (searchTerm, section) => {
     if (!searchTerm || searchTerm.trim().length < 2) return;
 
+    console.log('[AppClassification UI] Starting app identifier search:', {
+      searchTerm,
+      section,
+      projectKey: projectKey || null
+    });
+
     setSearchingAppSection(section);
     setIdentifiedApp(null);
 
     try {
+      console.log('[AppClassification UI] Invoking searchAppIdentifier resolver...');
       const result = await invoke('searchAppIdentifier', {
         searchTerm: searchTerm.trim(),
         projectKey: projectKey || null
       });
 
+      console.log('[AppClassification UI] Resolver response:', JSON.stringify(result, null, 2));
+
       if (result.success && result.found && result.best_match) {
+        console.log('[AppClassification UI] App found:', result.best_match);
         setIdentifiedApp({
           ...result.best_match,
           section,
           originalSearch: searchTerm
         });
       } else {
+        console.log('[AppClassification UI] App not found, message:', result.message);
         setIdentifiedApp({
           notFound: true,
           section,
@@ -370,7 +381,7 @@ function AppClassificationSettings({ projectKey }) {
         });
       }
     } catch (err) {
-      console.error('App identification failed:', err);
+      console.error('[AppClassification UI] App identification failed:', err);
       setIdentifiedApp({
         notFound: true,
         section,
