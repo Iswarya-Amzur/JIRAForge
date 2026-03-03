@@ -124,7 +124,7 @@ class CostTracker {
    * @param {Object} params - Cost tracking parameters
    * @param {string} params.userId - User ID (UUID)
    * @param {string} params.apiCallName - API call name (vision, text, clustering, brd)
-   * @param {string} params.provider - Provider ID (litellm-gemini, litellm-gpt4o, fireworks)
+   * @param {string} params.provider - Provider ID (portkey-gemini, fireworks)
    * @param {string} params.model - Model name used
    * @param {number} params.inputTokens - Input tokens
    * @param {number} params.outputTokens - Output tokens
@@ -166,11 +166,9 @@ class CostTracker {
 
       // Calculate cost if not provided
       // Map provider IDs to provider names for cost calculation
-      const providerName = provider === 'litellm-gemini' || provider === 'litellm-gpt4o' 
-        ? 'litellm' 
-        : provider === 'fireworks' 
-        ? 'fireworks' 
-        : 'litellm';
+      const providerName = provider === 'fireworks'
+        ? 'fireworks'
+        : 'portkey';
       
       const calculatedCost = cost !== null 
         ? cost 

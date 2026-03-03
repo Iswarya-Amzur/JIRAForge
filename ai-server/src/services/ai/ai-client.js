@@ -86,11 +86,13 @@ function initializeFireworksClient() {
 /**
  * Initialize the Portkey client
  * Uses the OpenAI SDK with Portkey's gateway URL and API key header.
- * Model routing is handled by the model string (e.g. @jira/gemini-2.0-flash).
+ * When PORTKEY_CONFIG_ID is set, routing (load balance + fallback) is
+ * handled by the saved Portkey Config — no virtual key slug needed in model name.
  * @returns {OpenAI|null} Portkey client or null if not configured
  */
 function initializePortkeyClient() {
   const portKeyApiKey = process.env.PORTKEY_API_KEY;
+  const portKeyConfigId = process.env.PORTKEY_CONFIG_ID;
 
   if (!portKeyApiKey) {
     logger.warn('[AI] Portkey API key not configured');
@@ -98,17 +100,23 @@ function initializePortkeyClient() {
   }
 
   try {
+    const defaultHeaders = {
+      'x-portkey-api-key': portKeyApiKey,
+    };
+    if (portKeyConfigId) {
+      defaultHeaders['x-portkey-config'] = portKeyConfigId;
+    }
+
     portKeyClient = new OpenAI({
       apiKey: 'portkey',  // Not used by Portkey — auth is via x-portkey-api-key header
       baseURL: 'https://api.portkey.ai/v1',
-      defaultHeaders: {
-        'x-portkey-api-key': portKeyApiKey,
-      },
+      defaultHeaders,
       timeout: AI_REQUEST_TIMEOUT_MS,
       maxRetries: 0
     });
     const model = getPortkeyModel();
-    logger.info('[AI] Portkey initialized | Model: %s', getShortModelName(model));
+    const configNote = portKeyConfigId ? ` | Config: ${portKeyConfigId}` : '';
+    logger.info('[AI] Portkey initialized | Model: %s%s', getShortModelName(model), configNote);
     return portKeyClient;
   } catch (error) {
     logger.error('[AI] Portkey init failed: %s', error.message);
@@ -351,11 +359,12 @@ function getFireworksModel() {
 
 /**
  * Get the Portkey model name
- * Includes virtual key slug, e.g. @jira/gemini-2.0-flash
+ * When PORTKEY_CONFIG_ID is set, the config's override_params.model takes precedence.
+ * The model here acts as a fallback hint only.
  * @returns {string} Model name for Portkey requests
  */
 function getPortkeyModel() {
-  return process.env.PORTKEY_MODEL || '@jira/gemini-2.0-flash';
+  return process.env.PORTKEY_MODEL || 'gemini-2.0-flash';
 }
 
 /**

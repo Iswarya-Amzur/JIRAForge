@@ -9,7 +9,7 @@
  * - Project Name
  * - API call name
  * - API account email
- * - Provider (Fireworks/LiteLLM)
+ * - Provider (Fireworks/Portkey)
  * - Model Used
  * - Input token size
  * - Output token size
@@ -48,7 +48,7 @@ function getIpAddress() {
  * Calculate cost based on provider and token usage
  * Pricing as of Dec 2024 (per 1M tokens):
  * - Fireworks Qwen2.5-VL-32B: $0.40 input, $0.40 output (estimated)
- * - Gemini 2.0 Flash: $0.10 input, $0.40 output (Google pricing via LiteLLM)
+ * - Gemini 2.0 Flash: $0.10 input, $0.40 output (Google pricing via Portkey)
  */
 function calculateCost(provider, model, inputTokens, outputTokens) {
   // Pricing per 1M tokens
@@ -59,18 +59,16 @@ function calculateCost(provider, model, inputTokens, outputTokens) {
       'llama-v3p2-11b-vision': { input: 0.20, output: 0.20 },
       'default': { input: 0.50, output: 0.50 }
     },
-    litellm: {
-      // OpenAI models
-      'gpt-4o': { input: 5.00, output: 15.00 },
-      'gpt-4o-mini': { input: 0.15, output: 0.60 },
-      'gpt-4-turbo': { input: 10.00, output: 30.00 },
-      'gpt-4': { input: 30.00, output: 60.00 },
-      // Gemini models
+    portkey: {
+      // Gemini models (primary via google-key1 / google-key2)
       'gemini-2.0-flash-lite': { input: 0.075, output: 0.30 },
       'gemini-2.0-flash': { input: 0.10, output: 0.40 },
       'gemini-1.5-flash': { input: 0.075, output: 0.30 },
       'gemini-1.5-pro': { input: 1.25, output: 5.00 },
-      'default': { input: 5.00, output: 15.00 }
+      // OpenAI models (fallback via openai-key1 / openai-key2)
+      'gpt-4o': { input: 5.00, output: 15.00 },
+      'gpt-4o-mini': { input: 0.15, output: 0.60 },
+      'default': { input: 0.10, output: 0.40 }
     }
   };
 
