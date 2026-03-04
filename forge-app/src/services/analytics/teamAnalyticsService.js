@@ -403,13 +403,17 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
 
   // Build legacy query from analysis_results (which has work_type column)
   // Query analysis_results and embed screenshot data via the foreign key relationship
-  // We fetch recent data and filter by date in code (PostgREST nested filtering is limited)
-  let legacyQuery = `analysis_results?organization_id=eq.${organization.id}&work_type=eq.office&select=user_id,time_spent_seconds,created_at,screenshots(start_time,end_time,duration_seconds,timestamp,work_date,project_key,deleted_at)&order=created_at.desc&limit=5000`;
-  
-  // Add user filter for project admins (they can only see their own legacy data or users in their projects)
-  // Note: Project filtering on screenshots.project_key is done in code after fetching
+  // Narrow server-side by created_at (±1 day buffer for timezone differences) to avoid
+  // hitting the 5000-row limit on large orgs and silently dropping sessions
+  const legacyDateStart = new Date(`${date}T00:00:00.000Z`);
+  legacyDateStart.setDate(legacyDateStart.getDate() - 1);
+  const legacyDateEnd = new Date(`${date}T23:59:59.999Z`);
+  legacyDateEnd.setDate(legacyDateEnd.getDate() + 1);
+  let legacyQuery = `analysis_results?organization_id=eq.${organization.id}&work_type=eq.office&created_at=gte.${legacyDateStart.toISOString()}&created_at=lte.${legacyDateEnd.toISOString()}&select=user_id,time_spent_seconds,created_at,screenshots(start_time,end_time,duration_seconds,timestamp,work_date,project_key,deleted_at)&order=created_at.desc&limit=5000`;
+
+  // For non-admins (project admins): restrict to their own records only.
+  // Project-key filtering on the embedded screenshot data is applied in post-processing below.
   if (!isAdmin && currentUserId) {
-    // Project admins: filter to only their records (project filtering done in post-processing)
     legacyQuery += `&user_id=eq.${currentUserId}`;
   }
 
@@ -506,6 +510,13 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
                          screenshotTimestamp >= targetDateStart && screenshotTimestamp <= targetDateEnd);
     
     if (!matchesDate) return; // Skip if not matching target date
+
+    // Apply project filter in post-processing for admins who requested a specific project view.
+    // (Non-admin queries are already scoped to user_id server-side, so no additional filter needed.)
+    if (isAdmin && filterByProjects && projectsToFilter.length > 0) {
+      const projectKey = screenshot.project_key;
+      if (!projectKey || !projectsToFilter.includes(projectKey)) return;
+    }
 
     if (!userTimelineMap[userId]) {
       const userInfo = userById[userId];

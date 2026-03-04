@@ -66,9 +66,19 @@ async function testEnvConfig() {
     `PORTKEY_API_KEY is set (${apiKey ? apiKey.slice(0, 6) + '...' + apiKey.slice(-4) : 'missing'})`,
     'PORTKEY_API_KEY is missing or too short');
 
-  assert(model && model.startsWith('@'),
-    `PORTKEY_MODEL="${model}"`,
-    `PORTKEY_MODEL="${model}" — expected format: @virtualKeySlug/model-name`);
+  const configId = process.env.PORTKEY_CONFIG_ID;
+  if (configId) {
+    // Config-based setup: plain model name is valid (e.g. gemini-2.0-flash)
+    assert(!!model,
+      `PORTKEY_MODEL="${model}" (config mode — plain model name expected)`,
+      'PORTKEY_MODEL is missing');
+    info(`PORTKEY_CONFIG_ID="${configId}" — config mode active`);
+  } else {
+    // Virtual-key / Model Catalog mode: must be @slug/model-name format
+    assert(model && model.startsWith('@'),
+      `PORTKEY_MODEL="${model}"`,
+      `PORTKEY_MODEL="${model}" — expected format: @virtualKeySlug/model-name (or set PORTKEY_CONFIG_ID for config mode)`);
+  }
 
   info('Fireworks disabled for this test (Portkey-only)');
 }
