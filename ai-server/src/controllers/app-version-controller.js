@@ -5,7 +5,6 @@
 
 const crypto = require('node:crypto');
 const https = require('node:https');
-const http = require('node:http');
 const logger = require('../utils/logger');
 const { getClient } = require('../services/db/supabase-client');
 
@@ -362,20 +361,9 @@ exports.computeChecksum = async (req, res) => {
       });
     }
 
-    // Validate URL to prevent SSRF — only allow HTTPS to public hosts
-    let parsedUrl;
-    try {
-      parsedUrl = new URL(url);
-    } catch {
-      return res.status(400).json({ success: false, error: 'Invalid URL format' });
-    }
-    if (parsedUrl.protocol !== 'https:') {
-      return res.status(400).json({ success: false, error: 'Only HTTPS URLs are allowed' });
-    }
-    const hostname = parsedUrl.hostname.toLowerCase();
-    if (hostname === 'localhost' || hostname.startsWith('127.') || hostname.startsWith('10.') ||
-        hostname.startsWith('192.168.') || hostname.startsWith('169.254.') || hostname === '0.0.0.0') {
-      return res.status(400).json({ success: false, error: 'Internal/private URLs are not allowed' });
+    const urlError = validateDownloadUrl(url);
+    if (urlError) {
+      return res.status(400).json({ success: false, error: urlError });
     }
 
     logger.info(`[AppVersion] Computing checksum for: ${url}`);
@@ -402,20 +390,48 @@ exports.computeChecksum = async (req, res) => {
 };
 
 /**
+ * Validates a download URL for SSRF safety.
+ * Only HTTPS to public (non-private) hosts is allowed.
+ * @param {string} url
+ * @returns {string|null} Error message, or null if valid
+ */
+function validateDownloadUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return 'Invalid URL format';
+  }
+  if (parsed.protocol !== 'https:') {
+    return 'Only HTTPS URLs are allowed';
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host === 'localhost' || host === '0.0.0.0' ||
+      host.startsWith('127.') || host.startsWith('10.') ||
+      host.startsWith('192.168.') || host.startsWith('169.254.')) {
+    return 'Internal/private URLs are not allowed';
+  }
+  return null;
+}
+
+/**
  * Compute SHA256 hash of a file from URL
  * Streams the file to avoid loading entirely into memory
- * 
- * @param {string} url - URL to download and hash
+ *
+ * @param {string} url - URL to download and hash (must already be validated)
  * @returns {Promise<string>} SHA256 hash as lowercase hex string
  */
 function computeSHA256FromUrl(url) {
   return new Promise((resolve, reject) => {
     const hash = crypto.createHash('sha256');
-    const protocol = url.startsWith('https') ? https : http;
 
-    const request = protocol.get(url, (response) => {
-      // Handle redirects
+    const request = https.get(url, (response) => {
+      // Handle redirects — validate Location header before following
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        const redirectError = validateDownloadUrl(response.headers.location);
+        if (redirectError) {
+          return reject(new Error(`Redirect blocked: ${redirectError}`));
+        }
         return computeSHA256FromUrl(response.headers.location)
           .then(resolve)
           .catch(reject);
