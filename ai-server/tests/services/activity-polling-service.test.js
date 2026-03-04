@@ -214,6 +214,13 @@ describe('Activity Polling Service', () => {
 
       await activityPollingService.processPendingRecords();
 
+      // Should log debug message for parse failure
+      expect(logger.debug).toHaveBeenCalledWith(
+        'Failed to parse user_assigned_issues:',
+        expect.any(String)
+      );
+      
+      // Should still process with empty issues array
       expect(activityService.analyzeBatch).toHaveBeenCalledWith(
         expect.any(Array),
         [],
