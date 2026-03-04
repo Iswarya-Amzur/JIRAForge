@@ -18,7 +18,7 @@ jest.mock('../../src/utils/datetime', () => ({
 jest.mock('../../src/services/feedback-session-store', () => ({}));
 
 const { getClient } = require('../../src/services/db/supabase-client');
-const { getDashboardData } = require('../../src/controllers/forge-proxy-controller');
+const { getDashboardData, supabaseQuery } = require('../../src/controllers/forge-proxy-controller');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -33,16 +33,24 @@ function makeQuery(resolveValue) {
   const p = Promise.resolve(resolveValue);
   const q = {
     select: jest.fn().mockReturnThis(),
+    insert: jest.fn().mockReturnThis(),
+    update: jest.fn().mockReturnThis(),
+    delete: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
     neq: jest.fn().mockReturnThis(),
     gte: jest.fn().mockReturnThis(),
     lte: jest.fn().mockReturnThis(),
+    gt: jest.fn().mockReturnThis(),
+    lt: jest.fn().mockReturnThis(),
+    is: jest.fn().mockReturnThis(),
     order: jest.fn().mockReturnThis(),
     limit: jest.fn().mockReturnThis(),
+    range: jest.fn().mockReturnThis(),
     in: jest.fn().mockReturnThis(),
     or: jest.fn().mockReturnThis(),
     not: jest.fn().mockReturnThis(),
     single: jest.fn().mockReturnThis(),
+    maybeSingle: jest.fn().mockReturnThis(),
     then: (...args) => p.then(...args),
     catch: (...args) => p.catch(...args),
     finally: (...args) => p.finally(...args),
@@ -309,5 +317,368 @@ describe('getDashboardData', () => {
 
     const { data } = res.json.mock.calls[0][0];
     expect(data.membership).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — supabaseQuery
+// Covers: guard clauses, all HTTP methods, filter types (eq, neq, gte, lte,
+//         gt, lt, in, is, not, or, order, limit, offset, single),
+//         logSecurityWarnings, initQueryBuilder, prepareUpdatePayload
+// ---------------------------------------------------------------------------
+
+describe('supabaseQuery', () => {
+  const logger = require('../../src/utils/logger');
+  const { getUTCISOString } = require('../../src/utils/datetime');
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  /** req factory for supabaseQuery — defaults to a GET on test_table */
+  function makeQueryReq(body = {}) {
+    return {
+      forgeContext: { cloudId: 'cloud-1', accountId: 'account-1' },
+      body: { table: 'test_table', method: 'GET', ...body },
+    };
+  }
+
+  /** Returns a simple Supabase client whose from() always gives the same query mock */
+  function makeSimpleClient(resolveValue = { data: [], error: null }) {
+    const q = makeQuery(resolveValue);
+    return { from: jest.fn().mockReturnValue(q), _q: q };
+  }
+
+  // --- Guard clauses ---
+
+  it('returns 400 when table is missing', async () => {
+    getClient.mockReturnValue({});
+    const res = makeRes();
+    await supabaseQuery({ forgeContext: { cloudId: 'x', accountId: 'y' }, body: {} }, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false, error: 'Table name is required' })
+    );
+  });
+
+  it('returns 500 when Supabase client is not configured', async () => {
+    getClient.mockReturnValue(null);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq(), res);
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false, error: 'Database not configured' })
+    );
+  });
+
+  // --- GET / SELECT ---
+
+  it('returns 200 with data for a basic GET request (defaults to select *)', async () => {
+    const rows = [{ id: 1 }];
+    const { _q: q, ...client } = makeSimpleClient({ data: rows, error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ method: 'GET' }), res);
+    expect(q.select).toHaveBeenCalledWith('*');
+    expect(res.json).toHaveBeenCalledWith({ success: true, data: rows });
+  });
+
+  it('uses provided top-level select columns', async () => {
+    const { _q: q, ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ select: 'id, name' }), res);
+    expect(q.select).toHaveBeenCalledWith('id, name');
+  });
+
+  it('uses query._select when top-level select is absent', async () => {
+    const { _q: q, ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ query: { _select: 'id, email' } }), res);
+    expect(q.select).toHaveBeenCalledWith('id, email');
+  });
+
+  it('returns 400 when Supabase returns an error object', async () => {
+    const { ...client } = makeSimpleClient({ data: null, error: { message: 'DB error' } });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq(), res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false, error: 'DB error' })
+    );
+  });
+
+  it('returns 500 when an unexpected exception is thrown', async () => {
+    getClient.mockImplementation(() => { throw new Error('Unexpected crash'); });
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq(), res);
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false, error: 'Unexpected crash' })
+    );
+  });
+
+  // --- POST / INSERT ---
+
+  it('executes INSERT for POST method and returns data', async () => {
+    const newRow = { id: 2, name: 'new' };
+    const { _q: q, ...client } = makeSimpleClient({ data: [newRow], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ method: 'POST', body: { name: 'new' } }), res);
+    expect(q.insert).toHaveBeenCalledWith({ name: 'new' });
+    expect(res.json).toHaveBeenCalledWith({ success: true, data: [newRow] });
+  });
+
+  // --- PATCH / UPDATE ---
+
+  it('executes UPDATE for PATCH method with eq filter', async () => {
+    const updated = [{ id: 1, name: 'updated' }];
+    const { _q: q, ...client } = makeSimpleClient({ data: updated, error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({
+      method: 'PATCH',
+      body: { name: 'updated' },
+      query: { eq: { id: '1' } },
+    }), res);
+    expect(q.update).toHaveBeenCalledWith({ name: 'updated' });
+    expect(q.eq).toHaveBeenCalledWith('id', '1');
+    expect(res.json).toHaveBeenCalledWith({ success: true, data: updated });
+  });
+
+  // --- DELETE ---
+
+  it('executes DELETE method with eq filter', async () => {
+    const { _q: q, ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ method: 'DELETE', query: { eq: { id: '5' } } }), res);
+    expect(q.delete).toHaveBeenCalled();
+    expect(q.eq).toHaveBeenCalledWith('id', '5');
+    expect(res.json).toHaveBeenCalledWith({ success: true, data: [] });
+  });
+
+  // --- Unsupported method ---
+
+  it('returns 400 for an unsupported HTTP method', async () => {
+    const { ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ method: 'PUT' }), res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false, error: expect.stringContaining('Unsupported') })
+    );
+  });
+
+  // --- Filter types ---
+
+  it('applies eq, order (object), and limit filters on GET', async () => {
+    const { _q: q, ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({
+      query: {
+        eq: { status: 'active' },
+        order: { column: 'created_at', ascending: false },
+        limit: 10,
+      },
+    }), res);
+    expect(q.eq).toHaveBeenCalledWith('status', 'active');
+    expect(q.order).toHaveBeenCalledWith('created_at', { ascending: false });
+    expect(q.limit).toHaveBeenCalledWith(10);
+  });
+
+  it('applies gte and lte filters on GET', async () => {
+    const { _q: q, ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ query: { gte: { score: 10 }, lte: { score: 100 } } }), res);
+    expect(q.gte).toHaveBeenCalledWith('score', 10);
+    expect(q.lte).toHaveBeenCalledWith('score', 100);
+  });
+
+  it('applies gt and lt filters on GET', async () => {
+    const { _q: q, ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ query: { gt: { age: 18 }, lt: { age: 65 } } }), res);
+    expect(q.gt).toHaveBeenCalledWith('age', 18);
+    expect(q.lt).toHaveBeenCalledWith('age', 65);
+  });
+
+  it('applies neq filter on GET', async () => {
+    const { _q: q, ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ query: { neq: { status: 'deleted' } } }), res);
+    expect(q.neq).toHaveBeenCalledWith('status', 'deleted');
+  });
+
+  it('applies not filter on GET', async () => {
+    const { _q: q, ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({
+      query: { not: { status: { operator: 'is', value: null } } },
+    }), res);
+    expect(q.not).toHaveBeenCalledWith('status', 'is', null);
+  });
+
+  it('applies or filter on GET', async () => {
+    const { _q: q, ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ query: { or: 'id.eq.1,id.eq.2' } }), res);
+    expect(q.or).toHaveBeenCalledWith('id.eq.1,id.eq.2');
+  });
+
+  it('applies single filter on GET', async () => {
+    const { _q: q, ...client } = makeSimpleClient({ data: { id: 1 }, error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ query: { single: true } }), res);
+    expect(q.single).toHaveBeenCalled();
+  });
+
+  it('applies offset as range filter on GET', async () => {
+    const { _q: q, ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ query: { offset: 20, limit: 10 } }), res);
+    expect(q.range).toHaveBeenCalledWith(20, 29);
+  });
+
+  it('applies in filter on GET', async () => {
+    const { _q: q, ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ query: { in: { status: ['active', 'pending'] } } }), res);
+    expect(q.in).toHaveBeenCalledWith('status', ['active', 'pending']);
+  });
+
+  // --- Reserved param handling ---
+
+  it('skips reserved "order" param in eq filter but delegates to handleOrderParam', async () => {
+    const { _q: q, ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ query: { eq: { order: 'created_at.desc' } } }), res);
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[ForgeProxy] Skipping reserved parameter as filter',
+      expect.objectContaining({ col: 'order' })
+    );
+    expect(q.order).toHaveBeenCalledWith('created_at', { ascending: false });
+  });
+
+  it('skips reserved param in neq filter with a warning', async () => {
+    const { ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ query: { neq: { limit: 'x' } } }), res);
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[ForgeProxy] Skipping reserved parameter as neq filter',
+      expect.any(Object)
+    );
+  });
+
+  // --- logSecurityWarnings ---
+
+  it('logs security warning for GET on sensitive table without org filter', async () => {
+    const { ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ table: 'screenshots', method: 'GET' }), res);
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[ForgeProxy] SECURITY: Query to sensitive table without organization filter',
+      expect.any(Object)
+    );
+  });
+
+  it('logs security warning for POST on sensitive table without org id', async () => {
+    const { ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ table: 'users', method: 'POST', body: { email: 'x@x.com' } }), res);
+    expect(logger.warn).toHaveBeenCalledWith(
+      '[ForgeProxy] SECURITY: INSERT to sensitive table without organization_id',
+      expect.any(Object)
+    );
+  });
+
+  it('does not log security warning when organization_id eq filter is present', async () => {
+    const { ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({
+      table: 'screenshots',
+      query: { eq: { organization_id: 'org-1' } },
+    }), res);
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      '[ForgeProxy] SECURITY: Query to sensitive table without organization filter',
+      expect.any(Object)
+    );
+  });
+
+  it('does not log security warning for non-sensitive tables', async () => {
+    const { ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({ table: 'app_releases' }), res);
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      '[ForgeProxy] SECURITY: Query to sensitive table without organization filter',
+      expect.any(Object)
+    );
+  });
+
+  // --- prepareUpdatePayload ---
+
+  it('adds updated_at to screenshot soft-delete payload when missing', async () => {
+    const { _q: q, ...client } = makeSimpleClient({
+      data: [{ id: 'sc-1', deleted_at: '2024-01-01T00:00:00Z' }],
+      error: null,
+    });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({
+      table: 'screenshots',
+      method: 'PATCH',
+      body: { deleted_at: '2024-01-01T00:00:00Z' },
+      query: { eq: { id: 'sc-1' } },
+    }), res);
+    expect(getUTCISOString).toHaveBeenCalled();
+    expect(q.update).toHaveBeenCalledWith(
+      expect.objectContaining({ updated_at: '2024-01-01T00:00:00Z' })
+    );
+  });
+
+  it('does not add updated_at when it is already present in soft-delete payload', async () => {
+    const { _q: q, ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({
+      table: 'screenshots',
+      method: 'PATCH',
+      body: { deleted_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:00:00Z' },
+      query: { eq: { id: 'sc-1' } },
+    }), res);
+    // getUTCISOString should NOT be called since updated_at is already set
+    expect(getUTCISOString).not.toHaveBeenCalled();
+  });
+
+  it('does not treat non-screenshot table updates as soft-delete', async () => {
+    const { ...client } = makeSimpleClient({ data: [], error: null });
+    getClient.mockReturnValue(client);
+    const res = makeRes();
+    await supabaseQuery(makeQueryReq({
+      table: 'users',
+      method: 'PATCH',
+      body: { deleted_at: '2024-01-01T00:00:00Z' },
+      query: { eq: { id: 'u-1' } },
+    }), res);
+    expect(getUTCISOString).not.toHaveBeenCalled();
   });
 });
