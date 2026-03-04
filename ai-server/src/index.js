@@ -485,12 +485,10 @@ async function startServer() {
 }
 
 // Initialize server
-try {
-  await startServer();
-} catch (error) {
+startServer().catch((error) => {
   logger.error('Failed to start server:', error);
   process.exit(1);
-}
+});
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
