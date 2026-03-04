@@ -29,7 +29,7 @@ function parseUserAssignedIssues(userAssignedIssues) {
     try {
       return JSON.parse(userAssignedIssues);
     } catch (e) {
-      logger.warn('Failed to parse user_assigned_issues string', { userAssignedIssues });
+      logger.warn('Failed to parse user_assigned_issues string', { userAssignedIssues, error: e.message });
       return [];
     }
   }
@@ -170,7 +170,7 @@ async function deleteScreenshotFiles(screenshotId, storagePath) {
       logger.debug('Deleted thumbnail from storage', { thumbPath });
     } catch (thumbError) {
       // Thumbnail may not exist - this is not critical
-      logger.debug('Thumbnail not found or already deleted', { thumbPath });
+      logger.debug('Thumbnail not found or already deleted', { thumbPath, error: thumbError.message });
     }
 
     // Clear storage URLs in database to prevent broken image links
@@ -407,7 +407,7 @@ exports.analyzeScreenshot = async (req, res) => {
 
   } catch (error) {
     const webhookData = extractWebhookData(req.body);
-    const errorResponse = await handleAnalysisError(error, webhookData);
-    res.status(500).json(errorResponse);
+    const errorResponse = handleAnalysisError(error, webhookData);
+    res.status(500).json(await errorResponse);
   }
 };
