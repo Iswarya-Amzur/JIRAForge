@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@forge/bridge';
 import './AppClassificationSettings.css';
 
@@ -145,6 +145,9 @@ function AppClassificationSettings({ projectKey }) {
   // Store the full tracking settings so we can merge when saving
   const [fullTrackingSettings, setFullTrackingSettings] = useState(null);
 
+  // Track if we've performed cleanup to avoid infinite loops
+  const hasPerformedCleanup = useRef(false);
+
   /**
    * Normalize a saved app list to canonical keys and deduplicate.
    * Handles legacy raw values like "code.exe" → "vscode".
@@ -166,6 +169,7 @@ function AppClassificationSettings({ projectKey }) {
 
   const loadSavedSettings = useCallback(async () => {
     setLoadingSettings(true);
+    hasPerformedCleanup.current = false; // Reset cleanup flag when reloading
     try {
       const result = await invoke('getTrackingSettings', { projectKey: projectKey || null });
       if (result.success && result.settings) {
@@ -202,6 +206,7 @@ function AppClassificationSettings({ projectKey }) {
 
   const loadClassifications = useCallback(async () => {
     setLoadingClassifications(true);
+    hasPerformedCleanup.current = false; // Reset cleanup flag when reloading
     try {
       const result = await invoke('getClassifications', { projectKey: projectKey || null });
       if (result.success && result.classifications) {
@@ -242,6 +247,85 @@ function AppClassificationSettings({ projectKey }) {
     loadSavedSettings();
     loadUnknownApps();
   }, [loadClassifications, loadSavedSettings, loadUnknownApps]);
+
+  /**
+   * Cleanup effect: Remove any selected apps that no longer exist in the database.
+   * Runs after both classifications and settings are loaded.
+   */
+  useEffect(() => {
+    if (loadingClassifications || loadingSettings || hasPerformedCleanup.current) return;
+
+    const allValidIdentifiers = new Set(
+      [...productiveApps, ...nonProductiveApps, ...privateApps].map(app => app.value)
+    );
+
+    setSettings(prevSettings => {
+      const cleanedProductiveApps = prevSettings.productiveAppsSelected.filter(id => allValidIdentifiers.has(id));
+      const cleanedNonProductiveApps = prevSettings.nonProductiveAppsSelected.filter(id => allValidIdentifiers.has(id));
+      const cleanedPrivateSites = prevSettings.privateSites.filter(id => allValidIdentifiers.has(id));
+
+      const hasChanges = 
+        cleanedProductiveApps.length !== prevSettings.productiveAppsSelected.length ||
+        cleanedNonProductiveApps.length !== prevSettings.nonProductiveAppsSelected.length ||
+        cleanedPrivateSites.length !== prevSettings.privateSites.length;
+
+      if (hasChanges) {
+        console.log('[AppClassification] Cleaning up deleted apps from selected lists');
+        console.log('[AppClassification] Before:', {
+          productive: prevSettings.productiveAppsSelected,
+          nonProductive: prevSettings.nonProductiveAppsSelected,
+          private: prevSettings.privateSites
+        });
+        console.log('[AppClassification] After:', {
+          productive: cleanedProductiveApps,
+          nonProductive: cleanedNonProductiveApps,
+          private: cleanedPrivateSites
+        });
+
+        hasPerformedCleanup.current = true;
+
+        const cleanedSettings = {
+          ...prevSettings,
+          productiveAppsSelected: cleanedProductiveApps,
+          nonProductiveAppsSelected: cleanedNonProductiveApps,
+          privateSites: cleanedPrivateSites,
+        };
+
+        // Auto-save the cleaned settings
+        (async () => {
+          setSaving(true);
+          try {
+            const mergedSettings = {
+              ...(fullTrackingSettings || {}),
+              ...cleanedSettings,
+            };
+            const persistenceSettings = {
+              ...mergedSettings,
+              whitelistEnabled: mergedSettings.productiveAppsEnabled,
+              whitelistedApps: mergedSettings.productiveAppsSelected || [],
+              blacklistEnabled: mergedSettings.nonProductiveAppsEnabled,
+              blacklistedApps: mergedSettings.nonProductiveAppsSelected || [],
+            };
+            
+            await invoke('saveTrackingSettings', {
+              settings: persistenceSettings,
+              projectKey: projectKey || null
+            });
+          } catch (err) {
+            console.error('Failed to auto-save cleaned settings:', err);
+          } finally {
+            setSaving(false);
+          }
+        })();
+
+        return cleanedSettings;
+      } else {
+        hasPerformedCleanup.current = true;
+        return prevSettings;
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadingClassifications, loadingSettings, productiveApps, nonProductiveApps, privateApps]);
 
   const saveSettings = useCallback(async (updatedClassificationSettings) => {
     setSaving(true);
@@ -356,10 +440,44 @@ function AppClassificationSettings({ projectKey }) {
     setIdentifiedApp(null);
 
     try {
-      console.log('[AppClassification UI] Invoking searchAppIdentifier resolver...');
+      // STEP 1: Try psutil detection directly from browser (desktop app is on localhost)
+      let psutilResult = null;
+      try {
+        console.log('[AppClassification UI] Trying psutil detection from browser...');
+        const response = await fetch('http://localhost:5179/api/search-running-app', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ search_term: searchTerm.trim() })
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.found && data.best_match) {
+            console.log('[AppClassification UI] psutil found app:', data.best_match);
+            psutilResult = data.best_match;
+          }
+        }
+      } catch (desktopErr) {
+        console.log('[AppClassification UI] Desktop app not available:', desktopErr.message);
+      }
+
+      // If psutil found the app, show it immediately
+      if (psutilResult) {
+        setIdentifiedApp({
+          ...psutilResult,
+          section,
+          originalSearch: searchTerm
+        });
+        setSearchingAppSection(null);
+        return;
+      }
+
+      // STEP 2: Fallback to LLM via Forge backend
+      console.log('[AppClassification UI] Invoking searchAppIdentifier resolver (LLM fallback)...');
       const result = await invoke('searchAppIdentifier', {
         searchTerm: searchTerm.trim(),
-        projectKey: projectKey || null
+        projectKey: projectKey || null,
+        desktopAppUrl: null  // Don't pass URL - we already tried psutil from browser
       });
 
       console.log('[AppClassification UI] Resolver response:', JSON.stringify(result, null, 2));
@@ -549,6 +667,7 @@ function AppClassificationSettings({ projectKey }) {
                   onChange={(e) => {
                     setProductiveSearch(e.target.value);
                     setProductiveVisibleCount(DEFAULT_VISIBLE_APPS);
+                    setIdentifiedApp(null);
                   }}
                 />
                 <span className="classification-count-text">
@@ -771,6 +890,7 @@ function AppClassificationSettings({ projectKey }) {
                   onChange={(e) => {
                     setNonProductiveSearch(e.target.value);
                     setNonProductiveVisibleCount(DEFAULT_VISIBLE_APPS);
+                    setIdentifiedApp(null);
                   }}
                 />
                 <span className="classification-count-text">
@@ -959,6 +1079,7 @@ function AppClassificationSettings({ projectKey }) {
                   onChange={(e) => {
                     setPrivateSearch(e.target.value);
                     setPrivateVisibleCount(DEFAULT_VISIBLE_APPS);
+                    setIdentifiedApp(null);
                   }}
                 />
                 <span className="classification-count-text">
