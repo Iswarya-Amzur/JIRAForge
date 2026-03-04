@@ -7,7 +7,7 @@
 module.exports = {
     type: 'inactivity_alert',
     
-    subject: '⏰ Are you taking a break? - JIRAForge',
+    subject: '☕ Just checking in - TimeTracker',
     
     /**
      * Generate plain text email body
@@ -19,29 +19,26 @@ module.exports = {
      * @returns {string} Plain text email body
      */
     text: ({ displayName, lastActivityTime, hoursInactive, settingsUrl }) => `
-Hi ${displayName},
+Hello ${displayName},
 
-We noticed you haven't been active in JIRAForge for ${hoursInactive} hours.
+I hope everything is going well! 😊
+
+We noticed you haven't been active in TimeTracker for about ${hoursInactive} hours.
 
 Last activity: ${lastActivityTime}
 
-If you're taking a well-deserved break, that's great! This is just a friendly reminder.
+If you're enjoying a well-deserved break, that's wonderful! We just wanted to reach out in case you meant to be tracking your time.
 
-If you intended to track your work, please open the Desktop App to continue. Your time tracking will automatically resume when you start working again.
+If you'd like to resume tracking, simply open the Desktop App whenever you're ready - it will automatically pick up where you left off.
 
-Quick tips:
-- The Desktop App tracks your activity automatically when running
-- You can pause tracking from the system tray icon
-- Idle time is automatically detected and excluded
+${settingsUrl ? `Feel free to adjust these reminders anytime: ${settingsUrl}` : ''}
 
-${settingsUrl ? `To adjust or disable these alerts: ${settingsUrl}` : ''}
-
-Best regards,
-The JIRAForge Team
+Warm regards,
+The TimeTracker Team
 
 ---
-You're receiving this email because you have inactivity alerts enabled.
-To stop receiving these alerts, update your notification settings.
+You're receiving this friendly check-in because you have inactivity alerts enabled.
+You can update these preferences anytime in your settings.
     `.trim(),
     
     /**
@@ -168,7 +165,7 @@ To stop receiving these alerts, update your notification settings.
                 <h1>🚀 JIRAForge</h1>
             </div>
             
-            <h2>Hi ${displayName},</h2>
+            <h2>Hello ${displayName}! 👋</h2>
             
             <div class="alert-box">
                 <div class="time">${hoursInactive}h</div>
@@ -181,32 +178,31 @@ To stop receiving these alerts, update your notification settings.
             
             <div class="reassurance">
                 <p style="margin: 0;">
-                    ☕ <strong>Taking a break?</strong> That's great! This is just a friendly reminder. 
-                    We know breaks are important for productivity.
+                    ☕ <strong>Enjoying some time off?</strong> That's wonderful! We completely understand that breaks are essential. 
+                    This is just a gentle check-in to make sure everything's okay.
                 </p>
             </div>
             
             <div class="cta-text">
                 <p style="margin: 0;">
-                    If you intended to track your work, just open the Desktop App.<br>
-                    <strong>Time tracking will automatically resume.</strong>
+                    If you meant to be tracking your work, no worries! Just open the Desktop App whenever you're ready.<br>
+                    <strong>Your time tracking will automatically resume.</strong>
                 </p>
             </div>
             
             <div class="tips">
-                <h4>💡 Quick tips:</h4>
+                <h4>💡 Friendly reminders:</h4>
                 <ul>
-                    <li>The Desktop App tracks your activity automatically when running</li>
-                    <li>You can pause tracking from the system tray icon</li>
-                    <li>Idle time is automatically detected and excluded</li>
+                    <li>The Desktop App automatically tracks your activity when running</li>
+                    <li>Idle time is automatically detected and excluded - smart, right?</li>
                 </ul>
             </div>
             
-            <p>Best regards,<br><strong>The JIRAForge Team</strong></p>
+            <p>Warm regards,<br><strong>The TimeTracker Team</strong></p>
             
             <div class="footer">
-                <p>You're receiving this email because you have inactivity alerts enabled.</p>
-                ${settingsUrl ? `<p><a href="${settingsUrl}">Update your notification settings</a></p>` : ''}
+                <p>You're receiving this friendly check-in because you have inactivity alerts enabled.</p>
+                ${settingsUrl ? `<p><a href="${settingsUrl}">Update your notification preferences</a></p>` : ''}
             </div>
         </div>
     </div>

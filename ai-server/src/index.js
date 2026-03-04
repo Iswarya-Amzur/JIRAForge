@@ -262,6 +262,8 @@ app.post('/api/process-brd', authMiddleware, brdController.processBRD);
 app.post('/api/analyze-batch', authMiddleware, activityController.analyzeBatch);
 // classify-app uses Atlassian token auth (desktop app sends OAuth token)
 app.post('/api/classify-app', atlassianAuthMiddleware, activityController.classifyApp);
+// identify-app uses Forge auth (called from Forge app for admin app classification)
+app.post('/api/identify-app', forgeLimiter, forgeAuthMiddleware, activityController.identifyApp);
 
 // Manual trigger for clustering - called by organization admins from Forge app
 app.post('/api/trigger-clustering', authMiddleware, async (req, res, next) => {

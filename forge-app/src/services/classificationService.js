@@ -6,6 +6,7 @@
 
 import { isJiraAdmin, checkUserPermissions } from '../utils/jira.js';
 import { getSupabaseConfig, supabaseRequest, getOrCreateOrganization, getOrCreateUser } from '../utils/supabase.js';
+import { remoteRequest } from '../utils/remote.js';
 
 function normalizeIdentifier(identifier) {
   return (identifier || '')
@@ -400,4 +401,162 @@ export async function bulkImportClassifications(classifications, projectKey, clo
     imported: successCount,
     errors: errorCount
   };
+}
+
+/**
+ * Search for an application identifier using multiple strategies:
+ * 1. First check DB for existing classification
+ * 2. If not found and desktopAppAvailable, ask desktop psutil
+ * 3. If still not found, fallback to LLM identification
+ *
+ * @param {string} searchTerm - App name to search for
+ * @param {string} cloudId - Jira Cloud ID
+ * @param {string} accountId - Atlassian account ID
+ * @param {Object} options - Optional: { desktopAppUrl, projectKey }
+ * @returns {Promise<Object>} Search result with identifier, display_name, source, etc.
+ */
+export async function searchAppIdentifier(searchTerm, cloudId, accountId, options = {}) {
+  console.log('[Classification Service] ========== searchAppIdentifier START ==========');
+  console.log('[Classification Service] Input params:', { searchTerm, cloudId, accountId: accountId?.substring(0, 10) + '...', options });
+
+  const isAdmin = await isJiraAdmin();
+  console.log('[Classification Service] isAdmin check:', isAdmin);
+  if (!isAdmin) {
+    throw new Error('Access denied: Only Jira Administrators can search for applications');
+  }
+
+  const normalizedSearchTerm = (searchTerm || '').trim().toLowerCase();
+  if (normalizedSearchTerm.length < 2) {
+    throw new Error('Search term must be at least 2 characters');
+  }
+
+  console.log(`[Classification Service] Searching for: "${searchTerm}" (normalized: "${normalizedSearchTerm}")`);
+
+  // STEP 1: Check DB for existing classification
+  try {
+    const supabaseConfig = await getSupabaseConfig(accountId);
+    if (supabaseConfig) {
+      let organizationId = null;
+      if (cloudId) {
+        try {
+          const org = await getOrCreateOrganization(cloudId, supabaseConfig);
+          organizationId = org?.id;
+        } catch (err) {
+          console.log('[Classification] Could not get organization for DB search');
+        }
+      }
+
+      // Search in application_classifications
+      // Use ilike for case-insensitive partial matching
+      // PostgREST uses * as wildcard, not %
+      const searchPattern = `*${normalizedSearchTerm}*`;
+      let endpoint = `application_classifications?or=(identifier.ilike.${searchPattern},display_name.ilike.${searchPattern})&limit=5`;
+
+      const dbResults = await supabaseRequest(supabaseConfig, endpoint);
+
+      if (dbResults && dbResults.length > 0) {
+        console.log(`[Classification] Found ${dbResults.length} DB matches for "${searchTerm}"`);
+        return {
+          success: true,
+          found: true,
+          source: 'database',
+          matches: dbResults.map(r => ({
+            identifier: r.identifier,
+            display_name: r.display_name,
+            classification: r.classification,
+            source: 'database',
+            confidence: 'high'
+          })),
+          best_match: {
+            identifier: dbResults[0].identifier,
+            display_name: dbResults[0].display_name,
+            classification: dbResults[0].classification,
+            source: 'database',
+            confidence: 'high'
+          }
+        };
+      }
+    }
+  } catch (err) {
+    console.log('[Classification] DB search error (continuing):', err.message);
+  }
+
+  // STEP 2: If desktop app URL provided, try psutil detection
+  if (options.desktopAppUrl) {
+    try {
+      console.log('[Classification] Trying psutil detection via desktop app');
+      const response = await fetch(`${options.desktopAppUrl}/api/search-running-app`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ search_term: searchTerm })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success && result.found && result.best_match) {
+          console.log(`[Classification] psutil found match: ${result.best_match.identifier}`);
+          return {
+            success: true,
+            found: true,
+            source: 'psutil',
+            matches: result.matches,
+            best_match: result.best_match
+          };
+        }
+      }
+    } catch (err) {
+      console.log('[Classification] Desktop app not available (continuing):', err.message);
+    }
+  }
+
+  // STEP 3: Fallback to LLM identification via AI server
+  try {
+    console.log('[Classification Service] STEP 3: Falling back to LLM identification via AI server');
+    console.log('[Classification Service] Calling remoteRequest to /api/identify-app with search_term:', searchTerm);
+    const llmResult = await remoteRequest('/api/identify-app', {
+      body: { search_term: searchTerm }
+    });
+    console.log('[Classification Service] LLM response:', JSON.stringify(llmResult, null, 2));
+
+    if (llmResult && llmResult.identified) {
+      console.log('[Classification Service] LLM successfully identified app:', llmResult.identifier);
+      console.log('[Classification Service] ========== searchAppIdentifier END (LLM success) ==========');
+      return {
+        success: true,
+        found: true,
+        source: 'llm',
+        matches: [{
+          identifier: llmResult.identifier,
+          display_name: llmResult.display_name,
+          confidence: llmResult.confidence,
+          source: 'llm'
+        }],
+        best_match: {
+          identifier: llmResult.identifier,
+          display_name: llmResult.display_name,
+          confidence: llmResult.confidence,
+          source: 'llm'
+        }
+      };
+    } else {
+      console.log('[Classification Service] LLM could not identify app');
+      console.log('[Classification Service] ========== searchAppIdentifier END (LLM no match) ==========');
+      return {
+        success: true,
+        found: false,
+        source: 'none',
+        matches: [],
+        message: `Could not identify application matching "${searchTerm}"`
+      };
+    }
+  } catch (err) {
+    console.error('[Classification Service] LLM identification error:', err.message);
+    console.error('[Classification Service] Full error:', err);
+    console.log('[Classification Service] ========== searchAppIdentifier END (LLM error) ==========');
+    return {
+      success: false,
+      found: false,
+      error: `Failed to identify application: ${err.message}`
+    };
+  }
 }

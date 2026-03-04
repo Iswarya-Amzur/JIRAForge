@@ -9,7 +9,8 @@ import {
   saveClassification,
   deleteClassification,
   getUnknownApps,
-  bulkImportClassifications
+  bulkImportClassifications,
+  searchAppIdentifier
 } from '../services/classificationService.js';
 
 /**
@@ -130,6 +131,33 @@ export function registerClassificationResolvers(resolver) {
       };
     } catch (error) {
       console.error('Error bulk importing classifications:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  });
+
+  /**
+   * Search for an application identifier using:
+   * 1. Database lookup
+   * 2. psutil detection (if desktop app available)
+   * 3. LLM identification fallback
+   */
+  resolver.define('searchAppIdentifier', async (req) => {
+    const { payload, context } = req;
+    const { searchTerm, desktopAppUrl, projectKey } = payload || {};
+    const accountId = context.accountId;
+    const cloudId = context.cloudId;
+
+    try {
+      const result = await searchAppIdentifier(searchTerm, cloudId, accountId, {
+        desktopAppUrl,
+        projectKey
+      });
+      return result;
+    } catch (error) {
+      console.error('Error searching app identifier:', error);
       return {
         success: false,
         error: error.message

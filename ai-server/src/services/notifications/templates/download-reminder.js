@@ -7,7 +7,7 @@
 module.exports = {
     type: 'download_reminder',
     
-    subject: 'Complete Your Setup: Download the JIRAForge Desktop App',
+    subject: 'You\'re almost there! Let\'s get TimeTracker set up 🎉',
     
     /**
      * Generate plain text email body
@@ -18,28 +18,28 @@ module.exports = {
      * @returns {string} Plain text email body
      */
     text: ({ displayName, downloadUrl, platform = 'Windows' }) => `
-Hi ${displayName},
+Hello ${displayName},
 
-Complete your JIRAForge setup by downloading the Desktop App!
+We're so glad you're here! 😊 You're just one step away from unlocking the full TimeTracker experience.
 
-The Desktop App provides:
-✓ Automatic time tracking while you work
-✓ Screenshot-based activity monitoring
-✓ Seamless Jira worklog synchronization
-✓ Offline support - track time even without internet
+The TimeTracker Desktop App will help you:
+✓ Automatically track your time while you work (no manual entry needed!)
+✓ Monitor your activity with smart OCR technology
+✓ Seamlessly sync with your Jira worklogs
+✓ Track time even when you're offline
 
-Download for ${platform}: ${downloadUrl}
+Ready to get started? Download for ${platform}: ${downloadUrl}
 
-Installation is quick and easy - just download, install, and login with your Atlassian account.
+Installation is super quick and easy - usually takes less than 2 minutes! Just download, install, and sign in with your Atlassian account.
 
-Need help? Check out our setup guide or contact support.
+Need a hand? We're here to help! Check out our setup guide or reach out to our friendly support team anytime.
 
-Best regards,
-The JIRAForge Team
+Warm regards,
+The TimeTracker Team
 
 ---
-You're receiving this email because you signed up for JIRAForge.
-To stop receiving these reminders, update your notification settings.
+You're receiving this because you signed up for TimeTracker.
+You can update your notification preferences anytime in your settings.
     `.trim(),
     
     /**
@@ -53,7 +53,7 @@ To stop receiving these reminders, update your notification settings.
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Download Desktop App</title>
+    <title>Download TimeTracker Desktop App</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -160,18 +160,18 @@ To stop receiving these reminders, update your notification settings.
     <div class="container">
         <div class="card">
             <div class="logo">
-                <h1>🚀 JIRAForge</h1>
+                <h1>🚀 TimeTracker</h1>
             </div>
             
-            <h2>Hi ${displayName},</h2>
+            <h2>Hello ${displayName}! 👋</h2>
             
-            <p>Complete your JIRAForge setup by downloading the Desktop App!</p>
+            <p>We're excited to have you on board! You're just one quick step away from experiencing the full power of TimeTracker.</p>
             
             <div class="features">
-                <strong>The Desktop App provides:</strong>
+                <strong>Here's what you'll love about the Desktop App:</strong>
                 <ul>
-                    <li>Automatic time tracking while you work</li>
-                    <li>Screenshot-based activity monitoring</li>
+                    <li>Automatic time tracking while you work (no manual entry!)</li>
+                    <li>Smart screenshot-based activity monitoring</li>
                     <li>Seamless Jira worklog synchronization</li>
                     <li>Offline support - track time even without internet</li>
                 </ul>
@@ -184,22 +184,22 @@ To stop receiving these reminders, update your notification settings.
             </p>
             
             <div class="steps">
-                <strong>Quick Setup (2 minutes):</strong>
+                <strong>Super Easy Setup (about 2 minutes):</strong>
                 <ol>
                     <li>Download the installer</li>
                     <li>Run the installer</li>
-                    <li>Login with your Atlassian account</li>
-                    <li>Start tracking!</li>
+                    <li>Sign in with your Atlassian account</li>
+                    <li>You're all set - start tracking!</li>
                 </ol>
             </div>
             
-            <p>Need help? Check out our <a href="${downloadUrl}/guide">setup guide</a> or contact support.</p>
+            <p>Need a hand getting started? We're here to help! Check out our <a href="${downloadUrl}/guide">friendly setup guide</a> or reach out to our support team.</p>
             
-            <p>Best regards,<br><strong>The JIRAForge Team</strong></p>
+            <p>Warm regards,<br><strong>The TimeTracker Team</strong></p>
             
             <div class="footer">
-                <p>You're receiving this email because you signed up for JIRAForge.</p>
-                <p>To stop receiving these reminders, update your notification settings.</p>
+                <p>You're receiving this email because you signed up for TimeTracker.</p>
+                <p>You can update your notification preferences anytime in your settings.</p>
             </div>
         </div>
     </div>

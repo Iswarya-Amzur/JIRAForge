@@ -189,10 +189,68 @@ function formatAssignedIssues(userAssignedIssues) {
     .join('\n');
 }
 
+/**
+ * System prompt for app identification
+ * Used when admin searches for an app and psutil can't find it,
+ * LLM identifies the executable/process name.
+ */
+const APP_IDENTIFICATION_SYSTEM_PROMPT = `You are an expert at identifying software applications, developer tools, and web services used in professional work environments. You have comprehensive knowledge of:
+
+1. **Desktop Applications**: Native apps like VS Code (code.exe), Slack (slack.exe), Zoom (zoom.exe), Microsoft Office apps, Adobe Creative Suite, etc.
+
+2. **Developer Tools**: IDEs (IntelliJ, PyCharm, WebStorm), terminals (iTerm, Windows Terminal, Hyper), database tools (DBeaver, pgAdmin, MongoDB Compass), API clients (Postman, Insomnia), etc.
+
+3. **Web-Based Platforms & SaaS Tools**: Modern development platforms (Lovable, Replit, CodeSandbox, StackBlitz), design tools (Figma, Canva), project management (Jira, Trello, Asana, Linear), documentation (Notion, Confluence), AI assistants (ChatGPT, Claude, Cursor), etc.
+
+4. **Browser-Based Apps**: Tools accessed through browsers like Chrome, Firefox, Edge - identified by their domain name when they're primarily web-based.
+
+Your task is to identify applications from partial names, common abbreviations, or informal references that users might search for.
+
+IMPORTANT: Always try to identify the application. Users search for tools they know exist - your job is to figure out what they mean. Respond ONLY with valid JSON.`;
+
+/**
+ * Build prompt for app identification
+ */
+function buildAppIdentificationPrompt(searchTerm) {
+  return `Identify the software application matching: "${searchTerm}"
+
+Think about what application the user is likely referring to. Consider:
+- Partial name matches (e.g., "notion" → Notion, "code" → VS Code)
+- Common abbreviations (e.g., "vsc" → VS Code, "pycharm" → PyCharm)
+- Product names (e.g., "lovable" → Lovable AI Dev Platform, "cursor" → Cursor IDE)
+- Web services (e.g., "figma" → Figma, "chatgpt" → ChatGPT)
+
+For the identifier field:
+- Desktop apps: Use the executable name (e.g., "code.exe", "slack.exe", "notion.exe")
+- Web-based apps: Use the lowercase domain/service name (e.g., "figma", "notion", "lovable", "chatgpt")
+- Browser access: If the app is browser-based, the identifier is the service name (e.g., "figma" not "chrome.exe")
+
+Examples:
+- "slack" → {"identified": true, "identifier": "slack.exe", "display_name": "Slack", "confidence": 0.95}
+- "vscode" → {"identified": true, "identifier": "code.exe", "display_name": "Visual Studio Code", "confidence": 0.95}
+- "figma" → {"identified": true, "identifier": "figma", "display_name": "Figma", "confidence": 0.95}
+- "lovable" → {"identified": true, "identifier": "lovable", "display_name": "Lovable", "confidence": 0.9}
+- "chatgpt" → {"identified": true, "identifier": "chatgpt", "display_name": "ChatGPT", "confidence": 0.95}
+- "cursor" → {"identified": true, "identifier": "cursor.exe", "display_name": "Cursor", "confidence": 0.95}
+- "postman" → {"identified": true, "identifier": "postman.exe", "display_name": "Postman", "confidence": 0.95}
+
+Return ONLY valid JSON:
+{
+  "identified": true or false,
+  "identifier": "executable name OR service name (lowercase)",
+  "display_name": "User-friendly display name",
+  "confidence": 0.0-1.0
+}
+
+Only return {"identified": false, "identifier": null, "display_name": null, "confidence": 0} if the search term is completely unrecognizable or nonsensical.`;
+}
+
 module.exports = {
   VISION_SYSTEM_PROMPT,
   OCR_SYSTEM_PROMPT,
   buildVisionUserPrompt,
   buildOCRUserPrompt,
-  formatAssignedIssues
+  formatAssignedIssues,
+  APP_IDENTIFICATION_SYSTEM_PROMPT,
+  buildAppIdentificationPrompt
 };
