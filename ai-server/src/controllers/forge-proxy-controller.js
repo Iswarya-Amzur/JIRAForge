@@ -84,7 +84,7 @@ exports.supabaseQuery = async (req, res) => {
     }
 
     // Reserved PostgREST query parameters that should not be used as column names
-    const RESERVED_PARAMS = ['order', 'limit', 'offset', 'select', 'on_conflict'];
+    const RESERVED_PARAMS = new Set(['order', 'limit', 'offset', 'select', 'on_conflict']);
 
     // Apply filters from query object (only for GET/SELECT - PATCH/DELETE handle their own filters)
     const upperMethod = (method || 'GET').toUpperCase();
@@ -93,7 +93,7 @@ exports.supabaseQuery = async (req, res) => {
         if (key === 'eq') {
           for (const [col, val] of Object.entries(value)) {
             // Skip reserved parameters that were incorrectly parsed as filters
-            if (RESERVED_PARAMS.includes(col)) {
+            if (RESERVED_PARAMS.has(col)) {
               logger.warn('[ForgeProxy] Skipping reserved parameter as filter', { col, val });
               // Try to handle 'order' specially if it looks like "column.direction"
               if (col === 'order' && typeof val === 'string') {
@@ -110,7 +110,7 @@ exports.supabaseQuery = async (req, res) => {
           }
         } else if (key === 'neq') {
           for (const [col, val] of Object.entries(value)) {
-            if (RESERVED_PARAMS.includes(col)) {
+            if (RESERVED_PARAMS.has(col)) {
               logger.warn('[ForgeProxy] Skipping reserved parameter as neq filter', { col, val });
               continue;
             }
@@ -212,7 +212,7 @@ exports.supabaseQuery = async (req, res) => {
         result = await updateBuilder.select();
         break;
       }
-      case 'DELETE':
+      case 'DELETE': {
         let deleteBuilder = supabase.from(table).delete();
         // Apply eq filters
         if (query?.eq) {
@@ -234,6 +234,7 @@ exports.supabaseQuery = async (req, res) => {
         }
         result = await deleteBuilder;
         break;
+      }
       default:
         return res.status(400).json({
           success: false,
@@ -696,6 +697,70 @@ async function ensureOrganizationMembership(supabase, userId, organizationId) {
 }
 
 /**
+ * Applies user visibility filter to a Supabase query.
+ * - Regular users: scoped to their own data
+ * - Project admins: own data + team data from their administered projects
+ * - Jira/org admins: no additional filter (see everything)
+ */
+function applyVisibilityFilter(query, userIdCol, projectKeyCol, { canViewTeamData, shouldFilterByProjects, userId, projectKeys }) {
+  if (!canViewTeamData) {
+    query.eq(userIdCol, userId);
+  } else if (shouldFilterByProjects) {
+    query.or(`${userIdCol}.eq.${userId},${projectKeyCol}.in.(${projectKeys.join(',')})`);
+  }
+  return query;
+}
+
+/**
+ * Builds the users query based on the caller's permission level.
+ * - Regular user: returns only themselves (no DB query needed)
+ * - Project admin: two-step — find user IDs from their projects, then fetch user details
+ * - Jira/org admin: all active users in the organization
+ */
+async function buildUsersQuery(supabase, { canViewTeamData, shouldFilterByProjects, userId, user, organization, projectKeys, maxDailySummaryDays }) {
+  if (!canViewTeamData) {
+    return { data: [{ id: userId, display_name: user.display_name, email: user.email }] };
+  }
+
+  if (!shouldFilterByProjects) {
+    return supabase
+      .from('users')
+      .select('id, display_name, email')
+      .eq('organization_id', organization.id)
+      .eq('is_active', true);
+  }
+
+  // Project admin: find users who tracked time on their projects within the same date window
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - maxDailySummaryDays);
+  const cutoffDateStr = cutoffDate.toISOString().split('T')[0];
+
+  const result = await supabase
+    .from('daily_time_summary')
+    .select('user_id')
+    .eq('organization_id', organization.id)
+    .or(`project_key.in.(${projectKeys.join(',')}),user_id.eq.${userId}`)
+    .gte('work_date', cutoffDateStr);
+
+  if (result.error) throw result.error;
+
+  const userIds = [...new Set((result.data || []).map(r => r.user_id))];
+  if (!userIds.includes(userId)) {
+    userIds.push(userId);
+  }
+  if (userIds.length === 0) {
+    return { data: [{ id: userId, display_name: user.display_name, email: user.email }] };
+  }
+
+  return supabase
+    .from('users')
+    .select('id, display_name, email')
+    .in('id', userIds)
+    .eq('organization_id', organization.id)
+    .eq('is_active', true);
+}
+
+/**
  * Batch Dashboard Endpoint
  * Fetches all data needed for the dashboard in a single request
  * Reduces 8+ API calls to 1, significantly improving performance
@@ -703,7 +768,7 @@ async function ensureOrganizationMembership(supabase, userId, organizationId) {
 exports.getDashboardData = async (req, res) => {
   try {
     const { cloudId, accountId } = req.forgeContext;
-    const { 
+    const {
       canViewAllUsers = false,  // Whether user has admin privileges
       isJiraAdmin = false,      // Whether user is Jira admin (sees all data)
       projectKeys = null,       // For project admins: array of project keys to filter by; for Jira admins: null (no project restriction)
@@ -723,10 +788,7 @@ exports.getDashboardData = async (req, res) => {
 
     const supabase = getClient();
     if (!supabase) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database not configured'
-      });
+      return res.status(500).json({ success: false, error: 'Database not configured' });
     }
 
     // Determine if we should filter by specific projects
@@ -734,7 +796,7 @@ exports.getDashboardData = async (req, res) => {
     const isProjectAdmin = canViewAllUsers && !isJiraAdmin;
     const hasValidProjectKeys = Array.isArray(projectKeys) && projectKeys.length > 0;
     const shouldFilterByProjects = isProjectAdmin && hasValidProjectKeys;
-    
+
     // Security: If user is project admin but has empty/missing projectKeys, reject the request
     // This prevents accidental exposure of org-wide data when project discovery fails
     if (isProjectAdmin && !hasValidProjectKeys) {
@@ -744,9 +806,9 @@ exports.getDashboardData = async (req, res) => {
         error: 'Project admin access requires valid project keys. No projects found for your admin permissions.'
       });
     }
-    
-    logger.info('[ForgeProxy] Dashboard batch request', { 
-      cloudId, 
+
+    logger.info('[ForgeProxy] Dashboard batch request', {
+      cloudId,
       accountId,
       isJiraAdmin,
       shouldFilterByProjects,
@@ -761,10 +823,7 @@ exports.getDashboardData = async (req, res) => {
 
     if (orgError) throw orgError;
     if (!orgs || orgs.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Organization not found. Please reload the page.'
-      });
+      return res.status(404).json({ success: false, error: 'Organization not found. Please reload the page.' });
     }
     const organization = orgs[0];
 
@@ -776,10 +835,7 @@ exports.getDashboardData = async (req, res) => {
 
     if (userError) throw userError;
     if (!users || users.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found. Please reload the page.'
-      });
+      return res.status(404).json({ success: false, error: 'User not found. Please reload the page.' });
     }
     const user = users[0];
     const userId = user.id;
@@ -794,151 +850,58 @@ exports.getDashboardData = async (req, res) => {
 
     // Determine if user can view all data
     const canViewTeamData = canViewAllUsers || membership?.can_view_team_analytics || false;
+    const filterCtx = { canViewTeamData, shouldFilterByProjects, userId, projectKeys };
 
-    // 4. Execute all data queries in PARALLEL for maximum performance
-    const queries = [];
+    // 4. Build all queries — visibility filters applied via helper to avoid repetition
+    // Industry standard: filter by DATE RANGE, not row count
+    const dailyQuery = applyVisibilityFilter(
+      supabase.from('daily_time_summary').select('*')
+        .eq('organization_id', organization.id)
+        .gte('work_date', dailyCutoffStr)
+        .order('work_date', { ascending: false }),
+      'user_id', 'project_key', filterCtx
+    );
 
-    // Build OR filter for project admins: own data OR team data from admin projects
-    // This ensures project admins can ALWAYS see their own data, plus team data from their projects
-    const buildProjectAdminOrFilter = (userIdCol, projectKeyCol) => {
-      // Format: "user_id.eq.uuid,project_key.in.(P1,P2,P3)"
-      return `${userIdCol}.eq.${userId},${projectKeyCol}.in.(${projectKeys.join(',')})`;
-    };
+    const weeklyQuery = applyVisibilityFilter(
+      supabase.from('weekly_time_summary').select('*')
+        .eq('organization_id', organization.id)
+        .gte('week_start', weeklyCutoffStr)
+        .order('week_start', { ascending: false }),
+      'user_id', 'project_key', filterCtx
+    );
 
-    // Daily summary
-    // Industry standard: Filter by DATE RANGE, not row count
-    // This ensures we get ALL data for the time period, regardless of how many tasks/projects
-    const dailyQuery = supabase
-      .from('daily_time_summary')
-      .select('*')
-      .eq('organization_id', organization.id)
-      .gte('work_date', dailyCutoffStr)  // Filter by date, not limit by rows
-      .order('work_date', { ascending: false });
-    
-    if (!canViewTeamData) {
-      dailyQuery.eq('user_id', userId);
-    } else if (shouldFilterByProjects) {
-      // Project admins see: their own data (any project) + team data from admin projects
-      dailyQuery.or(buildProjectAdminOrFilter('user_id', 'project_key'));
-    }
-    queries.push(dailyQuery);
-
-    // Weekly summary
-    // Industry standard: Filter by DATE RANGE, not row count
-    const weeklyQuery = supabase
-      .from('weekly_time_summary')
-      .select('*')
-      .eq('organization_id', organization.id)
-      .gte('week_start', weeklyCutoffStr)  // Filter by date, not limit by rows
-      .order('week_start', { ascending: false });
-    
-    if (!canViewTeamData) {
-      weeklyQuery.eq('user_id', userId);
-    } else if (shouldFilterByProjects) {
-      // Project admins see: their own data (any project) + team data from admin projects
-      weeklyQuery.or(buildProjectAdminOrFilter('user_id', 'project_key'));
-    }
-    queries.push(weeklyQuery);
-
-    // Project summary - for admins, show all projects they can see (own + admin projects)
-    // Note: project_time_summary is aggregated by project, so we filter differently
+    // Project summary — aggregated by project, filtered differently from row-level queries
     const projectQuery = supabase
       .from('project_time_summary')
       .select('*')
       .eq('organization_id', organization.id)
       .order('total_seconds', { ascending: false });
-    
     if (shouldFilterByProjects) {
-      // For project admins, we need to include projects where they have personal data too
-      // This requires a different approach - get all projects from their daily summary
-      // For now, include their admin projects (team data); their own project data comes from daily/weekly
       projectQuery.in('project_key', projectKeys);
     }
-    queries.push(projectQuery);
 
-    // Analysis results with issue data
-    const analysisQuery = supabase
-      .from('analysis_results')
-      .select('active_task_key, active_project_key, work_type, screenshots(duration_seconds)')
-      .eq('organization_id', organization.id)
-      .not('active_task_key', 'is', null)
-      .order('created_at', { ascending: false });
-    
-    if (!canViewTeamData) {
-      analysisQuery.eq('user_id', userId);
-    } else if (shouldFilterByProjects) {
-      // Project admins see: their own issues (any project) + team issues from admin projects
-      analysisQuery.or(buildProjectAdminOrFilter('user_id', 'active_project_key'));
-    }
-    queries.push(analysisQuery);
-
-    // All active users (for team view)
-    // For project admins, we need to get users who have tracked time on their projects
-    // PLUS always include the current user so they can see their own data
-    let usersQuery;
-    if (!canViewTeamData) {
-      usersQuery = Promise.resolve({ data: [{ id: userId, display_name: user.display_name, email: user.email }] });
-    } else if (shouldFilterByProjects) {
-      // Get users who have time tracked on the project admin's projects OR the current user
-      // Using daily_time_summary with time window to limit data volume
-      // Calculate date range matching the dashboard query (last N days)
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - maxDailySummaryDays);
-      const cutoffDateStr = cutoffDate.toISOString().split('T')[0];
-      
-      usersQuery = supabase
-        .from('daily_time_summary')
-        .select('user_id')
+    const analysisQuery = applyVisibilityFilter(
+      supabase.from('analysis_results')
+        .select('active_task_key, active_project_key, work_type, screenshots(duration_seconds)')
         .eq('organization_id', organization.id)
-        // Use OR filter: users on admin projects OR the current user
-        .or(`project_key.in.(${projectKeys.join(',')}),user_id.eq.${userId}`)
-        .gte('work_date', cutoffDateStr) // Limit to recent data only
-        .then(async (result) => {
-          if (result.error) throw result.error;
-          // Get unique user IDs - always include current user
-          const userIds = [...new Set((result.data || []).map(r => r.user_id))];
-          // Ensure current user is always included
-          if (!userIds.includes(userId)) {
-            userIds.push(userId);
-          }
-          if (userIds.length === 0) {
-            // This shouldn't happen since we always add userId, but handle gracefully
-            return { data: [{ id: userId, display_name: user.display_name, email: user.email }] };
-          }
-          // Fetch the actual user details
-          return supabase
-            .from('users')
-            .select('id, display_name, email')
-            .in('id', userIds)
-            .eq('organization_id', organization.id)
-            .eq('is_active', true);
-        });
-    } else {
-      // Jira admin or org admin - see all users
-      usersQuery = supabase
-        .from('users')
-        .select('id, display_name, email')
-        .eq('organization_id', organization.id)
-        .eq('is_active', true);
-    }
-    queries.push(usersQuery);
-
-    // Execute all queries in parallel
-    const [
-      dailyResult,
-      weeklyResult,
-      projectResult,
-      analysisResult,
-      allUsersResult
-    ] = await Promise.all(queries);
-
-    // Process analysis results to aggregate time by issue
-    const timeByIssue = aggregateTimeByIssue(
-      analysisResult.data || [], 
-      maxIssuesInAnalytics
+        .not('active_task_key', 'is', null)
+        .order('created_at', { ascending: false }),
+      'user_id', 'active_project_key', filterCtx
     );
 
-    logger.info('[ForgeProxy] Dashboard batch complete', { 
+    // 5. Execute all queries in parallel
+    const [dailyResult, weeklyResult, projectResult, analysisResult, allUsersResult] = await Promise.all([
+      dailyQuery,
+      weeklyQuery,
+      projectQuery,
+      analysisQuery,
+      buildUsersQuery(supabase, { canViewTeamData, shouldFilterByProjects, userId, user, organization, projectKeys, maxDailySummaryDays })
+    ]);
+
+    // Process analysis results to aggregate time by issue
+    const timeByIssue = aggregateTimeByIssue(analysisResult.data || [], maxIssuesInAnalytics);
+
+    logger.info('[ForgeProxy] Dashboard batch complete', {
       cloudId,
       dailyCount: dailyResult.data?.length || 0,
       weeklyCount: weeklyResult.data?.length || 0,
@@ -968,10 +931,7 @@ exports.getDashboardData = async (req, res) => {
     });
   } catch (error) {
     logger.error('[ForgeProxy] Dashboard batch error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
