@@ -10,7 +10,7 @@
  */
 
 const axios = require('axios');
-const path = require('path');
+const path = require('node:path');
 const logger = require('../utils/logger');
 const sessionStore = require('../services/feedback-session-store');
 const { createFeedback, getFeedbackById } = require('../services/db/feedback-db-service');
@@ -18,8 +18,8 @@ const { uploadFile } = require('../services/db/storage-service');
 const { processAndCreateJiraTicket } = require('../services/feedback-service');
 
 const ATLASSIAN_ME_URL = 'https://api.atlassian.com/me';
-const VALID_CATEGORIES = ['bug', 'feature_request', 'improvement', 'question', 'other'];
-const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+const VALID_CATEGORIES = new Set(['bug', 'feature_request', 'improvement', 'question', 'other']);
+const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const MAX_IMAGES = 3;
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
@@ -59,7 +59,7 @@ function validateFeedbackSubmission(data) {
     return { error: 'Description is required' };
   }
 
-  if (!VALID_CATEGORIES.includes(category)) {
+  if (!VALID_CATEGORIES.has(category)) {
     return { error: 'Invalid category' };
   }
 
@@ -82,7 +82,7 @@ function isValidImage(img, buffer) {
     return false;
   }
 
-  if (!ALLOWED_IMAGE_TYPES.includes(img.type)) {
+  if (!ALLOWED_IMAGE_TYPES.has(img.type)) {
     logger.warn('[Feedback] Invalid image type %s, skipping', img.type);
     return false;
   }
@@ -351,7 +351,11 @@ exports.getFeedbackStatus = async (req, res) => {
  * @returns {string} HTML error page
  */
 function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return str
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
 }
 
 function getErrorPage(message) {
