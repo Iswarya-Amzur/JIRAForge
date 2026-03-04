@@ -407,7 +407,7 @@ exports.analyzeScreenshot = async (req, res) => {
 
   } catch (error) {
     const webhookData = extractWebhookData(req.body);
-    const errorResponse = handleAnalysisError(error, webhookData);
-    res.status(500).json(await errorResponse);
+    const errorResponse = await handleAnalysisError(error, webhookData);
+    res.status(500).json(errorResponse);
   }
 };
