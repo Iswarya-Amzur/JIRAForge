@@ -1,7 +1,7 @@
 /**
  * AI Services Module - Re-exports
  * Provides a single entry point for all AI-related services
- * Supports Fireworks AI primary with automatic LiteLLM fallback
+ * Supports Portkey (Gemini) primary with automatic Fireworks fallback
  */
 
 const aiClient = require('./ai-client');
@@ -10,14 +10,14 @@ const visionAnalyzer = require('./vision-analyzer');
 const ocrAnalyzer = require('./ocr-analyzer');
 
 module.exports = {
-  // AI Client (Fireworks + LiteLLM)
+  // AI Client (Portkey + Fireworks)
   initializeClient: aiClient.initializeClient,
   getClient: aiClient.getClient,
   getFireworksClient: aiClient.getFireworksClient,
-  getLiteLLMClient: aiClient.getLiteLLMClient,
+  getPortkeyClient: aiClient.getPortkeyClient,
   isAIEnabled: aiClient.isAIEnabled,
   isFireworksEnabled: aiClient.isFireworksEnabled,
-  isLiteLLMEnabled: aiClient.isLiteLLMEnabled,
+  isPortkeyEnabled: aiClient.isPortkeyEnabled,
   getProviderOrder: aiClient.getProviderOrder,
   isProviderDemoted: aiClient.isProviderDemoted,
   getProviderStatus: aiClient.getProviderStatus,
@@ -26,9 +26,7 @@ module.exports = {
   getVisionModel: aiClient.getVisionModel,
   getTextModel: aiClient.getTextModel,
   getFireworksModel: aiClient.getFireworksModel,
-  getLiteLLMModel: aiClient.getLiteLLMModel,
-  getLiteLLMUser: aiClient.getLiteLLMUser,
-  resolveLiteLLMUser: aiClient.resolveLiteLLMUser,
+  getPortkeyModel: aiClient.getPortkeyModel,
 
   // Main request function with fallback
   chatCompletionWithFallback: aiClient.chatCompletionWithFallback,

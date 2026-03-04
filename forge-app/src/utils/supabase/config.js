@@ -75,6 +75,12 @@ export async function supabaseRequest(supabaseConfig, endpoint, options = {}) {
         continue;
       }
 
+      // Handle OR filter (e.g., "or=(col1.eq.val,col2.eq.val)")
+      if (key === 'or') {
+        query.or = value.replace(/^\(|\)$/g, '');
+        continue;
+      }
+
       // Parse Supabase filter format (e.g., "id=eq.123")
       const match = value.match(/^(eq|neq|gt|gte|lt|lte|in|is|not\.is)\.(.+)$/);
       if (match) {

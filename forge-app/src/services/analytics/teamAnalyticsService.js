@@ -401,12 +401,25 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
     }
   }
 
-  // Run all three queries in parallel. activity_records.batch_end is updated every 5 min
+  // Build legacy query from analysis_results (which has work_type column)
+  // Query analysis_results and embed screenshot data via the foreign key relationship
+  // We fetch recent data and filter by date in code (PostgREST nested filtering is limited)
+  let legacyQuery = `analysis_results?organization_id=eq.${organization.id}&work_type=eq.office&select=user_id,time_spent_seconds,created_at,screenshots(start_time,end_time,duration_seconds,timestamp,work_date,project_key,deleted_at)&order=created_at.desc&limit=5000`;
+  
+  // Add user filter for project admins (they can only see their own legacy data or users in their projects)
+  // Note: Project filtering on screenshots.project_key is done in code after fetching
+  if (!isAdmin && currentUserId) {
+    // Project admins: filter to only their records (project filtering done in post-processing)
+    legacyQuery += `&user_id=eq.${currentUserId}`;
+  }
+
+  // Run all four queries in parallel. activity_records.batch_end is updated every 5 min
   // during active tracking (vs desktop_last_heartbeat every 4h) — used to compute a more
   // accurate effectiveLastActive signal for status dots.
   const activityThreshold = new Date(Date.now() - 270 * 60 * 1000).toISOString();
-  const [activityRecords, allUsers, recentActivity] = await Promise.all([
+  const [activityRecords, legacyScreenshots, allUsers, recentActivity] = await Promise.all([
     supabaseRequest(supabaseConfig, query),
+    supabaseRequest(supabaseConfig, legacyQuery),
     supabaseRequest(
       supabaseConfig,
       `users?organization_id=eq.${organization.id}&select=id,display_name,email,desktop_logged_in,desktop_last_heartbeat`
@@ -418,6 +431,7 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
   ]);
 
   console.log('[TeamTimeline] Found activity records count:', activityRecords?.length || 0);
+  console.log('[TeamTimeline] Found legacy screenshots count:', legacyScreenshots?.length || 0);
   console.log('[TeamTimeline] Found users count:', allUsers?.length || 0);
 
   // Build map: user_id → latest batch_end within the threshold window
@@ -469,8 +483,66 @@ export async function fetchTeamDayTimeline(accountId, cloudId, projectKey, date)
     });
   });
 
+  // Also process legacy data from analysis_results (with embedded screenshots)
+  // The query returns analysis_results with nested screenshots object
+  // We filter by date here since PostgREST nested filtering is limited
+  const targetDateStart = new Date(`${date}T00:00:00Z`).getTime();
+  const targetDateEnd = new Date(`${date}T23:59:59Z`).getTime();
+  
+  (legacyScreenshots || []).forEach(record => {
+    const userId = record.user_id;
+    const screenshot = record.screenshots; // Embedded screenshot data
+    
+    if (!screenshot) return; // Skip if no screenshot data
+    if (screenshot.deleted_at) return; // Skip deleted screenshots
+    
+    // Filter by date: check work_date first, then timestamp
+    const screenshotWorkDate = screenshot.work_date;
+    const screenshotTimestamp = screenshot.timestamp ? new Date(screenshot.timestamp).getTime() : null;
+    
+    // Match if work_date equals target date, OR timestamp is within target date range
+    const matchesDate = (screenshotWorkDate && screenshotWorkDate === date) || 
+                        (!screenshotWorkDate && screenshotTimestamp && 
+                         screenshotTimestamp >= targetDateStart && screenshotTimestamp <= targetDateEnd);
+    
+    if (!matchesDate) return; // Skip if not matching target date
+
+    if (!userTimelineMap[userId]) {
+      const userInfo = userById[userId];
+      userTimelineMap[userId] = {
+        userId,
+        displayName: userInfo?.display_name || userInfo?.email || 'Unknown User',
+        desktopLoggedIn: userInfo?.desktop_logged_in || false,
+        lastHeartbeat: userInfo?.desktop_last_heartbeat,
+        effectiveLastActive: getEffectiveLastActive(userId, userInfo?.desktop_last_heartbeat),
+        sessions: []
+      };
+    }
+
+    // For legacy screenshots, use timestamp as fallback for end_time and start_time
+    // duration_seconds indicates actual tracked work time (prefer screenshot.duration_seconds, fallback to analysis_results.time_spent_seconds)
+    const endTime = screenshot.end_time || screenshot.timestamp;
+    const durationSeconds = screenshot.duration_seconds || record.time_spent_seconds || 300; // Default 5 min for legacy data
+    const startTime = screenshot.start_time || (endTime ? new Date(new Date(endTime).getTime() - durationSeconds * 1000).toISOString() : null);
+
+    if (endTime) {
+      userTimelineMap[userId].sessions.push({
+        startTime: startTime,
+        endTime: endTime,
+        durationSeconds: durationSeconds
+      });
+    }
+  });
+
   // Convert to array and calculate stats
   const userTimelines = Object.values(userTimelineMap).map(user => {
+    // Sort sessions by start time to ensure correct timeline order
+    user.sessions.sort((a, b) => {
+      const aTime = a.startTime ? new Date(a.startTime).getTime() : 0;
+      const bTime = b.startTime ? new Date(b.startTime).getTime() : 0;
+      return aTime - bTime;
+    });
+
     // Calculate total tracked time for the day
     const totalSeconds = user.sessions.reduce((sum, s) => sum + s.durationSeconds, 0);
     const totalHours = Math.round(totalSeconds / 3600 * 10) / 10;
@@ -583,12 +655,69 @@ export async function fetchMyDayTimeline(accountId, cloudId, date) {
 
   // Fetch activity records for current user on the specified date
   // Excludes private classifications — those should not appear in the user's own timeline
-  const activityRecords = await supabaseRequest(
-    supabaseConfig,
-    `activity_records?organization_id=eq.${organization.id}&user_id=eq.${userId}&work_date=eq.${date}&classification=neq.private&select=start_time,end_time,duration_seconds&order=start_time.asc&limit=500`
-  );
+  const activityQuery = `activity_records?organization_id=eq.${organization.id}&user_id=eq.${userId}&work_date=eq.${date}&classification=neq.private&select=start_time,end_time,duration_seconds&order=start_time.asc&limit=500`;
 
-  if (!activityRecords || activityRecords.length === 0) {
+  // Also fetch legacy data from analysis_results (work_type='office' only)
+  // Query analysis_results and embed screenshot data - filter by date in code
+  const legacyQuery = `analysis_results?organization_id=eq.${organization.id}&user_id=eq.${userId}&work_type=eq.office&select=time_spent_seconds,screenshots(start_time,end_time,duration_seconds,timestamp,work_date,deleted_at)&order=created_at.desc&limit=500`;
+
+  const [activityRecords, legacyRecords] = await Promise.all([
+    supabaseRequest(supabaseConfig, activityQuery),
+    supabaseRequest(supabaseConfig, legacyQuery)
+  ]);
+
+  // Build sessions from activity records
+  const sessions = [];
+  
+  (activityRecords || []).forEach(record => {
+    sessions.push({
+      startTime: record.start_time,
+      endTime: record.end_time,
+      durationSeconds: record.duration_seconds || 0
+    });
+  });
+
+  // Add legacy sessions from analysis_results (with embedded screenshots)
+  // Filter by date in code since PostgREST nested filtering is limited
+  const targetDateStart = new Date(`${date}T00:00:00Z`).getTime();
+  const targetDateEnd = new Date(`${date}T23:59:59Z`).getTime();
+  
+  (legacyRecords || []).forEach(record => {
+    const screenshot = record.screenshots; // Embedded screenshot data
+    if (!screenshot) return;
+    if (screenshot.deleted_at) return; // Skip deleted screenshots
+    
+    // Filter by date: check work_date first, then timestamp
+    const screenshotWorkDate = screenshot.work_date;
+    const screenshotTimestamp = screenshot.timestamp ? new Date(screenshot.timestamp).getTime() : null;
+    
+    const matchesDate = (screenshotWorkDate && screenshotWorkDate === date) || 
+                        (!screenshotWorkDate && screenshotTimestamp && 
+                         screenshotTimestamp >= targetDateStart && screenshotTimestamp <= targetDateEnd);
+    
+    if (!matchesDate) return;
+    
+    const endTime = screenshot.end_time || screenshot.timestamp;
+    const durationSeconds = screenshot.duration_seconds || record.time_spent_seconds || 300; // Default 5 min for legacy data
+    const startTime = screenshot.start_time || (endTime ? new Date(new Date(endTime).getTime() - durationSeconds * 1000).toISOString() : null);
+
+    if (endTime) {
+      sessions.push({
+        startTime: startTime,
+        endTime: endTime,
+        durationSeconds: durationSeconds
+      });
+    }
+  });
+
+  // Sort sessions by start time
+  sessions.sort((a, b) => {
+    const aTime = a.startTime ? new Date(a.startTime).getTime() : 0;
+    const bTime = b.startTime ? new Date(b.startTime).getTime() : 0;
+    return aTime - bTime;
+  });
+
+  if (sessions.length === 0) {
     return {
       date,
       userId,
@@ -600,14 +729,6 @@ export async function fetchMyDayTimeline(accountId, cloudId, date) {
       lastActivity: null
     };
   }
-
-  // Build sessions array with start_time, end_time for accurate timeline rendering
-  // duration_seconds = accumulated real work time (not simply end_time - start_time)
-  const sessions = activityRecords.map(record => ({
-    startTime: record.start_time,
-    endTime: record.end_time,
-    durationSeconds: record.duration_seconds || 0
-  }));
 
   // Calculate stats
   const totalSeconds = sessions.reduce((sum, s) => sum + s.durationSeconds, 0);

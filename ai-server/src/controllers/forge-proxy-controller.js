@@ -154,6 +154,8 @@ exports.supabaseQuery = async (req, res) => {
         } else if (key === '_select') {
           // Select is handled separately in the initial query builder setup
           continue;
+        } else if (key === 'or') {
+          queryBuilder = queryBuilder.or(value);
         } else if (key === 'single') {
           queryBuilder = queryBuilder.single();
         } else if (key === 'maybeSingle') {
