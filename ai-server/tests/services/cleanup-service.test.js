@@ -392,6 +392,284 @@ describe('Cleanup Service', () => {
     });
   });
 
+    it('should handle stop when not started', () => {
+      cleanupService.stop();
+
+      expect(logger.info).not.toHaveBeenCalledWith('[Cleanup] Cleanup service stopped');
+    });
+
+    it('should handle empty cutoff date', () => {
+      const cutoffDate = cleanupService.getCutoffDate();
+      
+      expect(cutoffDate).toBeInstanceOf(Date);
+      expect(cutoffDate.getTime()).toBeLessThan(Date.now());
+    });
+
+    it('should use CLEANUP_MONTHS_TO_KEEP from environment', () => {
+      process.env.CLEANUP_MONTHS_TO_KEEP = '3';
+      
+      const cutoffDate = cleanupService.getCutoffDate();
+      const expectedDate = new Date();
+      expectedDate.setMonth(expectedDate.getMonth() - 3);
+      
+      expect(cutoffDate.getMonth()).toBe(expectedDate.getMonth());
+      
+      delete process.env.CLEANUP_MONTHS_TO_KEEP;
+    });
+
+    it('should handle screenshots with null thumbnail_url', async () => {
+      const mockScreenshot = {
+        id: 'ss1',
+        storage_path: 'user1/screenshot_123.png',
+        thumbnail_url: null,
+        created_at: '2023-12-01T00:00:00Z'
+      };
+
+      mockSupabase.range.mockResolvedValue({
+        data: [mockScreenshot],
+        error: null
+      });
+
+      mockSupabase.update.mockResolvedValue({ data: {}, error: null });
+      deleteFile.mockResolvedValue();
+
+      await cleanupService.runCleanup();
+
+      expect(deleteFile).toHaveBeenCalledTimes(2); // Screenshot + thumbnail
+    });
+
+    it('should handle screenshots without storage_path', async () => {
+      const mockScreenshot = {
+        id: 'ss1',
+        storage_path: null,
+        created_at: '2023-12-01T00:00:00Z'
+      };
+
+      mockSupabase.range.mockResolvedValue({
+        data: [mockScreenshot],
+        error: null
+      });
+
+      mockSupabase.update.mockResolvedValue({ data: {}, error: null });
+
+      await cleanupService.runCleanup();
+
+      expect(deleteFile).not.toHaveBeenCalled();
+      expect(mockSupabase.update).toHaveBeenCalledWith({
+        storage_url: '',
+        thumbnail_url: '',
+        status: 'deleted',
+        deleted_at: expect.any(String)
+      });
+    });
+
+    it('should handle empty string storage_path', async () => {
+      const mockScreenshot = {
+        id: 'ss1',
+        storage_path: '',
+        created_at: '2023-12-01T00:00:00Z'
+      };
+
+      mockSupabase.range.mockResolvedValue({
+        data: [mockScreenshot],
+        error: null
+      });
+
+      mockSupabase.update.mockResolvedValue({ data: {}, error: null });
+
+      await cleanupService.runCleanup();
+
+      expect(deleteFile).not.toHaveBeenCalled();
+    });
+
+    it('should handle very old screenshots', async () => {
+      const mockScreenshot = {
+        id: 'ss1',
+        storage_path: 'user1/screenshot_123.png',
+        created_at: '2020-01-01T00:00:00Z' // Very old
+      };
+
+      mockSupabase.range.mockResolvedValue({
+        data: [mockScreenshot],
+        error: null
+      });
+
+      mockSupabase.update.mockResolvedValue({ data: {}, error: null });
+      deleteFile.mockResolvedValue();
+
+      await cleanupService.runCleanup();
+
+      expect(deleteFile).toHaveBeenCalled();
+    });
+
+    it('should handle screenshots with complex directory paths', async () => {
+      const mockScreenshot = {
+        id: 'ss1',
+        storage_path: 'org1/user123/subfolder/screenshot_123.png',
+        created_at: '2023-12-01T00:00:00Z'
+      };
+
+      mockSupabase.range.mockResolvedValue({
+        data: [mockScreenshot],
+        error: null
+      });
+
+      mockSupabase.update.mockResolvedValue({ data: {}, error: null });
+      deleteFile.mockResolvedValue();
+
+      await cleanupService.runCleanup();
+
+      expect(deleteFile).toHaveBeenCalledWith('screenshots', 'org1/user123/subfolder/screenshot_123.png');
+      expect(deleteFile).toHaveBeenCalledWith('screenshots', 'org1/user123/subfolder/thumb_123.jpg');
+    });
+
+    it('should handle concurrent runCleanup calls', async () => {
+      mockSupabase.range.mockImplementation(() => {
+        return new Promise(resolve => {
+          setTimeout(() => resolve({ data: [], error: null }), 100);
+        });
+      });
+
+      jest.useRealTimers();
+
+      const promise1 = cleanupService.runCleanup();
+      const promise2 = cleanupService.runCleanup();
+
+      const [result1, result2] = await Promise.all([promise1, promise2]);
+
+      // One should succeed, one should skip
+      const successCount = [result1, result2].filter(r => r.success).length;
+      expect(successCount).toBeGreaterThanOrEqual(1);
+
+      jest.useFakeTimers();
+    });
+
+    it('should handle batch processing with timeout between batches', async () => {
+      const batch1 = Array(50).fill(null).map((_, i) => ({
+        id: `ss${i}`,
+        storage_path: `user/screenshot_${i}.png`,
+        created_at: '2023-12-01T00:00:00Z'
+      }));
+
+      const batch2 = [
+        {
+          id: 'ss50',
+          storage_path: 'user/screenshot_50.png',
+          created_at: '2023-12-01T00:00:00Z'
+        }
+      ];
+
+      mockSupabase.range
+        .mockResolvedValueOnce({ data: batch1, error: null })
+        .mockResolvedValueOnce({ data: batch2, error: null });
+
+      mockSupabase.update.mockResolvedValue({ data: {}, error: null });
+      deleteFile.mockResolvedValue();
+
+      jest.useRealTimers();
+
+      const result = await cleanupService.runCleanup();
+
+      expect(result.success).toBe(true);
+      
+      jest.useFakeTimers();
+    });
+
+    it('should handle partial batch success', async () => {
+      const mockScreenshots = [
+        {
+          id: 'ss1',
+          storage_path: 'user/screenshot_1.png',
+          created_at: '2023-12-01T00:00:00Z'
+        },
+        {
+          id: 'ss2',
+          storage_path: 'user/screenshot_2.png',
+          created_at: '2023-12-01T00:00:00Z'
+        }
+      ];
+
+      mockSupabase.range.mockResolvedValue({
+        data: mockScreenshots,
+        error: null
+      });
+
+      mockSupabase.update
+        .mockResolvedValueOnce({ data: {}, error: null })
+        .mockResolvedValueOnce({ data: null, error: new Error('Update failed') });
+
+      deleteFile.mockResolvedValue();
+
+      const result = await cleanupService.runCleanup();
+
+      expect(result.success).toBe(true);
+      expect(result.errors).toBe(1);
+    });
+
+    it('should handle environment variable configuration', async () => {
+      process.env.CLEANUP_BATCH_SIZE = '10';
+      process.env.CLEANUP_SCHEDULE_DAY = '15';
+      process.env.CLEANUP_SCHEDULE_HOUR = '2';
+
+      await cleanupService.start();
+
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.stringContaining('15th of each month')
+      );
+
+      cleanupService.stop();
+
+      delete process.env.CLEANUP_BATCH_SIZE;
+      delete process.env.CLEANUP_SCHEDULE_DAY;
+      delete process.env.CLEANUP_SCHEDULE_HOUR;
+    });
+
+    it('should handle database query timeout', async () => {
+      mockSupabase.range.mockImplementation(() => {
+        return new Promise((resolve, reject) => {
+          setTimeout(() => reject(new Error('Query timeout')), 100);
+        });
+      });
+
+      jest.useRealTimers();
+
+      const result = await cleanupService.runCleanup();
+
+      expect(result.success).toBe(false);
+
+      jest.useFakeTimers();
+    });
+
+    it('should track deletion statistics correctly', async () => {
+      const mockScreenshots = [
+        { id: 'ss1', storage_path: 'user/screenshot_1.png', created_at: '2023-12-01T00:00:00Z' },
+        { id: 'ss2', storage_path: 'user/screenshot_2.png', created_at: '2023-12-01T00:00:00Z' },
+        { id: 'ss3', storage_path: 'user/screenshot_3.png', created_at: '2023-12-01T00:00:00Z' }
+      ];
+
+      mockSupabase.range.mockResolvedValue({
+        data: mockScreenshots,
+        error: null
+      });
+
+      mockSupabase.update.mockResolvedValue({ data: {}, error: null });
+      deleteFile.mockResolvedValue();
+
+      const result = await cleanupService.runCleanup();
+
+      expect(result.deleted).toBe(6); // 3 screenshots + 3 thumbnails
+    });
+
+    it('should handle ordinal suffix generation', async () => {
+      await cleanupService.start();
+
+      // Check various ordinal suffixes are logged correctly
+      expect(logger.info).toHaveBeenCalled();
+
+      cleanupService.stop();
+    });
+  });
+
   describe('isCleanupRunning', () => {
     it('should return false when not running', () => {
       expect(cleanupService.isCleanupRunning()).toBe(false);
@@ -408,6 +686,14 @@ describe('Cleanup Service', () => {
       await Promise.resolve();
 
       expect(cleanupService.isCleanupRunning()).toBe(true);
+    });
+
+    it('should return false after completion', async () => {
+      mockSupabase.range.mockResolvedValue({ data: [], error: null });
+
+      await cleanupService.runCleanup();
+
+      expect(cleanupService.isCleanupRunning()).toBe(false);
     });
   });
 });

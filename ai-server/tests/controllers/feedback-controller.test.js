@@ -173,6 +173,41 @@ describe('Feedback Controller', () => {
       expect(res.status).toHaveBeenCalledWith(401);
       expect(logger.warn).toHaveBeenCalled();
     });
+
+    it('should handle timeout errors', async () => {
+      req.body = {
+        atlassian_token: 'token',
+        cloud_id: 'cloud123'
+      };
+
+      axios.get.mockRejectedValue({ code: 'ETIMEDOUT' });
+
+      await feedbackController.createSession(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it('should handle empty atlassian_token string', async () => {
+      req.body = {
+        atlassian_token: '',
+        cloud_id: 'cloud123'
+      };
+
+      await feedbackController.createSession(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('should handle empty cloud_id string', async () => {
+      req.body = {
+        atlassian_token: 'token',
+        cloud_id: ''
+      };
+
+      await feedbackController.createSession(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
   });
 
   describe('submitFeedback', () => {
@@ -544,6 +579,98 @@ describe('Feedback Controller', () => {
         feedback_id: 'feedback123'
       });
     });
+
+    it('should handle images without data field', async () => {
+      req.body = {
+        session_id: 'session123',
+        category: 'bug',
+        description: 'Test',
+        images: [
+          { type: 'image/png' } // Missing data field
+        ]
+      };
+
+      createFeedback.mockResolvedValue({
+        id: 'feedback123',
+        status: 'pending'
+      });
+
+      await feedbackController.submitFeedback(req, res);
+
+      expect(createFeedback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          image_paths: []
+        })
+      );
+    });
+
+    it('should handle images without type field', async () => {
+      req.body = {
+        session_id: 'session123',
+        category: 'bug',
+        description: 'Test',
+        images: [
+          { data: Buffer.from('test').toString('base64') } // Missing type field
+        ]
+      };
+
+      createFeedback.mockResolvedValue({
+        id: 'feedback123',
+        status: 'pending'
+      });
+
+      await feedbackController.submitFeedback(req, res);
+
+      expect(createFeedback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          image_paths: []
+        })
+      );
+    });
+
+    it('should handle non-array images field', async () => {
+      req.body = {
+        session_id: 'session123',
+        category: 'bug',
+        description: 'Test',
+        images: 'not-an-array'
+      };
+
+      createFeedback.mockResolvedValue({
+        id: 'feedback123',
+        status: 'pending'
+      });
+
+      await feedbackController.submitFeedback(req, res);
+
+      expect(createFeedback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          image_paths: []
+        })
+      );
+    });
+
+    it('should handle optional title field', async () => {
+      req.body = {
+        session_id: 'session123',
+        category: 'improvement',
+        description: 'Test improvement'
+        // No title provided
+      };
+
+      createFeedback.mockResolvedValue({
+        id: 'feedback123',
+        status: 'pending'
+      });
+
+      await feedbackController.submitFeedback(req, res);
+
+      expect(createFeedback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: undefined
+        })
+      );
+    });
   });
 
   describe('getFeedbackStatus', () => {
@@ -636,6 +763,127 @@ describe('Feedback Controller', () => {
         success: false,
         error: 'Invalid or expired session'
       });
+    });
+
+    it('should return 401 for empty session string', async () => {
+      req.query.session = '';
+
+      await feedbackController.serveFeedbackForm(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+    });
+  });
+
+  describe('Edge Cases and Error Handling', () => {
+    it('should handle missing req.body gracefully', async () => {
+      req.body = null;
+
+      await feedbackController.submitFeedback(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('should handle concurrent session creation', async () => {
+      req.body = {
+        atlassian_token: 'token',
+        cloud_id: 'cloud123'
+      };
+
+      axios.get.mockResolvedValue({
+        data: {
+          account_id: 'user123',
+          email: 'test@example.com',
+          name: 'Test User'
+        }
+      });
+
+      sessionStore.createSession
+        .mockReturnValueOnce('session1')
+        .mockReturnValueOnce('session2');
+
+      await Promise.all([
+        feedbackController.createSession(req, res),
+        feedbackController.createSession({ ...req }, { ...res })
+      ]);
+
+      expect(sessionStore.createSession).toHaveBeenCalledTimes(2);
+    });
+
+    it('should handle very long description', async () => {
+      req.body = {
+        session_id: 'session123',
+        category: 'bug',
+        description: 'A'.repeat(10000) // Very long description
+      };
+
+      sessionStore.getSession.mockReturnValue({
+        userInfo: { account_id: 'user123' },
+        atlassianToken: 'token',
+        cloudId: 'cloud123'
+      });
+
+      createFeedback.mockResolvedValue({
+        id: 'feedback123',
+        status: 'pending'
+      });
+
+      await feedbackController.submitFeedback(req, res);
+
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        feedback_id: 'feedback123'
+      });
+    });
+
+    it('should handle special characters in category', async () => {
+      req.body = {
+        session_id: 'session123',
+        category: 'bug<script>alert(1)</script>',
+        description: 'Test'
+      };
+
+      await feedbackController.submitFeedback(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        error: 'Invalid category'
+      });
+    });
+
+    it('should handle image with jpeg extension', async () => {
+      req.body = {
+        session_id: 'session123',
+        category: 'bug',
+        description: 'Test',
+        images: [
+          {
+            data: Buffer.from('test').toString('base64'),
+            type: 'image/jpeg'
+          }
+        ]
+      };
+
+      sessionStore.getSession.mockReturnValue({
+        userInfo: { account_id: 'user123' },
+        atlassianToken: 'token',
+        cloudId: 'cloud123'
+      });
+
+      uploadFile.mockResolvedValue({ path: 'user123/123456_0.jpg' });
+      createFeedback.mockResolvedValue({
+        id: 'feedback123',
+        status: 'pending'
+      });
+
+      await feedbackController.submitFeedback(req, res);
+
+      expect(uploadFile).toHaveBeenCalledWith(
+        'feedback-images',
+        expect.stringContaining('.jpg'),
+        expect.any(Buffer),
+        expect.any(Object)
+      );
     });
   });
 });

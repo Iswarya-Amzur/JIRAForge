@@ -857,5 +857,376 @@ describe('Feedback Service', () => {
         })
       );
     });
+
+    it('should handle empty image paths array', async () => {
+      await feedbackService.attachImagesToJiraIssue(
+        'test@example.com',
+        'token',
+        'https://test.atlassian.net',
+        'PROJ-123',
+        []
+      );
+
+      expect(downloadFile).not.toHaveBeenCalled();
+      expect(axios.post).not.toHaveBeenCalled();
+    });
+
+    it('should handle undefined image paths', async () => {
+      await feedbackService.attachImagesToJiraIssue(
+        'test@example.com',
+        'token',
+        'https://test.atlassian.net',
+        'PROJ-123',
+        undefined
+      );
+
+      expect(downloadFile).not.toHaveBeenCalled();
+      expect(axios.post).not.toHaveBeenCalled();
+    });
+
+    it('should handle null image paths', async () => {
+      await feedbackService.attachImagesToJiraIssue(
+        'test@example.com',
+        'token',
+        'https://test.atlassian.net',
+        'PROJ-123',
+        null
+      );
+
+      expect(downloadFile).not.toHaveBeenCalled();
+      expect(axios.post).not.toHaveBeenCalled();
+    });
+
+    it('should handle very large image files', async () => {
+      const largeBuffer = Buffer.alloc(10 * 1024 * 1024); // 10MB
+      downloadFile.mockResolvedValue(largeBuffer);
+
+      const mockFormData = {
+        append: jest.fn(),
+        getHeaders: jest.fn().mockReturnValue({})
+      };
+      FormData.mockImplementation(() => mockFormData);
+
+      axios.post.mockResolvedValue({ data: {} });
+
+      await feedbackService.attachImagesToJiraIssue(
+        'test@example.com',
+        'token',
+        'https://test.atlassian.net',
+        'PROJ-123',
+        ['large_image.png']
+      );
+
+      expect(mockFormData.append).toHaveBeenCalledWith(
+        'file',
+        largeBuffer,
+        expect.any(Object)
+      );
+    });
+
+    it('should handle downloadFile returning null', async () => {
+      downloadFile.mockResolvedValue(null);
+
+      const mockFormData = {
+        append: jest.fn(),
+        getHeaders: jest.fn().mockReturnValue({})
+      };
+      FormData.mockImplementation(() => mockFormData);
+
+      axios.post.mockResolvedValue({ data: {} });
+
+      await feedbackService.attachImagesToJiraIssue(
+        'test@example.com',
+        'token',
+        'https://test.atlassian.net',
+        'PROJ-123',
+        ['missing_image.png']
+      );
+
+      expect(logger.error).toHaveBeenCalled();
+    });
+
+    it('should handle network timeout during attachment', async () => {
+      downloadFile.mockResolvedValue(Buffer.from('data'));
+
+      const mockFormData = {
+        append: jest.fn(),
+        getHeaders: jest.fn().mockReturnValue({})
+      };
+      FormData.mockImplementation(() => mockFormData);
+
+      axios.post.mockRejectedValue(new Error('ETIMEDOUT'));
+
+      await feedbackService.attachImagesToJiraIssue(
+        'test@example.com',
+        'token',
+        'https://test.atlassian.net',
+        'PROJ-123',
+        ['image.png']
+      );
+
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to attach image'),
+        expect.any(Error)
+      );
+    });
+
+    it('should handle Jira API rate limiting', async () => {
+      downloadFile.mockResolvedValue(Buffer.from('data'));
+
+      const mockFormData = {
+        append: jest.fn(),
+        getHeaders: jest.fn().mockReturnValue({})
+      };
+      FormData.mockImplementation(() => mockFormData);
+
+      axios.post.mockRejectedValue({
+        response: {
+          status: 429,
+          data: { message: 'Rate limit exceeded' }
+        }
+      });
+
+      await feedbackService.attachImagesToJiraIssue(
+        'test@example.com',
+        'token',
+        'https://test.atlassian.net',
+        'PROJ-123',
+        ['image.png']
+      );
+
+      expect(logger.error).toHaveBeenCalled();
+    });
+
+    it('should handle invalid Jira issue key', async () => {
+      downloadFile.mockResolvedValue(Buffer.from('data'));
+
+      const mockFormData = {
+        append: jest.fn(),
+        getHeaders: jest.fn().mockReturnValue({})
+      };
+      FormData.mockImplementation(() => mockFormData);
+
+      axios.post.mockRejectedValue({
+        response: {
+          status: 404,
+          data: { message: 'Issue not found' }
+        }
+      });
+
+      await feedbackService.attachImagesToJiraIssue(
+        'test@example.com',
+        'token',
+        'https://test.atlassian.net',
+        'INVALID-123',
+        ['image.png']
+      );
+
+      expect(logger.error).toHaveBeenCalled();
+    });
+
+    it('should handle concurrent attachment uploads', async () => {
+      downloadFile.mockResolvedValue(Buffer.from('data'));
+
+      const mockFormData = {
+        append: jest.fn(),
+        getHeaders: jest.fn().mockReturnValue({})
+      };
+      FormData.mockImplementation(() => mockFormData);
+
+      axios.post.mockResolvedValue({ data: {} });
+
+      const imagePaths = ['image1.png', 'image2.png', 'image3.png'];
+
+      await feedbackService.attachImagesToJiraIssue(
+        'test@example.com',
+        'token',
+        'https://test.atlassian.net',
+        'PROJ-123',
+        imagePaths
+      );
+
+      expect(axios.post).toHaveBeenCalledTimes(3);
+    });
+
+    it('should handle special characters in filename', async () => {
+      downloadFile.mockResolvedValue(Buffer.from('data'));
+
+      const mockFormData = {
+        append: jest.fn(),
+        getHeaders: jest.fn().mockReturnValue({})
+      };
+      FormData.mockImplementation(() => mockFormData);
+
+      axios.post.mockResolvedValue({ data: {} });
+
+      await feedbackService.attachImagesToJiraIssue(
+        'test@example.com',
+        'token',
+        'https://test.atlassian.net',
+        'PROJ-123',
+        ['screenshot (1) - 复制.png']
+      );
+
+      expect(mockFormData.append).toHaveBeenCalled();
+    });
+
+    it('should handle case-insensitive file extensions', async () => {
+      downloadFile.mockResolvedValue(Buffer.from('data'));
+
+      const mockFormData = {
+        append: jest.fn(),
+        getHeaders: jest.fn().mockReturnValue({})
+      };
+      FormData.mockImplementation(() => mockFormData);
+
+      axios.post.mockResolvedValue({ data: {} });
+
+      await feedbackService.attachImagesToJiraIssue(
+        'test@example.com',
+        'token',
+        'https://test.atlassian.net',
+        'PROJ-123',
+        ['image.PNG', 'photo.JPEG']
+      );
+
+      expect(mockFormData.append).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('Edge Cases', () => {
+    it('should handle processAndCreateJiraTicket with empty title', async () => {
+      const feedbackWithEmptyTitle = { ...mockFeedback, title: '' };
+      getFeedbackById.mockResolvedValue(feedbackWithEmptyTitle);
+
+      chatCompletionWithFallback.mockResolvedValue({
+        choices: [{ message: { content: JSON.stringify({ priority: 'Medium' }) } }]
+      });
+
+      axios.get.mockResolvedValue({
+        data: { issueTypes: [{ name: 'Bug', id: '10001' }] }
+      });
+      axios.post.mockResolvedValue({ data: { key: 'PROJ-123' } });
+      updateFeedbackStatus.mockResolvedValue();
+      updateFeedbackAIResults.mockResolvedValue();
+
+      await feedbackService.processAndCreateJiraTicket('feedback123');
+
+      expect(axios.post).toHaveBeenCalled();
+    });
+
+    it('should handle processAndCreateJiraTicket with very long description', async () => {
+      const longDescription = 'a'.repeat(50000);
+      const feedbackWithLongDescription = { ...mockFeedback, description: longDescription };
+      getFeedbackById.mockResolvedValue(feedbackWithLongDescription);
+
+      chatCompletionWithFallback.mockResolvedValue({
+        choices: [{ message: { content: JSON.stringify({ priority: 'Medium' }) } }]
+      });
+
+      axios.get.mockResolvedValue({
+        data: { issueTypes: [{ name: 'Bug', id: '10001' }] }
+      });
+      axios.post.mockResolvedValue({ data: { key: 'PROJ-123' } });
+      updateFeedbackStatus.mockResolvedValue();
+      updateFeedbackAIResults.mockResolvedValue();
+
+      await feedbackService.processAndCreateJiraTicket('feedback123');
+
+      expect(axios.post).toHaveBeenCalled();
+    });
+
+    it('should handle AI response with invalid priority', async () => {
+      getFeedbackById.mockResolvedValue(mockFeedback);
+
+      chatCompletionWithFallback.mockResolvedValue({
+        choices: [{ message: { content: JSON.stringify({ priority: 'Invalid Priority' }) } }]
+      });
+
+      axios.get.mockResolvedValue({
+        data: { issueTypes: [{ name: 'Bug', id: '10001' }] }
+      });
+      axios.post.mockResolvedValue({ data: { key: 'PROJ-123' } });
+      updateFeedbackStatus.mockResolvedValue();
+      updateFeedbackAIResults.mockResolvedValue();
+
+      await feedbackService.processAndCreateJiraTicket('feedback123');
+
+      expect(axios.post).toHaveBeenCalled();
+    });
+
+    it('should handle Jira API returning empty issue types', async () => {
+      getFeedbackById.mockResolvedValue(mockFeedback);
+
+      chatCompletionWithFallback.mockResolvedValue({
+        choices: [{ message: { content: JSON.stringify({ priority: 'Medium' }) } }]
+      });
+
+      axios.get.mockResolvedValue({ data: { issueTypes: [] } });
+
+      await expect(
+        feedbackService.processAndCreateJiraTicket('feedback123')
+      ).rejects.toThrow();
+    });
+
+    it('should handle database update failures during success', async () => {
+      getFeedbackById.mockResolvedValue(mockFeedback);
+
+      chatCompletionWithFallback.mockResolvedValue({
+        choices: [{ message: { content: JSON.stringify({ priority: 'Medium' }) } }]
+      });
+
+      axios.get.mockResolvedValue({
+        data: { issueTypes: [{ name: 'Bug', id: '10001' }] }
+      });
+      axios.post.mockResolvedValue({ data: { key: 'PROJ-123' } });
+      updateFeedbackStatus.mockRejectedValue(new Error('Database error'));
+      updateFeedbackAIResults.mockResolvedValue();
+
+      await expect(
+        feedbackService.processAndCreateJiraTicket('feedback123')
+      ).rejects.toThrow('Database error');
+    });
+
+    it('should handle malformed Jira site URL', async () => {
+      process.env.JIRA_FEEDBACK_SITE_URL = 'invalid-url';
+      
+      getFeedbackById.mockResolvedValue(mockFeedback);
+
+      chatCompletionWithFallback.mockResolvedValue({
+        choices: [{ message: { content: JSON.stringify({ priority: 'Medium' }) } }]
+      });
+
+      axios.get.mockRejectedValue(new Error('Invalid URL'));
+
+      await expect(
+        feedbackService.processAndCreateJiraTicket('feedback123')
+      ).rejects.toThrow();
+    });
+
+    it('should handle concurrent processAndCreateJiraTicket calls', async () => {
+      getFeedbackById.mockResolvedValue(mockFeedback);
+
+      chatCompletionWithFallback.mockResolvedValue({
+        choices: [{ message: { content: JSON.stringify({ priority: 'Medium' }) } }]
+      });
+
+      axios.get.mockResolvedValue({
+        data: { issueTypes: [{ name: 'Bug', id: '10001' }] }
+      });
+      axios.post.mockResolvedValue({ data: { key: 'PROJ-123' } });
+      updateFeedbackStatus.mockResolvedValue();
+      updateFeedbackAIResults.mockResolvedValue();
+
+      const promises = [
+        feedbackService.processAndCreateJiraTicket('feedback123'),
+        feedbackService.processAndCreateJiraTicket('feedback456'),
+        feedbackService.processAndCreateJiraTicket('feedback789')
+      ];
+
+      await Promise.all(promises);
+
+      expect(axios.post).toHaveBeenCalledTimes(3);
+    });
   });
 });

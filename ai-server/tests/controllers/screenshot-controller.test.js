@@ -562,5 +562,272 @@ describe('Screenshot Controller', () => {
         screenshot_id: validWebhookData.id
       });
     });
+
+    it('should handle missing storage_path gracefully', async () => {
+      req.body = {
+        ...validWebhookData,
+        storage_path: null
+      };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(logger.error).toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        error: 'Failed to analyze screenshot'
+      });
+    });
+
+    it('should handle empty user_assigned_issues array', async () => {
+      req.body = {
+        ...validWebhookData,
+        user_assigned_issues: []
+      };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+      supabaseService.downloadFile.mockResolvedValue(Buffer.from('image'));
+      screenshotService.analyzeActivity.mockResolvedValue({ taskKey: 'PROJ-1' });
+      supabaseService.updateScreenshotAnalysis.mockResolvedValue();
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(screenshotService.analyzeActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userAssignedIssues: []
+        })
+      );
+    });
+
+    it('should handle very large duration_seconds', async () => {
+      req.body = {
+        ...validWebhookData,
+        duration_seconds: 999999
+      };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+      supabaseService.downloadFile.mockResolvedValue(Buffer.from('image'));
+      screenshotService.analyzeActivity.mockResolvedValue({ taskKey: 'PROJ-1' });
+      supabaseService.updateScreenshotAnalysis.mockResolvedValue();
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        screenshot_id: validWebhookData.id
+      });
+    });
+
+    it('should handle negative duration_seconds', async () => {
+      req.body = {
+        ...validWebhookData,
+        duration_seconds: -100,
+        start_time: null,
+        end_time: null
+      };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+      supabaseService.downloadFile.mockResolvedValue(Buffer.from('image'));
+      screenshotService.analyzeActivity.mockResolvedValue({
+        taskKey: 'PROJ-1',
+        timeSpentSeconds: 600
+      });
+      supabaseService.updateScreenshotAnalysis.mockResolvedValue();
+      supabaseService.updateScreenshotDuration.mockResolvedValue();
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(supabaseService.updateScreenshotDuration).toHaveBeenCalled();
+    });
+
+    it('should handle UUID in different case', async () => {
+      req.body = {
+        ...validWebhookData,
+        id: validWebhookData.id.toUpperCase()
+      };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+      supabaseService.downloadFile.mockResolvedValue(Buffer.from('image'));
+      screenshotService.analyzeActivity.mockResolvedValue({ taskKey: 'PROJ-1' });
+      supabaseService.updateScreenshotAnalysis.mockResolvedValue();
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        screenshot_id: validWebhookData.id.toUpperCase()
+      });
+    });
+
+    it('should handle screenshot with only start_time missing', async () => {
+      req.body = {
+        ...validWebhookData,
+        start_time: null,
+        end_time: '2024-01-01T12:00:00.000Z',
+        duration_seconds: 600
+      };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+      supabaseService.downloadFile.mockResolvedValue(Buffer.from('image'));
+      screenshotService.analyzeActivity.mockResolvedValue({
+        taskKey: 'PROJ-1',
+        timeSpentSeconds: 600
+      });
+      supabaseService.updateScreenshotAnalysis.mockResolvedValue();
+      supabaseService.updateScreenshotDuration.mockResolvedValue();
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(supabaseService.updateScreenshotDuration).toHaveBeenCalled();
+    });
+
+    it('should handle screenshot with only end_time missing', async () => {
+      req.body = {
+        ...validWebhookData,
+        start_time: '2024-01-01T11:50:00.000Z',
+        end_time: null,
+        duration_seconds: 600
+      };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+      supabaseService.downloadFile.mockResolvedValue(Buffer.from('image'));
+      screenshotService.analyzeActivity.mockResolvedValue({
+        taskKey: 'PROJ-1',
+        timeSpentSeconds: 600
+      });
+      supabaseService.updateScreenshotAnalysis.mockResolvedValue();
+      supabaseService.updateScreenshotDuration.mockResolvedValue();
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(supabaseService.updateScreenshotDuration).toHaveBeenCalled();
+    });
+
+    it('should delete thumbnail even if main screenshot delete fails', async () => {
+      process.env.DELETE_SCREENSHOTS_AFTER_ANALYSIS = 'true';
+      
+      req.body = { ...validWebhookData };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+      supabaseService.downloadFile.mockResolvedValue(Buffer.from('image'));
+      screenshotService.analyzeActivity.mockResolvedValue({ taskKey: 'PROJ-1' });
+      supabaseService.updateScreenshotAnalysis.mockResolvedValue();
+      supabaseService.deleteFile
+        .mockRejectedValueOnce(new Error('Main delete failed'))
+        .mockResolvedValueOnce(); // Thumbnail succeeds
+      supabaseService.clearStorageUrls.mockResolvedValue();
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(supabaseService.deleteFile).toHaveBeenCalledTimes(2);
+      expect(logger.warn).toHaveBeenCalled();
+    });
+
+    it('should handle clearStorageUrls failure gracefully', async () => {
+      process.env.DELETE_SCREENSHOTS_AFTER_ANALYSIS = 'true';
+      
+      req.body = { ...validWebhookData };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+      supabaseService.downloadFile.mockResolvedValue(Buffer.from('image'));
+      screenshotService.analyzeActivity.mockResolvedValue({ taskKey: 'PROJ-1' });
+      supabaseService.updateScreenshotAnalysis.mockResolvedValue();
+      supabaseService.deleteFile.mockResolvedValue();
+      supabaseService.clearStorageUrls.mockRejectedValue(new Error('Clear failed'));
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(logger.warn).toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        screenshot_id: validWebhookData.id
+      });
+    });
+
+    it('should handle missing window_title', async () => {
+      req.body = {
+        ...validWebhookData,
+        window_title: null
+      };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+      supabaseService.downloadFile.mockResolvedValue(Buffer.from('image'));
+      screenshotService.analyzeActivity.mockResolvedValue({ taskKey: 'PROJ-1' });
+      supabaseService.updateScreenshotAnalysis.mockResolvedValue();
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(screenshotService.analyzeActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          windowTitle: null
+        })
+      );
+    });
+
+    it('should handle missing application_name', async () => {
+      req.body = {
+        ...validWebhookData,
+        application_name: null
+      };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+      supabaseService.downloadFile.mockResolvedValue(Buffer.from('image'));
+      screenshotService.analyzeActivity.mockResolvedValue({ taskKey: 'PROJ-1' });
+      supabaseService.updateScreenshotAnalysis.mockResolvedValue();
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(screenshotService.analyzeActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          applicationName: null
+        })
+      );
+    });
+
+    it('should handle organization_id fetch returning null', async () => {
+      req.body = {
+        ...validWebhookData,
+        organization_id: undefined
+      };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+      supabaseService.getScreenshotById.mockResolvedValue(null);
+      supabaseService.downloadFile.mockResolvedValue(Buffer.from('image'));
+      screenshotService.analyzeActivity.mockResolvedValue({ taskKey: 'PROJ-1' });
+      supabaseService.updateScreenshotAnalysis.mockResolvedValue();
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        screenshot_id: validWebhookData.id
+      });
+    });
+
+    it('should handle markWorklogCreated failure gracefully', async () => {
+      process.env.AUTO_CREATE_WORKLOGS = 'true';
+      
+      req.body = { ...validWebhookData };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+      supabaseService.downloadFile.mockResolvedValue(Buffer.from('image'));
+      screenshotService.analyzeActivity.mockResolvedValue({
+        taskKey: 'PROJ-123',
+        workType: 'office',
+        timeSpentSeconds: 600
+      });
+      supabaseService.updateScreenshotAnalysis.mockResolvedValue();
+      screenshotService.createWorklog.mockResolvedValue();
+      supabaseService.markWorklogCreated.mockRejectedValue(new Error('Mark failed'));
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(logger.error).toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        screenshot_id: validWebhookData.id
+      });
+    });
   });
 });

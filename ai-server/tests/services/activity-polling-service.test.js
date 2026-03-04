@@ -487,5 +487,167 @@ describe('Activity Polling Service', () => {
         'org1'
       );
     });
+
+    it('should handle empty string user_assigned_issues', async () => {
+      const recordWithEmptyString = {
+        ...mockRecords[0],
+        user_assigned_issues: ''
+      };
+
+      activityDbService.getPendingActivityBatches.mockResolvedValue([recordWithEmptyString]);
+      activityDbService.claimBatchForProcessing.mockResolvedValue(['record1']);
+
+      await activityPollingService.processPendingRecords();
+
+      expect(activityService.analyzeBatch).toHaveBeenCalledWith(
+        expect.any(Array),
+        [],
+        'user1',
+        'org1'
+      );
+    });
+
+    it('should handle records with mixed valid/invalid issues', async () => {
+      const records = [
+        { ...mockRecords[0], user_assigned_issues: 'invalid[' },
+        { ...mockRecords[1], user_assigned_issues: JSON.stringify([{key: 'PROJ-1'}]) }
+      ];
+
+      activityDbService.getPendingActivityBatches.mockResolvedValue(records);
+      activityDbService.claimBatchForProcessing.mockResolvedValue(['record1', 'record2']);
+
+      await activityPollingService.processPendingRecords();
+
+      expect(activityService.analyzeBatch).toHaveBeenCalledWith(
+        expect.any(Array),
+        [{key: 'PROJ-1'}],
+        'user1',
+        'org1'
+      );
+    });
+
+    it('should handle very large batches', async () => {
+      const largeRecordSet = Array(100).fill(null).map((_, i) => ({
+        ...mockRecords[0],
+        id: `record${i}`,
+        user_id: `user${i % 10}`
+      }));
+
+      activityDbService.getPendingActivityBatches.mockResolvedValue(largeRecordSet);
+      activityDbService.claimBatchForProcessing.mockResolvedValue(largeRecordSet.map(r => r.id));
+
+      await activityPollingService.processPendingRecords();
+
+      expect(activityService.analyzeBatch).toHaveBeenCalled();
+    });
+
+    it('should handle resetStuckProcessingRecords errors', async () => {
+      activityDbService.resetStuckProcessingRecords.mockRejectedValue(new Error('Reset failed'));
+
+      await activityPollingService.processPendingRecords();
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Error in activity polling cycle:',
+        expect.any(Error)
+      );
+    });
+
+    it('should use custom batch size from environment', () => {
+      process.env.ACTIVITY_POLLING_BATCH_SIZE = '50';
+      const customService = require('../../src/services/activity-polling-service');
+      
+      expect(customService.batchSize).toBe(50);
+      
+      delete process.env.ACTIVITY_POLLING_BATCH_SIZE;
+    });
+
+    it('should use custom polling interval from environment', () => {
+      process.env.ACTIVITY_POLLING_INTERVAL_MS = '60000';
+      const customService = require('../../src/services/activity-polling-service');
+      
+      expect(customService.pollInterval).toBe(60000);
+      
+      delete process.env.ACTIVITY_POLLING_INTERVAL_MS;
+    });
+
+    it('should handle missing organization_id in records', async () => {
+      const recordWithoutOrg = {
+        ...mockRecords[0],
+        organization_id: null
+      };
+
+      activityDbService.getPendingActivityBatches.mockResolvedValue([recordWithoutOrg]);
+      activityDbService.claimBatchForProcessing.mockResolvedValue(['record1']);
+
+      await activityPollingService.processPendingRecords();
+
+      expect(activityService.analyzeBatch).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.any(Array),
+        'user1',
+        null
+      );
+    });
+
+    it('should handle records with undefined fields', async () => {
+      const minimalRecord = {
+        id: 'record1',
+        user_id: 'user1'
+      };
+
+      activityDbService.getPendingActivityBatches.mockResolvedValue([minimalRecord]);
+      activityDbService.claimBatchForProcessing.mockResolvedValue(['record1']);
+
+      await activityPollingService.processPendingRecords();
+
+      expect(activityService.analyzeBatch).toHaveBeenCalled();
+    });
+
+    it('should handle multiple errors in different batches', async () => {
+      const multiUserRecords = [
+        { ...mockRecords[0], user_id: 'user1' },
+        { ...mockRecords[1], user_id: 'user2' },
+        { ...mockRecords[0], user_id: 'user3' }
+      ];
+
+      activityDbService.getPendingActivityBatches.mockResolvedValue(multiUserRecords);
+      activityDbService.claimBatchForProcessing.mockResolvedValue(['record1', 'record2', 'record3']);
+      
+      activityService.analyzeBatch
+        .mockRejectedValueOnce(new Error('User 1 failed'))
+        .mockResolvedValueOnce()
+        .mockRejectedValueOnce(new Error('User 3 failed'));
+      
+      activityDbService.markBatchFailed.mockResolvedValue();
+
+      await activityPollingService.processPendingRecords();
+
+      expect(activityDbService.markBatchFailed).toHaveBeenCalledTimes(2);
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.stringContaining('1 succeeded, 2 failed')
+      );
+    });
+
+    it('should handle interval execution', async () => {
+      activityDbService.resetStuckProcessingRecords.mockResolvedValue();
+      activityDbService.getPendingActivityBatches.mockResolvedValue([]);
+
+      activityPollingService.start();
+
+      // Fast-forward time by poll interval
+      jest.advanceTimersByTime(activityPollingService.pollInterval);
+
+      await Promise.resolve();
+
+      expect(activityDbService.getPendingActivityBatches).toHaveBeenCalled();
+    });
+
+    it('should handle stop during processing', async () => {
+      activityPollingService.start();
+      activityPollingService.stop();
+
+      expect(activityPollingService.isRunning).toBe(false);
+      expect(activityPollingService.intervalId).toBeNull();
+    });
   });
 });
