@@ -9,6 +9,261 @@ const { getClient } = require('../services/db/supabase-client');
 const { getUTCISOString } = require('../utils/datetime');
 const sessionStore = require('../services/feedback-session-store');
 
+// SECURITY: Tables that require organization_id filtering for multi-tenancy
+const SENSITIVE_TABLES = new Set([
+  'screenshots', 'analysis_results', 'users', 'documents', 'worklogs',
+  'activity_log', 'unassigned_activity', 'unassigned_work_groups',
+  'user_jira_issues_cache', 'created_issues_log', 'daily_time_summary',
+  'weekly_time_summary', 'project_time_summary', 'tracking_settings',
+  'organization_settings', 'organization_members'
+]);
+
+// Reserved PostgREST query parameters that should not be used as column names
+const RESERVED_PARAMS = new Set(['order', 'limit', 'offset', 'select', 'on_conflict']);
+
+/**
+ * Log security warnings for sensitive table access without org filter
+ */
+function logSecurityWarnings(table, method, query, body, cloudId, accountId) {
+  const hasOrgFilter = query?.eq?.organization_id ||
+                       query?.eq?.jira_cloud_id ||
+                       body?.organization_id ||
+                       body?.jira_cloud_id;
+
+  if (!SENSITIVE_TABLES.has(table) || hasOrgFilter) return;
+
+  const upperMethod = (method || 'GET').toUpperCase();
+  if (upperMethod === 'GET' || upperMethod === 'SELECT') {
+    logger.warn('[ForgeProxy] SECURITY: Query to sensitive table without organization filter', {
+      table, cloudId, accountId, queryFilters: Object.keys(query?.eq || {})
+    });
+  } else if (upperMethod === 'POST' || upperMethod === 'INSERT') {
+    logger.warn('[ForgeProxy] SECURITY: INSERT to sensitive table without organization_id', { table, cloudId });
+  }
+}
+
+/**
+ * Apply a single filter type (eq, neq, gt, etc.) to the query builder
+ */
+function applyColumnFilter(queryBuilder, filterType, filters) {
+  for (const [col, val] of Object.entries(filters)) {
+    queryBuilder = queryBuilder[filterType](col, val);
+  }
+  return queryBuilder;
+}
+
+/**
+ * Handle 'eq' filters with reserved parameter checks
+ */
+function applyEqFilters(queryBuilder, eqFilters) {
+  for (const [col, val] of Object.entries(eqFilters)) {
+    if (RESERVED_PARAMS.has(col)) {
+      logger.warn('[ForgeProxy] Skipping reserved parameter as filter', { col, val });
+      if (col === 'order' && typeof val === 'string') {
+        queryBuilder = handleOrderParam(queryBuilder, val);
+      }
+      continue;
+    }
+    queryBuilder = queryBuilder.eq(col, val);
+  }
+  return queryBuilder;
+}
+
+/**
+ * Handle 'neq' filters with reserved parameter checks
+ */
+function applyNeqFilters(queryBuilder, neqFilters) {
+  for (const [col, val] of Object.entries(neqFilters)) {
+    if (RESERVED_PARAMS.has(col)) {
+      logger.warn('[ForgeProxy] Skipping reserved parameter as neq filter', { col, val });
+      continue;
+    }
+    queryBuilder = queryBuilder.neq(col, val);
+  }
+  return queryBuilder;
+}
+
+/**
+ * Handle 'not' filters (negated conditions)
+ */
+function applyNotFilters(queryBuilder, notFilters) {
+  for (const [col, filterDef] of Object.entries(notFilters)) {
+    queryBuilder = queryBuilder.not(col, filterDef.operator, filterDef.value);
+  }
+  return queryBuilder;
+}
+
+/**
+ * Parse and apply order parameter from string format "column.direction"
+ */
+function handleOrderParam(queryBuilder, orderVal) {
+  const dotIndex = orderVal.lastIndexOf('.');
+  if (dotIndex > 0) {
+    const column = orderVal.substring(0, dotIndex);
+    const direction = orderVal.substring(dotIndex + 1);
+    queryBuilder = queryBuilder.order(column, { ascending: direction !== 'desc' });
+  }
+  return queryBuilder;
+}
+
+/**
+ * Apply all query filters to the query builder for GET/SELECT operations
+ */
+function applyQueryFilters(queryBuilder, query) {
+  if (!query) return queryBuilder;
+
+  for (const [key, value] of Object.entries(query)) {
+    queryBuilder = applySingleFilter(queryBuilder, key, value, query);
+  }
+  return queryBuilder;
+}
+
+/**
+ * Apply a single filter based on key type
+ */
+function applySingleFilter(queryBuilder, key, value, query) {
+  switch (key) {
+    case 'eq':
+      return applyEqFilters(queryBuilder, value);
+    case 'neq':
+      return applyNeqFilters(queryBuilder, value);
+    case 'gt':
+    case 'gte':
+    case 'lt':
+    case 'lte':
+    case 'in':
+    case 'is':
+      return applyColumnFilter(queryBuilder, key, value);
+    case 'not':
+      return applyNotFilters(queryBuilder, value);
+    case 'order':
+      return queryBuilder.order(value.column, { ascending: value.ascending ?? true });
+    case 'limit':
+      return queryBuilder.limit(value);
+    case 'offset':
+      return queryBuilder.range(value, value + (query.limit || 1000) - 1);
+    case 'or':
+      return queryBuilder.or(value);
+    case 'single':
+      return queryBuilder.single();
+    case 'maybeSingle':
+      return queryBuilder.maybeSingle();
+    case '_select':
+      return queryBuilder; // Handled separately
+    default:
+      return queryBuilder;
+  }
+}
+
+/**
+ * Apply common filters (eq, in, is) to update/delete builders
+ */
+function applyMutationFilters(builder, query) {
+  if (query?.eq) {
+    builder = applyColumnFilter(builder, 'eq', query.eq);
+  }
+  if (query?.in) {
+    builder = applyColumnFilter(builder, 'in', query.in);
+  }
+  if (query?.is) {
+    builder = applyColumnFilter(builder, 'is', query.is);
+  }
+  return builder;
+}
+
+/**
+ * Prepare update payload, handling screenshot soft-delete specially
+ */
+function prepareUpdatePayload(table, body, query) {
+  const payload = body && typeof body === 'object' ? body : {};
+  
+  if (table !== 'screenshots') return payload;
+  
+  const isSoftDelete = payload.deleted_at != null || payload.status === 'deleted';
+  if (!isSoftDelete) return payload;
+
+  logger.info('[ForgeProxy] Screenshot soft-delete', {
+    screenshotId: query?.eq?.id,
+    deleted_at: payload.deleted_at,
+    status: payload.status
+  });
+
+  if (payload.deleted_at != null && payload.updated_at == null) {
+    payload.updated_at = getUTCISOString();
+  }
+  return payload;
+}
+
+/**
+ * Execute GET/SELECT query
+ */
+async function executeSelect(queryBuilder) {
+  return queryBuilder;
+}
+
+/**
+ * Execute INSERT query
+ */
+async function executeInsert(supabase, table, body) {
+  return supabase.from(table).insert(body).select();
+}
+
+/**
+ * Execute UPDATE/PATCH query
+ */
+async function executeUpdate(supabase, table, body, query) {
+  const payload = prepareUpdatePayload(table, body, query);
+  let builder = supabase.from(table).update(payload);
+  builder = applyMutationFilters(builder, query);
+  return builder.select();
+}
+
+/**
+ * Execute DELETE query
+ */
+async function executeDelete(supabase, table, query) {
+  let builder = supabase.from(table).delete();
+  builder = applyMutationFilters(builder, query);
+  return builder;
+}
+
+/**
+ * Execute the appropriate database operation based on method
+ */
+async function executeMethod(supabase, method, table, queryBuilder, body, query) {
+  switch (method) {
+    case 'GET':
+    case 'SELECT':
+      return executeSelect(queryBuilder);
+    case 'POST':
+    case 'INSERT':
+      return executeInsert(supabase, table, body);
+    case 'PATCH':
+    case 'UPDATE':
+      return executeUpdate(supabase, table, body, query);
+    case 'DELETE':
+      return executeDelete(supabase, table, query);
+    default:
+      return { error: { message: `Unsupported method: ${method}` }, unsupported: true };
+  }
+}
+
+/**
+ * Initialize query builder with select columns
+ */
+function initQueryBuilder(supabase, table, select, querySelect, method) {
+  let queryBuilder = supabase.from(table);
+  const selectColumns = select || querySelect;
+  
+  if (selectColumns) {
+    return queryBuilder.select(selectColumns);
+  }
+  if (!method || method === 'GET') {
+    return queryBuilder.select('*');
+  }
+  return queryBuilder;
+}
+
 /**
  * Generic Supabase REST API proxy
  * Handles any table operation from the Forge app
@@ -19,250 +274,41 @@ exports.supabaseQuery = async (req, res) => {
     const { cloudId, accountId } = req.forgeContext;
 
     if (!table) {
-      return res.status(400).json({
-        success: false,
-        error: 'Table name is required'
-      });
+      return res.status(400).json({ success: false, error: 'Table name is required' });
     }
 
     const supabase = getClient();
     if (!supabase) {
-      return res.status(500).json({
-        success: false,
-        error: 'Database not configured'
-      });
+      return res.status(500).json({ success: false, error: 'Database not configured' });
     }
 
-    logger.info('[ForgeProxy] Supabase query', {
-      table,
-      method: method || 'GET',
-      cloudId
-    });
+    logger.info('[ForgeProxy] Supabase query', { table, method: method || 'GET', cloudId });
 
-    // SECURITY: Tables that require organization_id filtering for multi-tenancy
-    const SENSITIVE_TABLES = [
-      'screenshots', 'analysis_results', 'users', 'documents', 'worklogs',
-      'activity_log', 'unassigned_activity', 'unassigned_work_groups',
-      'user_jira_issues_cache', 'created_issues_log', 'daily_time_summary',
-      'weekly_time_summary', 'project_time_summary', 'tracking_settings',
-      'organization_settings', 'organization_members'
-    ];
+    logSecurityWarnings(table, method, query, body, cloudId, accountId);
 
-    // Check if query includes organization_id filter for sensitive tables
-    const hasOrgFilter = query?.eq?.organization_id ||
-                         query?.eq?.jira_cloud_id ||
-                         body?.organization_id ||
-                         body?.jira_cloud_id;
-
-    if (SENSITIVE_TABLES.includes(table) && !hasOrgFilter) {
-      // For GET requests without org filter, this is a potential data leak
-      if (!method || method === 'GET' || method === 'SELECT') {
-        logger.warn('[ForgeProxy] SECURITY: Query to sensitive table without organization filter', {
-          table,
-          cloudId,
-          accountId,
-          queryFilters: Object.keys(query?.eq || {})
-        });
-      }
-      // For write operations, require organization_id
-      if (method === 'POST' || method === 'INSERT') {
-        logger.warn('[ForgeProxy] SECURITY: INSERT to sensitive table without organization_id', {
-          table,
-          cloudId
-        });
-      }
-    }
-
-    let queryBuilder = supabase.from(table);
-
-    // Apply select columns if specified (from body or query._select)
-    const selectColumns = select || query?._select;
-    if (selectColumns) {
-      queryBuilder = queryBuilder.select(selectColumns);
-    } else if (method === 'GET' || !method) {
-      queryBuilder = queryBuilder.select('*');
-    }
-
-    // Reserved PostgREST query parameters that should not be used as column names
-    const RESERVED_PARAMS = new Set(['order', 'limit', 'offset', 'select', 'on_conflict']);
-
-    // Apply filters from query object (only for GET/SELECT - PATCH/DELETE handle their own filters)
     const upperMethod = (method || 'GET').toUpperCase();
-    if (query && (upperMethod === 'GET' || upperMethod === 'SELECT')) {
-      for (const [key, value] of Object.entries(query)) {
-        if (key === 'eq') {
-          for (const [col, val] of Object.entries(value)) {
-            // Skip reserved parameters that were incorrectly parsed as filters
-            if (RESERVED_PARAMS.has(col)) {
-              logger.warn('[ForgeProxy] Skipping reserved parameter as filter', { col, val });
-              // Try to handle 'order' specially if it looks like "column.direction"
-              if (col === 'order' && typeof val === 'string') {
-                const dotIndex = val.lastIndexOf('.');
-                if (dotIndex > 0) {
-                  const column = val.substring(0, dotIndex);
-                  const direction = val.substring(dotIndex + 1);
-                  queryBuilder = queryBuilder.order(column, { ascending: direction !== 'desc' });
-                }
-              }
-              continue;
-            }
-            queryBuilder = queryBuilder.eq(col, val);
-          }
-        } else if (key === 'neq') {
-          for (const [col, val] of Object.entries(value)) {
-            if (RESERVED_PARAMS.has(col)) {
-              logger.warn('[ForgeProxy] Skipping reserved parameter as neq filter', { col, val });
-              continue;
-            }
-            queryBuilder = queryBuilder.neq(col, val);
-          }
-        } else if (key === 'gt') {
-          for (const [col, val] of Object.entries(value)) {
-            queryBuilder = queryBuilder.gt(col, val);
-          }
-        } else if (key === 'gte') {
-          for (const [col, val] of Object.entries(value)) {
-            queryBuilder = queryBuilder.gte(col, val);
-          }
-        } else if (key === 'lt') {
-          for (const [col, val] of Object.entries(value)) {
-            queryBuilder = queryBuilder.lt(col, val);
-          }
-        } else if (key === 'lte') {
-          for (const [col, val] of Object.entries(value)) {
-            queryBuilder = queryBuilder.lte(col, val);
-          }
-        } else if (key === 'in') {
-          for (const [col, val] of Object.entries(value)) {
-            queryBuilder = queryBuilder.in(col, val);
-          }
-        } else if (key === 'is') {
-          for (const [col, val] of Object.entries(value)) {
-            queryBuilder = queryBuilder.is(col, val);
-          }
-        } else if (key === 'not') {
-          // Handle negated filters (e.g., not.is.null)
-          for (const [col, filterDef] of Object.entries(value)) {
-            queryBuilder = queryBuilder.not(col, filterDef.operator, filterDef.value);
-          }
-        } else if (key === 'order') {
-          queryBuilder = queryBuilder.order(value.column, { ascending: value.ascending ?? true });
-        } else if (key === 'limit') {
-          queryBuilder = queryBuilder.limit(value);
-        } else if (key === 'offset') {
-          queryBuilder = queryBuilder.range(value, value + (query.limit || 1000) - 1);
-        } else if (key === '_select') {
-          // Select is handled separately in the initial query builder setup
-          continue;
-        } else if (key === 'or') {
-          queryBuilder = queryBuilder.or(value);
-        } else if (key === 'single') {
-          queryBuilder = queryBuilder.single();
-        } else if (key === 'maybeSingle') {
-          queryBuilder = queryBuilder.maybeSingle();
-        }
-      }
+    let queryBuilder = initQueryBuilder(supabase, table, select, query?._select, method);
+
+    // Apply query filters for GET/SELECT only
+    if (upperMethod === 'GET' || upperMethod === 'SELECT') {
+      queryBuilder = applyQueryFilters(queryBuilder, query);
     }
 
-    // Execute based on method
-    let result;
-    switch (upperMethod) {
-      case 'GET':
-      case 'SELECT':
-        result = await queryBuilder;
-        break;
-      case 'POST':
-      case 'INSERT':
-        result = await supabase.from(table).insert(body).select();
-        break;
-      case 'PATCH':
-      case 'UPDATE': {
-        // Ensure body is an object (Forge sends deleted_at/status for screenshot soft-delete)
-        const updatePayload = body && typeof body === 'object' ? body : {};
-        if (table === 'screenshots' && (updatePayload.deleted_at != null || updatePayload.status === 'deleted')) {
-          logger.info('[ForgeProxy] Screenshot soft-delete', {
-            screenshotId: query?.eq?.id,
-            deleted_at: updatePayload.deleted_at,
-            status: updatePayload.status
-          });
-          // Ensure updated_at is set when soft-deleting so the row is clearly modified
-          if (updatePayload.deleted_at != null && updatePayload.updated_at == null) {
-            updatePayload.updated_at = getUTCISOString();
-          }
-        }
-        let updateBuilder = supabase.from(table).update(updatePayload);
-        // Apply eq filters
-        if (query?.eq) {
-          for (const [col, val] of Object.entries(query.eq)) {
-            updateBuilder = updateBuilder.eq(col, val);
-          }
-        }
-        // Apply in filters (for bulk updates like id=in.(uuid1,uuid2,...))
-        if (query?.in) {
-          for (const [col, val] of Object.entries(query.in)) {
-            updateBuilder = updateBuilder.in(col, val);
-          }
-        }
-        // Apply is filters (for null checks)
-        if (query?.is) {
-          for (const [col, val] of Object.entries(query.is)) {
-            updateBuilder = updateBuilder.is(col, val);
-          }
-        }
-        result = await updateBuilder.select();
-        break;
-      }
-      case 'DELETE': {
-        let deleteBuilder = supabase.from(table).delete();
-        // Apply eq filters
-        if (query?.eq) {
-          for (const [col, val] of Object.entries(query.eq)) {
-            deleteBuilder = deleteBuilder.eq(col, val);
-          }
-        }
-        // Apply in filters (for bulk deletes like id=in.(uuid1,uuid2,...))
-        if (query?.in) {
-          for (const [col, val] of Object.entries(query.in)) {
-            deleteBuilder = deleteBuilder.in(col, val);
-          }
-        }
-        // Apply is filters (for null checks)
-        if (query?.is) {
-          for (const [col, val] of Object.entries(query.is)) {
-            deleteBuilder = deleteBuilder.is(col, val);
-          }
-        }
-        result = await deleteBuilder;
-        break;
-      }
-      default:
-        return res.status(400).json({
-          success: false,
-          error: `Unsupported method: ${method}`
-        });
+    const result = await executeMethod(supabase, upperMethod, table, queryBuilder, body, query);
+
+    if (result.unsupported) {
+      return res.status(400).json({ success: false, error: result.error.message });
     }
 
     if (result.error) {
-      logger.error('[ForgeProxy] Supabase error', {
-        table,
-        error: result.error.message
-      });
-      return res.status(400).json({
-        success: false,
-        error: result.error.message
-      });
+      logger.error('[ForgeProxy] Supabase error', { table, error: result.error.message });
+      return res.status(400).json({ success: false, error: result.error.message });
     }
 
-    res.json({
-      success: true,
-      data: result.data
-    });
+    res.json({ success: true, data: result.data });
   } catch (error) {
     logger.error('[ForgeProxy] Query error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
