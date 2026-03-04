@@ -25,7 +25,8 @@ function parseUserAssignedIssues(userAssignedIssues) {
       ? JSON.parse(userAssignedIssues)
       : userAssignedIssues;
     return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
+  } catch (error) {
+    logger.debug('Failed to parse user_assigned_issues:', error.message);
     return [];
   }
 }
@@ -119,14 +120,12 @@ function logCompletionSummary(successCount, failureCount) {
 }
 
 class ActivityPollingService {
-  constructor() {
-    this.isRunning = false;
-    this.intervalId = null;
-    // Poll every 3 minutes by default (configurable via env)
-    this.pollInterval = parseInt(process.env.ACTIVITY_POLLING_INTERVAL_MS || '180000', 10);
-    this.batchSize = parseInt(process.env.ACTIVITY_POLLING_BATCH_SIZE || '20', 10);
-    this.processing = false;
-  }
+  isRunning = false;
+  intervalId = null;
+  processing = false;
+  // Poll every 3 minutes by default (configurable via env)
+  pollInterval = Number.parseInt(process.env.ACTIVITY_POLLING_INTERVAL_MS || '180000', 10);
+  batchSize = Number.parseInt(process.env.ACTIVITY_POLLING_BATCH_SIZE || '20', 10);
 
   /**
    * Start the activity polling service
@@ -190,7 +189,7 @@ class ActivityPollingService {
     const userAssignedIssues = extractUserAssignedIssues(records);
 
     // Per-batch timeout (default: 60 seconds)
-    const batchTimeoutMs = parseInt(process.env.ACTIVITY_BATCH_TIMEOUT_MS || '60000', 10);
+    const batchTimeoutMs = Number.parseInt(process.env.ACTIVITY_BATCH_TIMEOUT_MS || '60000', 10);
 
     // Analyze the batch with timeout
     await Promise.race([
