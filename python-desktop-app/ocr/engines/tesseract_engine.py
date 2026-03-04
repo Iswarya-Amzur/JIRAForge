@@ -139,7 +139,8 @@ class TesseractEngine(BaseOCREngine):
         # Single-language fallback mapping.
         if '+' not in configured:
             if configured == 'en':
-                candidates.append('eng')
+                # Prefer 'eng' over 'en' as standard Tesseract uses 'eng'
+                candidates.insert(0, 'eng')
             elif configured == 'eng':
                 candidates.append('en')
 

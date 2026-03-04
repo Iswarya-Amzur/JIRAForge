@@ -1081,8 +1081,8 @@ SENSITIVE_TOKEN_KEYS = ['access_token', 'refresh_token', 'supabase_token']
 # Windows Credential Manager has a 2560-byte limit per credential (CredWrite API).
 # OAuth/JWT tokens often exceed this, causing error 1783 "The stub received bad data".
 # We chunk large tokens across multiple keyring entries to work around this limit.
-# Using base64 encoding to avoid special character issues with Windows Credential Manager.
-KEYRING_CHUNK_SIZE = 2400  # Leave some headroom below the 2560-byte limit
+# using base64 encoding to avoid special character issues with Windows Credential Manager.
+KEYRING_CHUNK_SIZE = 2000  # Reduced to 2000 to be safe (limit is 2560)
 
 
 def _keyring_set(service, key, value):
