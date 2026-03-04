@@ -3,9 +3,9 @@
  * Handles version checking and update notifications for the desktop app
  */
 
-const crypto = require('crypto');
-const https = require('https');
-const http = require('http');
+const crypto = require('node:crypto');
+const https = require('node:https');
+const http = require('node:http');
 const logger = require('../utils/logger');
 const { getClient } = require('../services/db/supabase-client');
 
@@ -360,6 +360,22 @@ exports.computeChecksum = async (req, res) => {
         success: false,
         error: 'URL is required'
       });
+    }
+
+    // Validate URL to prevent SSRF — only allow HTTPS to public hosts
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      return res.status(400).json({ success: false, error: 'Invalid URL format' });
+    }
+    if (parsedUrl.protocol !== 'https:') {
+      return res.status(400).json({ success: false, error: 'Only HTTPS URLs are allowed' });
+    }
+    const hostname = parsedUrl.hostname.toLowerCase();
+    if (hostname === 'localhost' || hostname.startsWith('127.') || hostname.startsWith('10.') ||
+        hostname.startsWith('192.168.') || hostname.startsWith('169.254.') || hostname === '0.0.0.0') {
+      return res.status(400).json({ success: false, error: 'Internal/private URLs are not allowed' });
     }
 
     logger.info(`[AppVersion] Computing checksum for: ${url}`);
