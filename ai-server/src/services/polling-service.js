@@ -200,7 +200,7 @@ class PollingService {
     if (typeof parsedAssignedIssues === 'string') {
       try {
         parsedAssignedIssues = JSON.parse(parsedAssignedIssues);
-      } catch (e) {
+      } catch {
         logger.warn('Failed to parse user_assigned_issues', { screenshot_id });
         parsedAssignedIssues = [];
       }

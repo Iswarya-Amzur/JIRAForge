@@ -28,8 +28,8 @@ function parseUserAssignedIssues(userAssignedIssues) {
   if (typeof userAssignedIssues === 'string') {
     try {
       return JSON.parse(userAssignedIssues);
-    } catch (e) {
-      logger.warn('Failed to parse user_assigned_issues string', { userAssignedIssues, error: e.message });
+    } catch (error) {
+      logger.warn('Failed to parse user_assigned_issues string', { userAssignedIssues, error: error.message });
       return [];
     }
   }

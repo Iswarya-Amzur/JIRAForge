@@ -723,16 +723,18 @@ async function ensureOrganizationMembership(supabase, userId, organizationId) {
     const role = isFirstUser ? 'owner' : 'member';
 
     // Create membership
+    const ADMIN_ROLES = new Set(['owner', 'admin']);
+    const ANALYTICS_ROLES = new Set(['owner', 'admin', 'manager']);
     await supabase
       .from('organization_members')
       .insert({
         user_id: userId,
         organization_id: organizationId,
         role: role,
-        can_manage_settings: ['owner', 'admin'].includes(role),
-        can_view_team_analytics: ['owner', 'admin', 'manager'].includes(role),
-        can_manage_members: ['owner', 'admin'].includes(role),
-        can_delete_screenshots: ['owner', 'admin'].includes(role),
+        can_manage_settings: ADMIN_ROLES.has(role),
+        can_view_team_analytics: ANALYTICS_ROLES.has(role),
+        can_manage_members: ADMIN_ROLES.has(role),
+        can_delete_screenshots: ADMIN_ROLES.has(role),
         can_manage_billing: role === 'owner'
       });
 

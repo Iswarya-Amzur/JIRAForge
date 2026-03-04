@@ -18,7 +18,7 @@
 
 const { google } = require('googleapis');
 const logger = require('../utils/logger');
-const os = require('os');
+const os = require('node:os');
 
 // Singleton instance
 let sheetsLogger = null;

@@ -516,10 +516,11 @@ exports.getOcrConfig = async (req, res) => {
     ocrConfig.fallback_engines.forEach(e => discoveredEngines.add(e));
 
     // Scan environment for OCR_<ENGINE>_* patterns
+    const OCR_RESERVED_PARTS = new Set(['PRIMARY', 'FALLBACK', 'USE', 'MAX', 'PREPROCESSING']);
     Object.keys(process.env).forEach(key => {
       if (key.startsWith('OCR_') && key.includes('_', 4)) {
         const parts = key.split('_');
-        if (parts.length >= 3 && !['PRIMARY', 'FALLBACK', 'USE', 'MAX', 'PREPROCESSING'].includes(parts[1])) {
+        if (parts.length >= 3 && !OCR_RESERVED_PARTS.has(parts[1])) {
           discoveredEngines.add(parts[1].toLowerCase());
         }
       }
