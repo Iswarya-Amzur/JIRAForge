@@ -499,6 +499,7 @@ describe('Screenshot Controller', () => {
         'failed',
         'Download failed'
       );
+      expect(res.status).toHaveBeenCalledWith(500);
       expect(res.json).toHaveBeenCalledWith({
         success: false,
         error: 'Failed to analyze screenshot',
@@ -519,6 +520,74 @@ describe('Screenshot Controller', () => {
         expect.stringContaining('Failed to update screenshot status'),
         expect.any(Error)
       );
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        error: 'Failed to analyze screenshot',
+        details: process.env.NODE_ENV === 'development' ? 'Analysis failed' : undefined
+      });
+    });
+
+    it('should handle errors when screenshot_id is missing during error handling', async () => {
+      // Create request body that passes validation but fails later
+      req.body = { ...validWebhookData };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+      // Simulate an error after claiming
+      supabaseService.downloadFile.mockRejectedValue(new Error('Storage error'));
+      supabaseService.updateScreenshotStatus.mockResolvedValue();
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+        success: false,
+        error: 'Failed to analyze screenshot'
+      }));
+    });
+
+    it('should handle error during screenshot analysis service call', async () => {
+      req.body = { ...validWebhookData };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+      supabaseService.downloadFile.mockResolvedValue(Buffer.from('image data'));
+      screenshotService.analyzeActivity.mockRejectedValue(new Error('AI service unavailable'));
+      supabaseService.updateScreenshotStatus.mockResolvedValue();
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(supabaseService.updateScreenshotStatus).toHaveBeenCalledWith(
+        validWebhookData.id,
+        'failed',
+        'AI service unavailable'
+      );
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+        success: false,
+        error: 'Failed to analyze screenshot'
+      }));
+    });
+
+    it('should handle error during saveAnalysisResult', async () => {
+      req.body = { ...validWebhookData };
+
+      supabaseService.claimScreenshotForProcessing.mockResolvedValue(true);
+      supabaseService.downloadFile.mockResolvedValue(Buffer.from('image data'));
+      screenshotService.analyzeActivity.mockResolvedValue({
+        taskKey: 'PROJ-123',
+        workType: 'office',
+        timeSpentSeconds: 600
+      });
+      supabaseService.saveAnalysisResult.mockRejectedValue(new Error('Database write failed'));
+      supabaseService.updateScreenshotStatus.mockResolvedValue();
+
+      await screenshotController.analyzeScreenshot(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+        success: false,
+        error: 'Failed to analyze screenshot'
+      }));
     });
 
     it('should handle null/undefined user_assigned_issues', async () => {
