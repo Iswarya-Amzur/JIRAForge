@@ -3,12 +3,12 @@
  */
 
 const NotifmeSdk = require('notifme-sdk').default;
-const logger = require('../../src/utils/logger');
-const { NotifMeWrapperEnhanced } = require('../../src/services/notifications/notifme-wrapper-enhanced');
+const logger = require('../../../src/utils/logger');
+const { NotifMeWrapperEnhanced } = require('../../../src/services/notifications/notifme-wrapper-enhanced');
 
 // Mock dependencies
 jest.mock('notifme-sdk');
-jest.mock('../../src/utils/logger');
+jest.mock('../../../src/utils/logger');
 
 describe('NotifMeWrapperEnhanced', () => {
   let wrapper;
@@ -645,6 +645,74 @@ describe('NotifMeWrapperEnhanced', () => {
       const emailPayload = mockSdk.send.mock.calls[0][0].email;
       expect(emailPayload.from).toContain('JIRAForge');
       expect(emailPayload.from).toContain('noreply@jiraforge.io');
+    });
+
+    it('should handle SMTP without SMTP_PORT env returning null', () => {
+      process.env.SMTP_HOST = 'smtp.test.com';
+      delete process.env.SMTP_PORT;
+      
+      const config = wrapper._buildSmtpConfig();
+      expect(config).toBeNull();
+    });
+
+    it('should handle AWS_REGION fallback before default', () => {
+      process.env.AWS_ACCESS_KEY_ID = 'key';
+      process.env.AWS_SECRET_ACCESS_KEY = 'secret';
+      delete process.env.AWS_SES_REGION;
+      process.env.AWS_REGION = 'ap-southeast-1';
+      
+      const config = wrapper._buildSesConfig();
+      expect(config.region).toBe('ap-southeast-1');
+      
+      delete process.env.AWS_REGION;
+    });
+
+    it('should directly test _getProviderConfig returns null for unknown', () => {
+      const config = wrapper._getProviderConfig('nonexistent_provider');
+      expect(config).toBeNull();
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Unknown email provider'));
+    });
+
+    it('should handle class field initialization correctly', () => {
+      const freshWrapper = new NotifMeWrapperEnhanced();
+      expect(freshWrapper.sdk).toBeNull();
+      expect(freshWrapper.providers).toEqual([]);
+      expect(freshWrapper.initialized).toBe(false);
+    });
+
+    it('should handle provider config builder returning null', () => {
+      // No env vars set - all builders should return null
+      const sendgrid = wrapper._buildSendGridConfig();
+      const mailgun = wrapper._buildMailgunConfig();
+      const smtp = wrapper._buildSmtpConfig();
+      const ses = wrapper._buildSesConfig();
+      const sparkpost = wrapper._buildSparkPostConfig();
+      
+      expect(sendgrid).toBeNull();
+      expect(mailgun).toBeNull();
+      expect(smtp).toBeNull();
+      expect(ses).toBeNull();
+      expect(sparkpost).toBeNull();
+    });
+
+    it('should correctly parse priority from environment variable', () => {
+      process.env.SENDGRID_API_KEY = 'sg-key';
+      process.env.SENDGRID_PRIORITY = '25';
+      
+      const config = wrapper._getProviderConfig('sendgrid');
+      expect(config.priority).toBe(25);
+    });
+
+    it('should handle _textToBasicHtml with undefined', () => {
+      const result = wrapper._textToBasicHtml(undefined);
+      expect(result).toBe('');
+    });
+
+    it('should return chained instance from initialize', () => {
+      process.env.SENDGRID_API_KEY = 'sg-key';
+      
+      const result = wrapper.initialize();
+      expect(result).toBe(wrapper);
     });
   });
 });

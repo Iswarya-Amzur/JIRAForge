@@ -774,6 +774,60 @@ describe('Feedback Controller', () => {
     });
   });
 
+  describe('getFeedbackPage (covers getErrorPage and escapeHtml with replaceAll)', () => {
+    beforeEach(() => {
+      res.send = jest.fn().mockReturnThis();
+    });
+
+    it('should return error page with 400 when session is missing', () => {
+      req.query = {};
+
+      feedbackController.getFeedbackPage(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.send).toHaveBeenCalledWith(expect.stringContaining('Session Error'));
+      expect(res.send).toHaveBeenCalledWith(expect.stringContaining('Missing session parameter'));
+    });
+
+    it('should return error page with 401 for invalid session', () => {
+      req.query.session = 'invalid123';
+      sessionStore.getSession.mockReturnValue(null);
+
+      feedbackController.getFeedbackPage(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.send).toHaveBeenCalledWith(expect.stringContaining('Session Error'));
+      expect(res.send).toHaveBeenCalledWith(expect.stringContaining('Invalid or expired session'));
+    });
+
+    it('should serve feedback form HTML for valid session', () => {
+      req.query.session = 'valid123';
+      sessionStore.getSession.mockReturnValue({
+        userInfo: { account_id: 'user123' }
+      });
+
+      feedbackController.getFeedbackPage(req, res);
+
+      expect(res.sendFile).toHaveBeenCalled();
+      // Verify path contains feedback-form.html
+      const calledPath = res.sendFile.mock.calls[0][0];
+      expect(calledPath).toContain('feedback-form.html');
+    });
+
+    it('should escape HTML entities in error messages via escapeHtml replaceAll', () => {
+      // This test ensures the replaceAll calls in escapeHtml are executed
+      // The error page contains the message which goes through escapeHtml
+      req.query = {}; // Missing session triggers error page
+
+      feedbackController.getFeedbackPage(req, res);
+
+      // The error page HTML should be properly escaped
+      const htmlOutput = res.send.mock.calls[0][0];
+      expect(htmlOutput).toContain('&lt;'); // Should NOT contain unescaped <
+      expect(htmlOutput).not.toMatch(/<script>/i); // No script injection possible
+    });
+  });
+
   describe('Edge Cases and Error Handling', () => {
     it('should handle missing req.body gracefully', async () => {
       req.body = null;

@@ -720,6 +720,130 @@ describe('Auth Controller', () => {
       expect(res.json).toHaveBeenCalled();
       delete process.env.PADDLE_PRIORITY;
     });
+
+    it('should capture custom engine parameters in extra_params (standardKeys.has coverage)', async () => {
+      // Set up custom parameter that is NOT a standard key
+      process.env.OCR_PADDLE_CUSTOM_PARAM = 'custom_value';
+      process.env.OCR_PADDLE_MODEL_PATH = '/path/to/model';
+      
+      req.body = {
+        atlassian_token: 'atlassian-123'
+      };
+
+      axios.get.mockResolvedValue({
+        data: {
+          account_id: 'acc-123',
+          email: 'test@example.com'
+        }
+      });
+
+      await authController.getOcrConfig(req, res);
+
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        config: expect.objectContaining({
+          engines: expect.objectContaining({
+            paddle: expect.objectContaining({
+              extra_params: expect.objectContaining({
+                custom_param: 'custom_value',
+                model_path: '/path/to/model'
+              })
+            })
+          })
+        })
+      });
+
+      delete process.env.OCR_PADDLE_CUSTOM_PARAM;
+      delete process.env.OCR_PADDLE_MODEL_PATH;
+    });
+
+    it('should use Number.parseInt for preprocessing_target_dpi', async () => {
+      process.env.OCR_PREPROCESSING_TARGET_DPI = '600';
+      
+      req.body = {
+        atlassian_token: 'atlassian-123'
+      };
+
+      axios.get.mockResolvedValue({
+        data: {
+          account_id: 'acc-123',
+          email: 'test@example.com'
+        }
+      });
+
+      await authController.getOcrConfig(req, res);
+
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        config: expect.objectContaining({
+          preprocessing_target_dpi: 600
+        })
+      });
+
+      delete process.env.OCR_PREPROCESSING_TARGET_DPI;
+    });
+
+    it('should use Number.parseFloat for min_confidence', async () => {
+      process.env.OCR_PADDLE_MIN_CONFIDENCE = '0.85';
+      
+      req.body = {
+        atlassian_token: 'atlassian-123'
+      };
+
+      axios.get.mockResolvedValue({
+        data: {
+          account_id: 'acc-123',
+          email: 'test@example.com'
+        }
+      });
+
+      await authController.getOcrConfig(req, res);
+
+      expect(res.json).toHaveBeenCalledWith({
+        success: true,
+        config: expect.objectContaining({
+          engines: expect.objectContaining({
+            paddle: expect.objectContaining({
+              min_confidence: 0.85
+            })
+          })
+        })
+      });
+    });
+
+    it('should handle getOcrConfig internal errors', async () => {
+      req.body = {
+        atlassian_token: 'atlassian-123'
+      };
+
+      axios.get.mockResolvedValue({
+        data: {
+          account_id: 'acc-123',
+          email: 'test@example.com'
+        }
+      });
+
+      // Mock Object.keys to throw an error
+      const originalKeys = Object.keys;
+      let callCount = 0;
+      Object.keys = jest.fn().mockImplementation((obj) => {
+        callCount++;
+        if (callCount > 1) {
+          throw new Error('Internal error');
+        }
+        return originalKeys(obj);
+      });
+
+      await authController.getOcrConfig(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        error: expect.stringContaining('Internal error')
+      });
+
+      Object.keys = originalKeys;
+    });
   });
 
   describe('verifyToken', () => {

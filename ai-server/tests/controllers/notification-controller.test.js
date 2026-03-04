@@ -256,6 +256,30 @@ describe('Notification Controller', () => {
       );
     });
 
+    it('should correctly parse string limit and offset using Number.parseInt', async () => {
+      // Query string values come as strings, this tests Number.parseInt conversion
+      const mockHistory = [{ id: 1, type: 'test' }];
+      notificationDb.getUserNotificationHistory.mockResolvedValue(mockHistory);
+
+      const response = await request(app)
+        .get('/api/notifications/history/user123')
+        .query({ limit: '25', offset: '5' });
+
+      expect(response.status).toBe(200);
+      expect(response.body.pagination).toEqual({
+        limit: 25,
+        offset: 5,
+        hasMore: false
+      });
+      // Verify Number.parseInt converted strings to numbers
+      expect(notificationDb.getUserNotificationHistory).toHaveBeenCalledWith(
+        'user123',
+        25,
+        5,
+        null
+      );
+    });
+
     it('should filter by notification type', async () => {
       const mockHistory = [{ id: 1, type: 'login_reminder' }];
       notificationDb.getUserNotificationHistory.mockResolvedValue(mockHistory);
