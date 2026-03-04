@@ -145,11 +145,16 @@ class PaddleOCREngine(BaseOCREngine):
 
                 if major_version >= 3:
                     # PaddleOCR 3.x: uses use_textline_orientation
-                    init_kwargs['use_textline_orientation'] = True
+                    # For screenshots, text is horizontal. Disabling saves memory/time.
+                    init_kwargs['use_textline_orientation'] = False 
                 else:
                     # PaddleOCR 2.x: uses use_angle_cls
-                    init_kwargs['use_angle_cls'] = True
+                    init_kwargs['use_angle_cls'] = False
                     init_kwargs['show_log'] = False
+
+                # Stability fix: disable MKLDNN on Windows to prevent "primitive" errors
+                if sys.platform == 'win32':
+                    init_kwargs['enable_mkldnn'] = False
 
                 # Respect configuration: GPU can significantly reduce inference time.
                 # Some PaddleOCR versions may not accept use_gpu, so retry safely.
