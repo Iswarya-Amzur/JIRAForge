@@ -11,11 +11,11 @@ const logger = require('../utils/logger');
 const { toUTCISOString } = require('../utils/datetime');
 
 // Configuration (can be overridden via environment variables)
-const CLEANUP_SCHEDULE_DAY = parseInt(process.env.CLEANUP_SCHEDULE_DAY || '1', 10); // 1st of month
-const CLEANUP_SCHEDULE_HOUR = parseInt(process.env.CLEANUP_SCHEDULE_HOUR || '3', 10); // 3 AM
-const CLEANUP_SCHEDULE_MINUTE = parseInt(process.env.CLEANUP_SCHEDULE_MINUTE || '0', 10); // 0 minutes
-const MONTHS_TO_KEEP = parseInt(process.env.CLEANUP_MONTHS_TO_KEEP || '2', 10); // Keep last 2 months
-const BATCH_SIZE = parseInt(process.env.CLEANUP_BATCH_SIZE || '50', 10); // Process 50 screenshots per batch
+const CLEANUP_SCHEDULE_DAY = Number.parseInt(process.env.CLEANUP_SCHEDULE_DAY || '1', 10); // 1st of month
+const CLEANUP_SCHEDULE_HOUR = Number.parseInt(process.env.CLEANUP_SCHEDULE_HOUR || '3', 10); // 3 AM
+const CLEANUP_SCHEDULE_MINUTE = Number.parseInt(process.env.CLEANUP_SCHEDULE_MINUTE || '0', 10); // 0 minutes
+const MONTHS_TO_KEEP = Number.parseInt(process.env.CLEANUP_MONTHS_TO_KEEP || '2', 10); // Keep last 2 months
+const BATCH_SIZE = Number.parseInt(process.env.CLEANUP_BATCH_SIZE || '50', 10); // Process 50 screenshots per batch
 
 let scheduledTimeoutId = null;
 let isRunning = false;
