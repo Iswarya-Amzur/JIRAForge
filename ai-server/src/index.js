@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('node:path');
+const fs = require('node:fs');
 require('dotenv').config();
 
 const screenshotController = require('./controllers/screenshot-controller');
@@ -110,17 +111,33 @@ app.get('/health', (req, res) => {
 });
 
 // =============================================================================
-// LEGAL PAGES (Public - served as static HTML)
+// LEGAL PAGES (Public - served as HTML from layout + content templates)
 // =============================================================================
+
+function renderLegalPage(title, pageTitle, contentFile) {
+  const legalDir = path.join(__dirname, 'legal');
+  const layout = fs.readFileSync(path.join(legalDir, 'layout.html'), 'utf8');
+  const content = fs.readFileSync(path.join(legalDir, contentFile), 'utf8');
+  return layout
+    .replace('{{title}}', title)
+    .replace('{{pageTitle}}', pageTitle)
+    .replace('{{content}}', content);
+}
 
 // Privacy Policy
 app.get('/legal/privacy', (req, res) => {
-  res.sendFile(path.join(__dirname, 'legal', 'privacy-policy.html'));
+  res.type('html').send(renderLegalPage('Privacy Policy - BRD Time Tracker', 'Privacy Policy', 'privacy-content.html'));
 });
 
 // Terms of Service
 app.get('/legal/terms', (req, res) => {
-  res.sendFile(path.join(__dirname, 'legal', 'terms-of-service.html'));
+  res.type('html').send(renderLegalPage('Terms of Service - BRD Time Tracker', 'Terms of Service', 'terms-content.html'));
+});
+
+// Legal page styles (shared by Terms and Privacy pages)
+app.get('/legal/styles.css', (req, res) => {
+  res.type('text/css');
+  res.sendFile(path.join(__dirname, 'legal', 'styles.css'));
 });
 
 // Redirect shortcuts
