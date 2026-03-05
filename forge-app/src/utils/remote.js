@@ -44,49 +44,78 @@ function isRetryableNetworkError(error) {
     error.message?.includes('fetch failed');
 }
 
+function canRetry(attempt) {
+  return attempt < MAX_RETRIES;
+}
+
+async function executeRemoteCall(endpoint, options) {
+  console.log(`[Remote] invokeRemote to ${REMOTE_KEY}${endpoint}`);
+
+  const response = await invokeRemote(REMOTE_KEY, {
+    path: endpoint,
+    method: options.method || 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
+
+  console.log(`[Remote] Response status: ${response.status}`);
+  return response;
+}
+
+async function parseSuccessfulResponse(response) {
+  const result = await response.json();
+  if (!result.success) {
+    throw new Error(result.error || 'Unknown error from remote');
+  }
+  return result.data;
+}
+
+async function handleFailedResponse(response, attempt, endpoint) {
+  const errorText = await response.text();
+
+  if (isRetryableStatus(response.status) && canRetry(attempt)) {
+    console.warn(`[Remote] Retryable error ${response.status} on ${endpoint} (attempt ${attempt + 1})`);
+    return { shouldRetry: true };
+  }
+
+  console.error(`[Remote] Request failed: ${response.status}`, errorText);
+  throw new Error(`Remote request failed: ${errorText}`);
+}
+
+function handleNetworkError(error, attempt, endpoint) {
+  if (isRetryableNetworkError(error) && canRetry(attempt)) {
+    console.warn(`[Remote] Retryable error on ${endpoint} (attempt ${attempt + 1}):`, error.message);
+    return { shouldRetry: true };
+  }
+
+  console.error(`[Remote] invokeRemote error:`, error.message);
+  throw error;
+}
+
+async function attemptRemoteRequest(endpoint, options, attempt) {
+  try {
+    const response = await executeRemoteCall(endpoint, options);
+
+    if (!response.ok) {
+      return handleFailedResponse(response, attempt, endpoint);
+    }
+
+    return { data: await parseSuccessfulResponse(response) };
+  } catch (error) {
+    return handleNetworkError(error, attempt, endpoint);
+  }
+}
+
 async function remoteRequest(endpoint, options = {}) {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     await performRetryDelay(attempt, endpoint);
 
-    try {
-      console.log(`[Remote] invokeRemote to ${REMOTE_KEY}${endpoint}`);
-
-      const response = await invokeRemote(REMOTE_KEY, {
-        path: endpoint,
-        method: options.method || 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...options.headers
-        },
-        body: options.body ? JSON.stringify(options.body) : undefined
-      });
-
-      console.log(`[Remote] Response status: ${response.status}`);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        if (isRetryableStatus(response.status) && attempt < MAX_RETRIES) {
-          console.warn(`[Remote] Retryable error ${response.status} on ${endpoint} (attempt ${attempt + 1})`);
-          continue;
-        }
-        console.error(`[Remote] Request failed: ${response.status}`, errorText);
-        throw new Error(`Remote request failed: ${errorText}`);
-      }
-
-      const result = await response.json();
-
-      if (!result.success) {
-        throw new Error(result.error || 'Unknown error from remote');
-      }
-
+    const result = await attemptRemoteRequest(endpoint, options, attempt);
+    if (!result.shouldRetry) {
       return result.data;
-    } catch (error) {
-      if (isRetryableNetworkError(error) && attempt < MAX_RETRIES) {
-        console.warn(`[Remote] Retryable error on ${endpoint} (attempt ${attempt + 1}):`, error.message);
-        continue;
-      }
-      console.error(`[Remote] invokeRemote error:`, error.message);
-      throw error;
     }
   }
 }
