@@ -9,19 +9,10 @@ import { getIssueTransitions, transitionIssue } from '../../utils/jira.js';
 import { formatDuration, formatJiraDate } from '../../utils/formatters.js';
 import { isValidUUID, isValidIssueKey, isValidProjectKey, isValidDate, sanitizeUUIDArray } from '../../utils/validators.js';
 import { getTrackingSettings } from '../../services/settingsService.js';
+import { initializeRequestContext, handleResolverError, ensureArray } from './helpers.js';
 
 // Module-level constants
 const JIRA_MIN_WORKLOG_SECONDS = 60;
-
-/**
- * Helper: Convert to array (handles both single object and array responses)
- */
-function toArray(data) {
-  if (Array.isArray(data)) {
-    return data;
-  }
-  return data ? [data] : [];
-}
 
 /**
  * Helper: Check if auto-sync is enabled for worklogs
@@ -140,7 +131,7 @@ async function updateSessionsAndAnalysis({ validSessionIds, issueKey, userId, or
     }
   );
 
-  const activitiesArray = toArray(updatedActivities);
+  const activitiesArray = ensureArray(updatedActivities);
   const analysisResultIds = activitiesArray.map(a => a?.analysis_result_id).filter(Boolean);
 
   console.log(`[updateSessions] Found ${analysisResultIds.length} analysis results to update`);
@@ -209,43 +200,6 @@ function filterActivitiesByTimeRange(analysisResults, startDateTime, endDateTime
     const activityTime = new Date(screenshotTimestamp);
     return activityTime >= startDate && activityTime <= endDate;
   });
-}
-
-/**
- * Helper: Initialize request context (supabase, organization, user)
- * @returns {Object} { success, config, organization, userId, error }
- */
-async function initializeRequestContext(req) {
-  const { accountId, cloudId } = req.context;
-
-  const supabaseConfig = await getSupabaseConfig(accountId);
-  if (!supabaseConfig) {
-    return { success: false, error: 'Supabase not configured' };
-  }
-
-  const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
-  if (!organization) {
-    return { success: false, error: 'Unable to get organization information' };
-  }
-
-  const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
-
-  return {
-    success: true,
-    config: supabaseConfig,
-    organization,
-    userId,
-    accountId,
-    cloudId
-  };
-}
-
-/**
- * Helper: Handle resolver errors consistently
- */
-function handleResolverError(error, operation) {
-  console.error(`Error ${operation}:`, error);
-  return { success: false, error: error.message };
 }
 
 /**
@@ -672,7 +626,7 @@ export async function bulkReassignByTimeInterval(req) {
       `unassigned_activity?analysis_result_id=in.(${analysisIdsParam})&select=id`
     );
 
-    const unassignedArray = toArray(unassignedActivities);
+    const unassignedArray = ensureArray(unassignedActivities);
 
     if (unassignedArray.length > 0) {
       const unassignedIds = sanitizeUUIDArray(unassignedArray.map(u => u.id)).join(',');
@@ -699,7 +653,7 @@ export async function bulkReassignByTimeInterval(req) {
       `unassigned_group_members?unassigned_activity_id=in.(${sanitizeUUIDArray(unassignedArray.map(u => u.id)).join(',') || 'null'})&select=group_id`
     );
 
-    const groupMembersArray = toArray(groupMembers);
+    const groupMembersArray = ensureArray(groupMembers);
     const uniqueGroupIds = sanitizeUUIDArray([...new Set(groupMembersArray.map(m => m.group_id).filter(Boolean))]);
 
     if (uniqueGroupIds.length > 0) {
