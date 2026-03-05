@@ -325,6 +325,61 @@ describe('computeChecksum', () => {
     expect(res._body.error).toContain('Failed to compute checksum');
     https.get.mockRestore();
   });
+
+  it('follows a redirect to an allowed domain and returns checksum', async () => {
+    const EventEmitter = require('events');
+
+    // First request: 301 redirect to another allowed domain
+    const mockReq1 = new EventEmitter();
+    mockReq1.setTimeout = jest.fn();
+    const mockRedirectResponse = new EventEmitter();
+    mockRedirectResponse.statusCode = 301;
+    mockRedirectResponse.headers = { location: 'https://objects.githubusercontent.com/redirected/app.exe' };
+
+    // Second request: the actual file
+    const mockReq2 = new EventEmitter();
+    mockReq2.setTimeout = jest.fn();
+    const mockFileResponse = new EventEmitter();
+    mockFileResponse.statusCode = 200;
+
+    jest.spyOn(https, 'get')
+      .mockImplementationOnce((_url, cb) => { cb(mockRedirectResponse); return mockReq1; })
+      .mockImplementationOnce((_url, cb) => {
+        cb(mockFileResponse);
+        mockFileResponse.emit('data', Buffer.from('file-data'));
+        mockFileResponse.emit('end');
+        return mockReq2;
+      });
+
+    const req = { body: { url: 'https://github.com/owner/repo/releases/download/v1.0/app.exe' } };
+    await computeChecksum(req, res);
+    expect(res._body.success).toBe(true);
+    expect(res._body.data.checksum).toBeDefined();
+    https.get.mockRestore();
+  });
+
+  it('returns 500 when the request times out', async () => {
+    const EventEmitter = require('events');
+    const mockReq = new EventEmitter();
+    let timeoutCb;
+    mockReq.setTimeout = jest.fn((_ms, cb) => { timeoutCb = cb; });
+    mockReq.destroy = jest.fn();
+
+    jest.spyOn(https, 'get').mockImplementationOnce(() => mockReq);
+
+    const req = { body: { url: 'https://github.com/owner/repo/releases/download/v1.0/app.exe' } };
+    const promise = computeChecksum(req, res);
+
+    // Let synchronous setup finish so setTimeout is registered
+    await Promise.resolve();
+    timeoutCb();
+
+    await promise;
+    expect(res._status).toBe(500);
+    expect(res._body.error).toContain('Request timeout');
+    expect(mockReq.destroy).toHaveBeenCalled();
+    https.get.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------
