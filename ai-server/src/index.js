@@ -516,12 +516,23 @@ async function startServer() {
   });
 }
 
-// Initialize server
-try {
-  await startServer();
-} catch (error) {
-  logger.error('Failed to start server:', error);
-  process.exit(1);
+// Export for testing
+module.exports = { app, startServer };
+
+// Only start server if this file is run directly (not imported)
+// This allows tests to import the app without starting the server
+const isMainModule = require.main === module || process.env.START_SERVER === 'true';
+
+if (isMainModule) {
+  // Initialize server
+  (async () => {
+    try {
+      await startServer();
+    } catch (error) {
+      logger.error('Failed to start server:', error);
+      process.exit(1);
+    }
+  })();
 }
 
 // Graceful shutdown
