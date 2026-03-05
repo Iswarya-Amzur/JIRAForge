@@ -11,6 +11,177 @@ import { isValidUUID, isValidIssueKey, isValidProjectKey, isValidDate, sanitizeU
 import { getTrackingSettings } from '../../services/settingsService.js';
 
 /**
+ * Helper: Convert to array (handles both single object and array responses)
+ */
+function toArray(data) {
+  if (Array.isArray(data)) {
+    return data;
+  }
+  return data ? [data] : [];
+}
+
+/**
+ * Helper: Check if auto-sync is enabled for worklogs
+ */
+async function isAutoSyncEnabled(accountId, cloudId) {
+  try {
+    const trackingSettings = await getTrackingSettings(accountId, cloudId);
+    return trackingSettings.jiraWorklogSyncEnabled === true;
+  } catch (e) {
+   console.warn('[assignmentResolvers] Error checking auto-sync settings:', e.message);
+    return false;
+  }
+}
+
+/**
+ * Helper: Create worklog if conditions are met
+ */
+async function createWorklogIfNeeded({ issueKey, timeToLog, sessionCount, autoSyncEnabled }) {
+  const JIRA_MIN_WORKLOG_SECONDS = 60;
+  
+  if (autoSyncEnabled) {
+    console.log(`[worklog] Skipping worklog - auto-sync is enabled`);
+    return {
+      worklog: null,
+      worklogSkipped: true,
+      worklogSkippedReason: 'Auto-sync enabled; scheduled sync will create the worklog'
+    };
+  }
+  
+  if (timeToLog < JIRA_MIN_WORKLOG_SECONDS) {
+    console.log(`[worklog] Skipping worklog creation - time (${timeToLog}s) below minimum ${JIRA_MIN_WORKLOG_SECONDS}s`);
+    return {
+      worklog: null,
+      worklogSkipped: true,
+      worklogSkippedReason: `Time (${timeToLog}s) is below Jira's minimum of ${JIRA_MIN_WORKLOG_SECONDS}s`
+    };
+  }
+  
+  try {
+    const worklogResponse = await api.asUser().requestJira(
+      route`/rest/api/3/issue/${issueKey}/worklog?adjustEstimate=leave`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          timeSpentSeconds: timeToLog,
+          comment: {
+            type: 'doc',
+            version: 1,
+            content: [
+              {
+                type: 'paragraph',
+                content: [
+                  {
+                    type: 'text',
+                    text: `Time tracked from ${sessionCount} work session(s), grouped and assigned manually.`
+                  }
+                ]
+              }
+            ]
+          },
+          started: formatJiraDate()
+        })
+      }
+    );
+    
+    if (worklogResponse.ok) {
+      const worklog = await worklogResponse.json();
+      console.log(`[worklog] Created worklog ${worklog.id} for ${issueKey}: ${timeToLog}s`);
+      return { worklog, worklogSkipped: false, worklogSkippedReason: null };
+    } else {
+      const errorText = await worklogResponse.text();
+      console.error(`[worklog] Failed to create worklog for ${issueKey}:`, errorText);
+      return {
+        worklog: null,
+        worklogSkipped: true,
+        worklogSkippedReason: `Jira API error: ${errorText}`
+      };
+    }
+  } catch (error) {
+    console.error(`[worklog] Error creating worklog:`, error);
+    return {
+      worklog: null,
+      worklogSkipped: true,
+      worklogSkippedReason: error.message
+    };
+  }
+}
+
+/**
+ * Helper: Update sessions and analysis results
+ */
+async function updateSessionsAndAnalysis({ validSessionIds, issueKey, userId, organizationId, supabaseConfig, groupId }) {
+  const sessionIdsParam = validSessionIds.join(',');
+  
+  // SECURITY: Verify sessions belong to current user and organization before updating
+  const updatedActivities = await supabaseRequest(
+    supabaseConfig,
+    `unassigned_activity?id=in.(${sessionIdsParam})&user_id=eq.${userId}&organization_id=eq.${organizationId}&select=analysis_result_id`,
+    {
+      method: 'PATCH',
+      headers: { 'Prefer': 'return=representation' },
+      body: {
+        manually_assigned: true,
+        assigned_task_key: issueKey,
+        assigned_by: userId,
+        assigned_at: new Date().toISOString()
+      }
+    }
+  );
+
+  const activitiesArray = toArray(updatedActivities);
+  const analysisResultIds = activitiesArray.map(a => a?.analysis_result_id).filter(Boolean);
+
+  console.log(`[updateSessions] Found ${analysisResultIds.length} analysis results to update`);
+
+  if (analysisResultIds.length > 0) {
+    const analysisIdsParam = sanitizeUUIDArray(analysisResultIds).join(',');
+    const updateBody = {
+      active_task_key: issueKey,
+      manually_assigned: true
+    };
+
+    if (isValidUUID(groupId)) {
+      updateBody.assignment_group_id = groupId;
+    }
+
+    await supabaseRequest(
+      supabaseConfig,
+      `analysis_results?id=in.(${analysisIdsParam})`,
+      { method: 'PATCH', body: updateBody }
+    );
+  }
+  
+  return analysisResultIds.length;
+}
+
+/**
+ * Helper: Mark group as assigned
+ */
+async function markGroupAsAssigned({ groupId, issueKey, userId, supabaseConfig }) {
+  if (!isValidUUID(groupId)) {
+    return false;
+  }
+  
+  await supabaseRequest(
+    supabaseConfig,
+    `unassigned_work_groups?id=eq.${groupId}`,
+    {
+      method: 'PATCH',
+      body: {
+        is_assigned: true,
+        assigned_to_issue_key: issueKey,
+        assigned_at: new Date().toISOString(),
+        assigned_by: userId
+      }
+    }
+  );
+  
+  return true;
+}
+
+/**
  * Assign a group of sessions to existing Jira issue
  */
 export async function assignToExistingIssue(req) {
@@ -67,7 +238,7 @@ export async function assignToExistingIssue(req) {
 
     // 2. Get analysis_result_ids from the updated activities
     // Handle both array and single object responses
-    const activitiesArray = Array.isArray(updatedActivities) ? updatedActivities : (updatedActivities ? [updatedActivities] : []);
+    const activitiesArray = toArray(updatedActivities);
     const analysisResultIds = activitiesArray.map(a => a?.analysis_result_id).filter(Boolean);
 
     console.log(`[assignToExistingIssue] Found ${analysisResultIds.length} analysis results to update`);
@@ -124,7 +295,9 @@ export async function assignToExistingIssue(req) {
     try {
       const trackingSettings = await getTrackingSettings(accountId, cloudId);
       autoSyncEnabled = trackingSettings.jiraWorklogSyncEnabled === true;
-    } catch (e) { /* default false */ }
+    } catch (e) {
+      console.warn('[assignToExistingIssue] Error checking auto-sync settings:', e.message);
+    }
 
     if (autoSyncEnabled) {
       worklogSkipped = true;
@@ -284,7 +457,7 @@ export async function createIssueAndAssign(req) {
 
         // Find transition that leads to the desired status
         const targetTransition = transitions.find(t =>
-          t.to && t.to.name && t.to.name.toLowerCase() === statusName.toLowerCase()
+          t.to?.name?.toLowerCase() === statusName.toLowerCase()
         );
 
         if (targetTransition) {
@@ -325,7 +498,7 @@ export async function createIssueAndAssign(req) {
     );
 
     // Get analysis_result_ids - handle both array and single object responses
-    const activitiesArray = Array.isArray(updatedActivities) ? updatedActivities : (updatedActivities ? [updatedActivities] : []);
+    const activitiesArray = toArray(updatedActivities);
     const analysisResultIds = activitiesArray.map(a => a?.analysis_result_id).filter(Boolean);
 
     console.log(`[createIssueAndAssign] Found ${analysisResultIds.length} analysis results to update`);
@@ -381,7 +554,9 @@ export async function createIssueAndAssign(req) {
     try {
       const trackingSettings = await getTrackingSettings(accountId, cloudId);
       autoSyncEnabled = trackingSettings.jiraWorklogSyncEnabled === true;
-    } catch (e) { /* default false */ }
+    } catch (e) {
+      console.warn('[createIssueAndAssign] Error checking auto-sync settings:', e.message);
+    }
 
     if (autoSyncEnabled) {
       worklogSkipped = true;
@@ -749,7 +924,9 @@ export async function bulkReassignByTimeInterval(req) {
     try {
       const trackingSettings = await getTrackingSettings(accountId, cloudId);
       autoSyncEnabled = trackingSettings.jiraWorklogSyncEnabled === true;
-    } catch (e) { /* default false */ }
+    } catch (e) {
+      console.warn('[bulkReassignByTimeInterval] Error checking auto-sync settings:', e.message);
+    }
 
     if (autoSyncEnabled) {
       worklogSkipped = true;
