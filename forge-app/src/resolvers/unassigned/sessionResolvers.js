@@ -6,38 +6,11 @@
 import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, supabaseRequest, generateSignedUrl } from '../../utils/supabase.js';
 import { formatDuration } from '../../utils/formatters.js';
 import { isValidUUID, isValidDate, sanitizeUUIDArray, toSafeInteger } from '../../utils/validators.js';
+import { initializeRequestContext, handleResolverError, ensureArray } from './helpers.js';
 
 // ============================================================================
-// Helper Functions (extracted to reduce duplication)
+// Helper Functions
 // ============================================================================
-
-/**
- * Initialize request context with Supabase config, organization, and user
- * @param {Object} req - Request object with context
- * @returns {Promise<{success: boolean, error?: string, config?: Object, organization?: Object, userId?: string}>}
- */
-async function initializeRequestContext(req) {
-  const { accountId, cloudId } = req.context;
-
-  const supabaseConfig = await getSupabaseConfig(accountId);
-  if (!supabaseConfig) {
-    return { success: false, error: 'Supabase not configured' };
-  }
-
-  const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
-  if (!organization) {
-    return { success: false, error: 'Unable to get organization information' };
-  }
-
-  const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
-
-  return {
-    success: true,
-    config: supabaseConfig,
-    organization,
-    userId
-  };
-}
 
 /**
  * Validate and sanitize session IDs from request payload
@@ -54,27 +27,6 @@ function validateSessionIds(sessionIds, functionName) {
   }
 
   return { valid: true, validSessionIds };
-}
-
-/**
- * Handle resolver errors consistently
- * @param {Error} error - The caught error
- * @param {string} operation - Description of the operation that failed
- * @returns {{success: boolean, error: string}}
- */
-function handleResolverError(error, operation) {
-  console.error(`Error ${operation}:`, error);
-  return { success: false, error: error.message };
-}
-
-/**
- * Ensure a value is an array (normalize single values or null to array)
- * @param {*} value - Value to normalize
- * @returns {Array}
- */
-function ensureArray(value) {
-  if (Array.isArray(value)) return value;
-  return value ? [value] : [];
 }
 
 /**
