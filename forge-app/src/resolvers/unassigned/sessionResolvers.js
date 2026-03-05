@@ -68,6 +68,16 @@ function handleResolverError(error, operation) {
 }
 
 /**
+ * Ensure a value is an array (normalize single values or null to array)
+ * @param {*} value - Value to normalize
+ * @returns {Array}
+ */
+function ensureArray(value) {
+  if (Array.isArray(value)) return value;
+  return value ? [value] : [];
+}
+
+/**
  * Generate signed URLs for a screenshot
  * @param {Object} supabaseConfig - Supabase configuration
  * @param {Object} screenshot - Screenshot object with storage_path
@@ -116,7 +126,7 @@ async function fetchActivitiesBySessionIds(supabaseConfig, validSessionIds, user
     supabaseConfig,
     `unassigned_activity?id=in.(${sessionIdsParam})&user_id=eq.${userId}&select=${selectFields}`
   );
-  return Array.isArray(activities) ? activities : (activities ? [activities] : []);
+  return ensureArray(activities);
 }
 
 // ============================================================================
@@ -196,7 +206,7 @@ export async function getUnassignedGroups(req) {
       `unassigned_work_groups?user_id=eq.${userId}&organization_id=eq.${organization.id}&is_assigned=eq.false&select=id`,
       { headers: { 'Prefer': 'count=exact' } }
     );
-    const totalCount = Array.isArray(countResult) ? countResult.length : 0;
+    const totalCount = ensureArray(countResult).length;
 
     // LAZY LOADING: Fetch only summary data (no members/activities) with pagination
     // Session details loaded on-demand via getGroupDetails
@@ -282,7 +292,7 @@ export async function getGroupDetails(req) {
       `unassigned_group_members?group_id=eq.${groupId}&select=id,unassigned_activity_id,unassigned_activity(id,window_title,application_name,timestamp,screenshot_id,screenshots(duration_seconds))`
     );
 
-    const membersArray = Array.isArray(members) ? members : (members ? [members] : []);
+    const membersArray = ensureArray(members);
 
     // Calculate accurate total_seconds from screenshots.duration_seconds (source of truth)
     let totalSeconds = 0;
@@ -372,7 +382,7 @@ export async function getGroupScreenshots(req) {
       `analysis_results?id=in.(${analysisIdsParam})&select=id,screenshot_id,screenshots(id,timestamp,storage_path,thumbnail_url,window_title,application_name,duration_seconds)`
     );
 
-    const resultsArray = Array.isArray(analysisResults) ? analysisResults : (analysisResults ? [analysisResults] : []);
+    const resultsArray = ensureArray(analysisResults);
     console.log(`[getGroupScreenshots] Found ${resultsArray.length} analysis_results with screenshots`);
 
     // Generate signed URLs for screenshots in batches to avoid rate limiting
@@ -456,7 +466,7 @@ export async function getGroupWorkSessions(req) {
       return { success: true, workSessions: [], sessionsByDate: {} };
     }
 
-    const activitiesArray = Array.isArray(activities) ? activities : [activities];
+    const activitiesArray = ensureArray(activities);
 
     // Build work sessions similar to Dashboard logic
     const workSessions = [];
