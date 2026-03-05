@@ -123,6 +123,12 @@ app.get('/legal/terms', (req, res) => {
   res.sendFile(path.join(__dirname, 'legal', 'terms-of-service.html'));
 });
 
+// Legal page styles (shared by Terms and Privacy pages)
+app.get('/legal/styles.css', (req, res) => {
+  res.type('text/css');
+  res.sendFile(path.join(__dirname, 'legal', 'styles.css'));
+});
+
 // Redirect shortcuts
 app.get('/privacy', (req, res) => res.redirect('/legal/privacy'));
 app.get('/privacy-policy', (req, res) => res.redirect('/legal/privacy'));
