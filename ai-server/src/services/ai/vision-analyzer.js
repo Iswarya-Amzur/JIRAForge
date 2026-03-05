@@ -114,15 +114,17 @@ function extractJsonCandidates(content) {
   const candidates = [];
 
   // 1) Markdown code blocks (prefer ```json then plain ```) - full block
-  const codeBlockJson = trimmed.match(/```json\s*([\s\S]*?)\s*```/);
+  // Note: Avoid \s* before closing ``` to prevent backtracking; trim result instead
+  const codeBlockJson = /```json\s*([\s\S]*?)```/.exec(trimmed);
   if (codeBlockJson) candidates.push(codeBlockJson[1].trim());
 
-  const codeBlockAny = trimmed.match(/```\s*([\s\S]*?)\s*```/);
+  const codeBlockAny = /```\s*([\s\S]*?)```/.exec(trimmed);
   if (codeBlockAny) candidates.push(codeBlockAny[1].trim());
 
   // 2) Truncated ```json (no closing ```) - Gemini often truncates; take from first { to end
-  if (/```json\s*[\s\S]*\{/.test(trimmed)) {
-    const afterFence = trimmed.replace(/^[^]*?```json\s*/i, '').trim();
+  const jsonFenceIndex = trimmed.indexOf('```json');
+  if (jsonFenceIndex !== -1) {
+    const afterFence = trimmed.slice(jsonFenceIndex + 7).trim();
     const firstBrace = afterFence.indexOf('{');
     if (firstBrace !== -1) {
       const fromBrace = afterFence.slice(firstBrace);
