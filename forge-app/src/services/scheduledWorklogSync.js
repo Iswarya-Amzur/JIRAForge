@@ -15,6 +15,7 @@ import {
   deleteJiraWorklogAsUser,
   deleteJiraWorklogAsApp
 } from '../utils/jira.js';
+// eslint-disable-next-line deprecation/deprecation
 import { getSupabaseConfig, supabaseRequest } from '../utils/supabase.js';
 import { formatJiraDate } from '../utils/formatters.js';
 import { isValidIssueKey } from '../utils/validators.js';
@@ -39,9 +40,11 @@ export async function runScheduledWorklogSync() {
   console.log('[ScheduledSync] Starting scheduled worklog sync');
 
   try {
+    // eslint-disable-next-line deprecation/deprecation
     const supabaseConfig = await getSupabaseConfig();
 
     // Check if any organization has sync enabled
+    // eslint-disable-next-line deprecation/deprecation
     const orgsWithSync = await supabaseRequest(
       supabaseConfig,
       'tracking_settings?jira_worklog_sync_enabled=eq.true&select=organization_id'
@@ -78,10 +81,12 @@ export async function runScheduledWorklogSync() {
 }
 
 /**
- * Sync all users' worklogs for a single organization.
+ * Aggregate time tracked per user/issue from analysis_results.
+ * @param {Object} supabaseConfig - Supabase configuration
+ * @param {string} organizationId - Organization ID
+ * @returns {Promise<Object>} Object with timeByUserIssue and lastWorkedByUserIssue maps
  */
-async function syncOrganization(supabaseConfig, organizationId) {
-  // Fetch ALL analysis_results for this org using pagination (no date filter — match dashboard totals)
+async function aggregateTrackedTime(supabaseConfig, organizationId) {
   const PAGE_SIZE = 1000;
   const timeByUserIssue = {};
   const lastWorkedByUserIssue = {};
@@ -89,6 +94,7 @@ async function syncOrganization(supabaseConfig, organizationId) {
   let totalFetched = 0;
 
   while (true) {
+    // eslint-disable-next-line deprecation/deprecation
     const page = await supabaseRequest(
       supabaseConfig,
       `analysis_results?organization_id=eq.${organizationId}&work_type=eq.office&active_task_key=not.is.null&select=user_id,active_task_key,screenshots(duration_seconds,timestamp)&order=created_at.desc&limit=${PAGE_SIZE}&offset=${offset}`
@@ -131,6 +137,16 @@ async function syncOrganization(supabaseConfig, organizationId) {
   } else {
     console.log(`[ScheduledSync] Fetched ${totalFetched} records for org ${organizationId}`);
   }
+
+  return { timeByUserIssue, lastWorkedByUserIssue };
+}
+
+/**
+ * Sync all users' worklogs for a single organization.
+ */
+async function syncOrganization(supabaseConfig, organizationId) {
+  // Fetch ALL analysis_results for this org using pagination (no date filter — match dashboard totals)
+  const { timeByUserIssue, lastWorkedByUserIssue } = await aggregateTrackedTime(supabaseConfig, organizationId);
 
   // Build list of {userId, issueKey, timeTracked, lastWorkedOn}
   const entries = Object.entries(timeByUserIssue)
@@ -188,6 +204,7 @@ async function syncUserIssues(supabaseConfig, organizationId, userId, entries) {
   // scheduled trigger context — see syncCurrentUserWorklogs for the reliable user-context path).
   // displayName is embedded in the worklog comment so the person is identifiable even when
   // the Jira worklog author shows as the app.
+  // eslint-disable-next-line deprecation/deprecation
   const userRows = await supabaseRequest(
     supabaseConfig,
     `users?id=eq.${userId}&select=atlassian_account_id,display_name&limit=1`
@@ -201,6 +218,7 @@ async function syncUserIssues(supabaseConfig, organizationId, userId, entries) {
   // Fetch existing mappings for this user (include created_as_user for migration detection)
   const issueKeys = entries.map(e => e.issueKey).filter(isValidIssueKey);
   const keysList = issueKeys.join(',');
+  // eslint-disable-next-line deprecation/deprecation
   const existingMappings = keysList
     ? await supabaseRequest(
         supabaseConfig,
@@ -235,7 +253,7 @@ async function syncUserIssues(supabaseConfig, organizationId, userId, entries) {
  * Uses api.asUser(accountId) when available (offline impersonation), but in
  * scheduled trigger context Jira may still record the author as the app.
  * The displayName is embedded in the worklog comment as a fallback identifier.
- * @returns {boolean} true if an actual Jira API call was made
+ * @returns {Promise<boolean>} true if an actual Jira API call was made
  */
 async function syncSingleEntry(supabaseConfig, organizationId, userId, accountId, displayName, entry, existingMapping) {
   const { issueKey, timeTracked, lastWorkedOn } = entry;
@@ -251,6 +269,7 @@ async function syncSingleEntry(supabaseConfig, organizationId, userId, accountId
       : await updateJiraWorklogAsApp(issueKey, existingMapping.jira_worklog_id, timeTracked);
 
     if (updateResponse.status === 200) {
+      // eslint-disable-next-line deprecation/deprecation
       await supabaseRequest(
         supabaseConfig,
         `worklog_sync?id=eq.${existingMapping.id}`,
@@ -262,6 +281,7 @@ async function syncSingleEntry(supabaseConfig, organizationId, userId, accountId
 
     if (updateResponse.status === 404) {
       // Stale mapping — delete and re-create
+      // eslint-disable-next-line deprecation/deprecation
       await supabaseRequest(
         supabaseConfig,
         `worklog_sync?id=eq.${existingMapping.id}`,
@@ -280,8 +300,9 @@ async function syncSingleEntry(supabaseConfig, organizationId, userId, accountId
     ? await createJiraWorklogAsUser(accountId, issueKey, timeTracked, startedAt, displayName)
     : await createJiraWorklogAsApp(issueKey, timeTracked, startedAt, displayName);
 
-  if (worklogResult && worklogResult.id) {
+  if (worklogResult?.id) {
     const now = new Date().toISOString();
+    // eslint-disable-next-line deprecation/deprecation
     await supabaseRequest(
       supabaseConfig,
       'worklog_sync',
@@ -324,6 +345,7 @@ async function cleanupOrphanedWorklogs(supabaseConfig, organizationId, activeEnt
   const activeKeys = new Set(activeEntries.map(e => `${e.userId}::${e.issueKey}`));
 
   // Fetch all worklog_sync mappings for this org
+  // eslint-disable-next-line deprecation/deprecation
   const allMappings = await supabaseRequest(
     supabaseConfig,
     `worklog_sync?organization_id=eq.${organizationId}&select=id,user_id,issue_key,jira_worklog_id`
@@ -342,6 +364,7 @@ async function cleanupOrphanedWorklogs(supabaseConfig, organizationId, activeEnt
 
   // Build user_id -> atlassian_account_id map for orphaned users
   const userIds = [...new Set(orphaned.map(m => m.user_id))];
+  // eslint-disable-next-line deprecation/deprecation
   const userRows = await supabaseRequest(
     supabaseConfig,
     `users?id=in.(${userIds.join(',')})&select=id,atlassian_account_id`
@@ -364,6 +387,7 @@ async function cleanupOrphanedWorklogs(supabaseConfig, organizationId, activeEnt
       }
 
       // Delete the mapping row
+      // eslint-disable-next-line deprecation/deprecation
       await supabaseRequest(
         supabaseConfig,
         `worklog_sync?id=eq.${mapping.id}`,
