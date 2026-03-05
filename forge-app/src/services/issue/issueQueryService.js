@@ -101,6 +101,28 @@ export async function getActiveIssuesWithTime(accountId, cloudId) {
   const lastWorkedByIssue = {};
   const sessionsByIssue = {};
 
+  // Extend an existing session with a new entry (mutates lastSession in place)
+  function extendExistingSession(lastSession, endTime, timeSpent, entry) {
+    lastSession.endTime = endTime.toISOString();
+    lastSession.duration += timeSpent;
+    if (!lastSession.analysisResultIds) {
+      lastSession.analysisResultIds = [];
+    }
+    lastSession.analysisResultIds.push(entry.id);
+    if (!lastSession.screenshots) {
+      lastSession.screenshots = [];
+    }
+    if (entry.screenshots) {
+      lastSession.screenshots.push({
+        id: entry.screenshots.id,
+        timestamp: entry.screenshots.timestamp,
+        storagePath: entry.screenshots.storage_path,
+        windowTitle: entry.screenshots.window_title,
+        applicationName: entry.screenshots.application_name
+      });
+    }
+  }
+
   if (allTimeTrackingData.length > 0) {
     // Sort by screenshot timestamp ascending to build sessions chronologically
     const sortedData = allTimeTrackingData.sort((a, b) => {
@@ -145,24 +167,7 @@ export async function getActiveIssuesWithTime(accountId, cloudId) {
 
         // If within 10 minutes, extend the session
         if (timeSinceLastSession <= 10 * 60 * 1000) {
-          lastSession.endTime = endTime.toISOString();
-          lastSession.duration += timeSpent;
-          if (!lastSession.analysisResultIds) {
-            lastSession.analysisResultIds = [];
-          }
-          lastSession.analysisResultIds.push(entry.id);
-          if (!lastSession.screenshots) {
-            lastSession.screenshots = [];
-          }
-          if (entry.screenshots) {
-            lastSession.screenshots.push({
-              id: entry.screenshots.id,
-              timestamp: entry.screenshots.timestamp,
-              storagePath: entry.screenshots.storage_path,
-              windowTitle: entry.screenshots.window_title,
-              applicationName: entry.screenshots.application_name
-            });
-          }
+          extendExistingSession(lastSession, endTime, timeSpent, entry);
           addedToSession = true;
         }
       }

@@ -33,6 +33,17 @@ async function performRetryDelay(attempt, endpoint) {
   await new Promise(resolve => setTimeout(resolve, delay));
 }
 
+function isRetryableStatus(status) {
+  return status === 401 || status >= 500;
+}
+
+function isRetryableNetworkError(error) {
+  return error.message?.includes('Authentication failed') ||
+    error.message?.includes('ETIMEDOUT') ||
+    error.message?.includes('ECONNRESET') ||
+    error.message?.includes('fetch failed');
+}
+
 async function remoteRequest(endpoint, options = {}) {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     await performRetryDelay(attempt, endpoint);
@@ -54,13 +65,10 @@ async function remoteRequest(endpoint, options = {}) {
 
       if (!response.ok) {
         const errorText = await response.text();
-        const shouldRetry = (response.status === 401 || response.status >= 500) && attempt < MAX_RETRIES;
-
-        if (shouldRetry) {
+        if (isRetryableStatus(response.status) && attempt < MAX_RETRIES) {
           console.warn(`[Remote] Retryable error ${response.status} on ${endpoint} (attempt ${attempt + 1})`);
           continue;
         }
-
         console.error(`[Remote] Request failed: ${response.status}`, errorText);
         throw new Error(`Remote request failed: ${errorText}`);
       }
@@ -73,17 +81,10 @@ async function remoteRequest(endpoint, options = {}) {
 
       return result.data;
     } catch (error) {
-      const isRetryable = error.message?.includes('Authentication failed') ||
-        error.message?.includes('ETIMEDOUT') ||
-        error.message?.includes('ECONNRESET') ||
-        error.message?.includes('fetch failed');
-      const shouldRetry = isRetryable && attempt < MAX_RETRIES;
-
-      if (shouldRetry) {
+      if (isRetryableNetworkError(error) && attempt < MAX_RETRIES) {
         console.warn(`[Remote] Retryable error on ${endpoint} (attempt ${attempt + 1}):`, error.message);
         continue;
       }
-
       console.error(`[Remote] invokeRemote error:`, error.message);
       throw error;
     }
