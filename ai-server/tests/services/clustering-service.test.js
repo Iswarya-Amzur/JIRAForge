@@ -293,6 +293,148 @@ describe('clusterUnassignedWork', () => {
 });
 
 // ---------------------------------------------------------------------------
+// mergeGroups / findSimilarGroup / consolidateSmallGroups — internal branches
+// All reachable only via the >30-session batch path (clusterInBatches).
+// ---------------------------------------------------------------------------
+
+describe('clusterUnassignedWork — internal merge/consolidate branches', () => {
+  // Build 35 generic sessions so clusterInBatches always fires (threshold is 30).
+  const SESSIONS_35 = Array.from({ length: 35 }, (_, i) => ({
+    ...SESSION,
+    id: `s${i + 1}`,
+    time_spent_seconds: 600,
+    window_title: `Window ${i + 1}`,
+  }));
+
+  function makeGroup(label, description, sessionIndices) {
+    return {
+      label,
+      description,
+      session_indices: sessionIndices,
+      confidence: 'high',
+      recommendation: { action: 'create_new_issue', suggested_issue_key: null, reason: 'r' },
+    };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockIsActivityAIEnabled.mockReturnValue(true);
+  });
+
+  // ── keyword-overlap merge — lines 441-446 in findSimilarGroup ─────────────
+  // Two batches return different-but-similar labels that share ≥2 keywords with
+  // ≥50% overlap.  The exact-match branch (L436) is NOT hit; keyword branch is.
+
+  it('merges groups from different batches via keyword overlap (≥2 common words)', async () => {
+    // Batch 1 (sessions 1-30): one group with shorter label + description
+    const batch1 = makeAIResult(JSON.stringify({
+      groups: [
+        makeGroup('Error Logging', 'Short desc', [1, 2, 3]),
+      ],
+    }));
+
+    // Batch 2 (sessions 31-35): group with longer label + description.
+    // "Error" and "Logging" appear in both → keyword overlap = 2/4 = 0.5 ≥ 0.5
+    // AND commonWords.length = 2 ≥ 2 → triggers keyword-overlap branch (L444-446).
+    const batch2 = makeAIResult(JSON.stringify({
+      groups: [
+        makeGroup(
+          'Error Logging System Debug',          // longer label  → L408 true branch
+          'Very detailed description of the error logging work done',  // longer desc → L412 true branch
+          [1, 2],
+        ),
+      ],
+    }));
+
+    mockChatCompletion
+      .mockResolvedValueOnce(batch1)
+      .mockResolvedValueOnce(batch2);
+
+    const result = await clusterUnassignedWork(SESSIONS_35);
+
+    // The two groups should have been merged into one.
+    const merged = result.groups.find(g => g.label.includes('Error Logging'));
+    expect(merged).toBeDefined();
+
+    // Longer label wins (L408 true branch).
+    expect(merged.label).toBe('Error Logging System Debug');
+
+    // Longer description wins (L412 true branch).
+    expect(merged.description).toContain('Very detailed');
+
+    // Combined session count from both batches.
+    expect(merged.session_count).toBe(5); // 3 + 2
+  });
+
+  // ── consolidateSmallGroups — small group with NO match → L492-497 ─────────
+  // A 1-session group whose label shares no keywords with any large group is
+  // kept as its own entry (the else-branch at L492-497 that does largeGroups.push).
+
+  it('keeps a small group that has no similar large group (consolidateSmallGroups else branch)', async () => {
+    // Batch 1: one large group (3 sessions) + one truly unique small group (1 session).
+    const batch1 = makeAIResult(JSON.stringify({
+      groups: [
+        makeGroup('Error Logging', 'Normal logging work', [1, 2, 3]),
+        makeGroup('Completely Unrelated QA Task', 'Isolated work item', [4]), // 1 session → small
+      ],
+    }));
+
+    // Batch 2: group that merges with the large group so it stays large.
+    const batch2 = makeAIResult(JSON.stringify({
+      groups: [
+        makeGroup('Error Logging System', 'More logging', [1, 2]),
+      ],
+    }));
+
+    mockChatCompletion
+      .mockResolvedValueOnce(batch1)
+      .mockResolvedValueOnce(batch2);
+
+    const result = await clusterUnassignedWork(SESSIONS_35);
+
+    // The unique small group should still appear in the final result.
+    const unique = result.groups.find(g => g.label === 'Completely Unrelated QA Task');
+    expect(unique).toBeDefined();
+  });
+
+  // ── substring merge — lines 449-450 in findSimilarGroup ──────────────────
+  // Two labels where keyword overlap is < 2 (so keyword branch is skipped)
+  // but one normalised label is contained inside the other.
+  // "logging" is a substring of "error logging system" → L449 true branch.
+
+  it('merges groups from different batches via label substring match (L449-450)', async () => {
+    // Batch 1: "Logging" — only 1 meaningful keyword ("logging").
+    const batch1 = makeAIResult(JSON.stringify({
+      groups: [
+        makeGroup('Logging', 'Log review work', [1, 2, 3]),
+      ],
+    }));
+
+    // Batch 2: "Error Logging System" — keywords: ["error","logging","system"].
+    // Common with batch 1 keywords ["logging"]: only 1 word < 2 → keyword check FAILS.
+    // But "error logging system".includes("logging") → substring match → L449-450.
+    const batch2 = makeAIResult(JSON.stringify({
+      groups: [
+        makeGroup('Error Logging System', 'Error analysis and log review', [1, 2]),
+      ],
+    }));
+
+    mockChatCompletion
+      .mockResolvedValueOnce(batch1)
+      .mockResolvedValueOnce(batch2);
+
+    const result = await clusterUnassignedWork(SESSIONS_35);
+
+    // Both groups should have been merged into one (not two separate entries).
+    const loggingGroups = result.groups.filter(
+      g => g.label.toLowerCase().includes('log'),
+    );
+    expect(loggingGroups).toHaveLength(1);
+    expect(loggingGroups[0].session_count).toBe(5); // 3 + 2
+  });
+});
+
+// ---------------------------------------------------------------------------
 // getUnassignedWorkSummary
 // ---------------------------------------------------------------------------
 

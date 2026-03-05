@@ -116,7 +116,7 @@ export async function fetchScreenshots(accountId, cloudId, rawLimit = DEFAULT_PA
     }
   );
 
-  const totalCount = parseInt(countResponse.headers.get('content-range')?.split('/')[1] || '0', 10);
+  const totalCount = Number.parseInt(countResponse.headers.get('content-range')?.split('/')[1] || '0', 10);
 
   return {
     screenshots: screenshotsWithUrls || [],

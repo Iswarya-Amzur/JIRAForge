@@ -62,11 +62,11 @@ export async function supabaseRequest(supabaseConfig, endpoint, options = {}) {
         continue;
       }
       if (key === 'limit') {
-        query.limit = parseInt(value, 10);
+        query.limit = Number.parseInt(value, 10);
         continue;
       }
       if (key === 'offset') {
-        query.offset = parseInt(value, 10);
+        query.offset = Number.parseInt(value, 10);
         continue;
       }
       if (key === 'select') {
