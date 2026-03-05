@@ -70,9 +70,10 @@ exports.parseRequirements = async (text, context = {}) => {
     // Parse JSON from the response (handle markdown code blocks)
     let parsedData;
     try {
-      const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/) ||
-                        content.match(/```\s*([\s\S]*?)\s*```/);
-      const jsonString = jsonMatch ? jsonMatch[1] : content;
+      // Remove trailing \s* before ``` to avoid ReDoS backtracking; trim result instead
+      const jsonMatch = /```json\s*([\s\S]*?)```/.exec(content) ||
+                        /```\s*([\s\S]*?)```/.exec(content);
+      const jsonString = jsonMatch ? jsonMatch[1].trim() : content;
       parsedData = JSON.parse(jsonString);
     } catch (parseError) {
       logger.error('Failed to parse BRD response as JSON:', {

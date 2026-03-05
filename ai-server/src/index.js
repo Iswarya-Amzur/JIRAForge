@@ -31,9 +31,41 @@ const PORT = process.env.PORT || 3001;
 // Trust proxy - required for ngrok tunnel
 app.set('trust proxy', 1);
 
+// CORS configuration - whitelist trusted origins
+const allowedOrigins = [
+  // Production domains (add your actual domain)
+  process.env.AI_SERVER_URL,
+  process.env.CORS_ALLOWED_ORIGIN,
+  // Development
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+].filter(Boolean); // Remove undefined values
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (desktop apps, server-to-server, same-origin)
+    if (!origin) {
+      return callback(null, true);
+    }
+    // Check if origin is in whitelist
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    // Log rejected origins in development for debugging
+    if (process.env.NODE_ENV === 'development') {
+      logger.warn(`[CORS] Rejected origin: ${origin}`);
+    }
+    callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
 // Middleware
 app.use(helmet());
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 
 // Rate limiting
