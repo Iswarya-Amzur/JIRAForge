@@ -90,7 +90,6 @@ exports.processBRD = async (req, res) => {
       user_id,
       file_name,
       file_type,
-      storage_url,
       storage_path,
       project_key
     } = req.body;
