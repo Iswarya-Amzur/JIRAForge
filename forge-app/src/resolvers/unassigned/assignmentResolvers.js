@@ -10,6 +10,9 @@ import { formatDuration, formatJiraDate } from '../../utils/formatters.js';
 import { isValidUUID, isValidIssueKey, isValidProjectKey, isValidDate, sanitizeUUIDArray } from '../../utils/validators.js';
 import { getTrackingSettings } from '../../services/settingsService.js';
 
+// Module-level constants
+const JIRA_MIN_WORKLOG_SECONDS = 60;
+
 /**
  * Helper: Convert to array (handles both single object and array responses)
  */
@@ -35,10 +38,14 @@ async function isAutoSyncEnabled(accountId, cloudId) {
 
 /**
  * Helper: Create worklog if conditions are met
+ * @param {Object} options - Worklog options
+ * @param {string} options.issueKey - Jira issue key
+ * @param {number} options.timeToLog - Time in seconds
+ * @param {number} options.sessionCount - Number of sessions
+ * @param {boolean} options.autoSyncEnabled - Whether auto-sync is enabled
+ * @param {string} [options.customComment] - Optional custom comment for worklog
  */
-async function createWorklogIfNeeded({ issueKey, timeToLog, sessionCount, autoSyncEnabled }) {
-  const JIRA_MIN_WORKLOG_SECONDS = 60;
-  
+async function createWorklogIfNeeded({ issueKey, timeToLog, sessionCount, autoSyncEnabled, customComment }) {
   if (autoSyncEnabled) {
     console.log(`[worklog] Skipping worklog - auto-sync is enabled`);
     return {
@@ -58,6 +65,9 @@ async function createWorklogIfNeeded({ issueKey, timeToLog, sessionCount, autoSy
   }
   
   try {
+    // Use custom comment if provided, otherwise use default
+    const commentText = customComment || `Time tracked from ${sessionCount} work session(s), grouped and assigned manually.`;
+    
     const worklogResponse = await api.asUser().requestJira(
       route`/rest/api/3/issue/${issueKey}/worklog?adjustEstimate=leave`,
       {
@@ -74,7 +84,7 @@ async function createWorklogIfNeeded({ issueKey, timeToLog, sessionCount, autoSy
                 content: [
                   {
                     type: 'text',
-                    text: `Time tracked from ${sessionCount} work session(s), grouped and assigned manually.`
+                    text: commentText
                   }
                 ]
               }
@@ -179,6 +189,26 @@ async function markGroupAsAssigned({ groupId, issueKey, userId, supabaseConfig }
   );
   
   return true;
+}
+
+/**
+ * Helper: Filter activities by screenshot timestamp within a time range
+ * @param {Array} analysisResults - Array of analysis results with screenshots
+ * @param {string} startDateTime - ISO datetime string for range start
+ * @param {string} endDateTime - ISO datetime string for range end
+ * @returns {Array} Filtered activities within the time range
+ */
+function filterActivitiesByTimeRange(analysisResults, startDateTime, endDateTime) {
+  const startDate = new Date(startDateTime);
+  const endDate = new Date(endDateTime);
+
+  return (analysisResults || []).filter(result => {
+    const screenshotTimestamp = result.screenshots?.timestamp;
+    if (!screenshotTimestamp) return false;
+
+    const activityTime = new Date(screenshotTimestamp);
+    return activityTime >= startDate && activityTime <= endDate;
+  });
 }
 
 /**
@@ -515,16 +545,7 @@ export async function previewBulkReassign(req) {
     );
 
     // Filter by screenshot timestamp within the time range
-    const startDate = new Date(startDateTime);
-    const endDate = new Date(endDateTime);
-
-    const activitiesInRange = (analysisResults || []).filter(result => {
-      const screenshotTimestamp = result.screenshots?.timestamp;
-      if (!screenshotTimestamp) return false;
-
-      const activityTime = new Date(screenshotTimestamp);
-      return activityTime >= startDate && activityTime <= endDate;
-    });
+    const activitiesInRange = filterActivitiesByTimeRange(analysisResults, startDateTime, endDateTime);
 
     // Separate into currently assigned (wrongly tracked) and unassigned
     const wronglyTracked = activitiesInRange.filter(a => a.active_task_key !== null);
@@ -615,16 +636,7 @@ export async function bulkReassignByTimeInterval(req) {
     );
 
     // Filter by screenshot timestamp
-    const startDate = new Date(startDateTime);
-    const endDate = new Date(endDateTime);
-
-    const activitiesInRange = (analysisResults || []).filter(result => {
-      const screenshotTimestamp = result.screenshots?.timestamp;
-      if (!screenshotTimestamp) return false;
-
-      const activityTime = new Date(screenshotTimestamp);
-      return activityTime >= startDate && activityTime <= endDate;
-    });
+    const activitiesInRange = filterActivitiesByTimeRange(analysisResults, startDateTime, endDateTime);
 
     if (activitiesInRange.length === 0) {
       return { success: false, error: 'No activities found in the specified time range' };
@@ -708,59 +720,19 @@ export async function bulkReassignByTimeInterval(req) {
       console.log(`[bulkReassignByTimeInterval] Marked ${uniqueGroupIds.length} groups as assigned`);
     }
 
-    // Create worklog in Jira if requested (minimum 60 seconds required by Jira, and auto-sync disabled)
-    let worklog = null;
-    let worklogSkipped = false;
-    let worklogSkippedReason = null;
-    const JIRA_MIN_WORKLOG_SECONDS = 60;
-
-    // Check if auto-sync is enabled
+    // Create worklog using helper (respects auto-sync and minimum time threshold)
     const autoSyncEnabled = await isAutoSyncEnabled(accountId, cloudId);
-
-    if (autoSyncEnabled) {
-      worklogSkipped = true;
-      worklogSkippedReason = 'Auto-sync enabled; scheduled sync will create the worklog';
-      console.log(`[bulkReassignByTimeInterval] Skipping worklog - auto-sync is enabled`);
-    } else if (createWorklog && totalSeconds >= JIRA_MIN_WORKLOG_SECONDS) {
-      const worklogResponse = await api.asUser().requestJira(
-        route`/rest/api/3/issue/${targetIssueKey}/worklog?adjustEstimate=leave`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            timeSpentSeconds: totalSeconds,
-            comment: {
-              type: 'doc',
-              version: 1,
-              content: [
-                {
-                  type: 'paragraph',
-                  content: [
-                    {
-                      type: 'text',
-                      text: `Bulk time correction: ${activitiesInRange.length} activities (${formatDuration(totalSeconds)}) from ${startTime} to ${endTime} on ${selectedDate} reassigned to this issue.`
-                    }
-                  ]
-                }
-              ]
-            },
-            started: formatJiraDate(new Date(startDateTime))
-          })
-        }
-      );
-
-      if (!worklogResponse.ok) {
-        const errorText = await worklogResponse.text();
-        console.warn(`[bulkReassignByTimeInterval] Failed to create worklog: ${errorText}`);
-        // Don't fail the whole operation if worklog creation fails
-      } else {
-        worklog = await worklogResponse.json();
-        console.log(`[bulkReassignByTimeInterval] Created worklog ${worklog.id} for ${totalSeconds} seconds`);
-      }
-    } else if (createWorklog && totalSeconds < JIRA_MIN_WORKLOG_SECONDS) {
-      worklogSkipped = true;
-      worklogSkippedReason = `Time (${totalSeconds}s) is below Jira's minimum of ${JIRA_MIN_WORKLOG_SECONDS}s`;
-      console.log(`[bulkReassignByTimeInterval] Skipping worklog - ${worklogSkippedReason}`);
+    
+    let worklogResult = { worklog: null, worklogSkipped: false, worklogSkippedReason: null };
+    if (createWorklog) {
+      const customComment = `Bulk time correction: ${activitiesInRange.length} activities (${formatDuration(totalSeconds)}) from ${startTime} to ${endTime} on ${selectedDate} reassigned to this issue.`;
+      worklogResult = await createWorklogIfNeeded({
+        issueKey: targetIssueKey,
+        timeToLog: totalSeconds,
+        sessionCount: activitiesInRange.length,
+        autoSyncEnabled,
+        customComment
+      });
     }
 
     return {
@@ -772,9 +744,9 @@ export async function bulkReassignByTimeInterval(req) {
         total_seconds: totalSeconds,
         total_time_formatted: formatDuration(totalSeconds),
         target_issue_key: targetIssueKey,
-        worklog_id: worklog?.id || null,
-        worklog_skipped: worklogSkipped,
-        worklog_skipped_reason: worklogSkippedReason,
+        worklog_id: worklogResult.worklog?.id || null,
+        worklog_skipped: worklogResult.worklogSkipped,
+        worklog_skipped_reason: worklogResult.worklogSkippedReason,
         time_range: {
           start: startDateTime,
           end: endDateTime
