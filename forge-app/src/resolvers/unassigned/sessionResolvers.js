@@ -7,30 +7,138 @@ import { getSupabaseConfig, getOrCreateUser, getOrCreateOrganization, supabaseRe
 import { formatDuration } from '../../utils/formatters.js';
 import { isValidUUID, isValidDate, sanitizeUUIDArray, toSafeInteger } from '../../utils/validators.js';
 
+// ============================================================================
+// Helper Functions (extracted to reduce duplication)
+// ============================================================================
+
+/**
+ * Initialize request context with Supabase config, organization, and user
+ * @param {Object} req - Request object with context
+ * @returns {Promise<{success: boolean, error?: string, config?: Object, organization?: Object, userId?: string}>}
+ */
+async function initializeRequestContext(req) {
+  const { accountId, cloudId } = req.context;
+
+  const supabaseConfig = await getSupabaseConfig(accountId);
+  if (!supabaseConfig) {
+    return { success: false, error: 'Supabase not configured' };
+  }
+
+  const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+  if (!organization) {
+    return { success: false, error: 'Unable to get organization information' };
+  }
+
+  const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+
+  return {
+    success: true,
+    config: supabaseConfig,
+    organization,
+    userId
+  };
+}
+
+/**
+ * Validate and sanitize session IDs from request payload
+ * @param {Array} sessionIds - Raw session IDs from payload
+ * @param {string} functionName - Name of calling function for logging
+ * @returns {{valid: boolean, validSessionIds?: string[], error?: string}}
+ */
+function validateSessionIds(sessionIds, functionName) {
+  const validSessionIds = sanitizeUUIDArray(sessionIds);
+  console.log(`[${functionName}] Received ${sessionIds?.length || 0} session IDs, ${validSessionIds.length} valid`);
+
+  if (validSessionIds.length === 0) {
+    return { valid: false, error: 'No valid session IDs provided' };
+  }
+
+  return { valid: true, validSessionIds };
+}
+
+/**
+ * Handle resolver errors consistently
+ * @param {Error} error - The caught error
+ * @param {string} operation - Description of the operation that failed
+ * @returns {{success: boolean, error: string}}
+ */
+function handleResolverError(error, operation) {
+  console.error(`Error ${operation}:`, error);
+  return { success: false, error: error.message };
+}
+
+/**
+ * Generate signed URLs for a screenshot
+ * @param {Object} supabaseConfig - Supabase configuration
+ * @param {Object} screenshot - Screenshot object with storage_path
+ * @returns {Promise<{signed_url: string|null, signed_thumbnail_url: string|null}>}
+ */
+async function generateScreenshotUrls(supabaseConfig, screenshot) {
+  let signed_thumbnail_url = screenshot.thumbnail_url;
+  let signed_url = null;
+
+  if (screenshot.storage_path) {
+    try {
+      // Generate signed URL for full-size image
+      signed_url = await generateSignedUrl(supabaseConfig, 'screenshots', screenshot.storage_path, 3600);
+
+      // Generate signed URL for thumbnail
+      let thumbPath;
+      if (screenshot.storage_path.includes('/')) {
+        const dirPath = screenshot.storage_path.substring(0, screenshot.storage_path.lastIndexOf('/'));
+        const filename = screenshot.storage_path.substring(screenshot.storage_path.lastIndexOf('/') + 1);
+        const thumbFilename = filename.replace('screenshot_', 'thumb_').replace('.png', '.jpg');
+        thumbPath = `${dirPath}/${thumbFilename}`;
+      } else {
+        thumbPath = screenshot.storage_path.replace('screenshot_', 'thumb_').replace('.png', '.jpg');
+      }
+
+      signed_thumbnail_url = await generateSignedUrl(supabaseConfig, 'screenshots', thumbPath, 3600);
+    } catch (err) {
+      console.error('Error generating signed URL:', err);
+    }
+  }
+
+  return { signed_url, signed_thumbnail_url };
+}
+
+/**
+ * Fetch unassigned activities by session IDs
+ * @param {Object} supabaseConfig - Supabase configuration
+ * @param {string[]} validSessionIds - Array of valid session UUIDs
+ * @param {string} userId - User ID for filtering
+ * @param {string} selectFields - Fields to select in query
+ * @returns {Promise<Array>}
+ */
+async function fetchActivitiesBySessionIds(supabaseConfig, validSessionIds, userId, selectFields) {
+  const sessionIdsParam = validSessionIds.join(',');
+  const activities = await supabaseRequest(
+    supabaseConfig,
+    `unassigned_activity?id=in.(${sessionIdsParam})&user_id=eq.${userId}&select=${selectFields}`
+  );
+  return Array.isArray(activities) ? activities : (activities ? [activities] : []);
+}
+
+// ============================================================================
+// Resolver Functions
+// ============================================================================
+
 /**
  * Get unassigned work sessions for current user
  */
 export async function getUnassignedWork(req) {
   try {
-    const { accountId, cloudId } = req.context;
     const { limit: rawLimit, offset: rawOffset, dateFrom, dateTo } = req.payload || {};
 
     // Validate pagination parameters
     const limit = toSafeInteger(rawLimit, 50, 1, 500);
     const offset = toSafeInteger(rawOffset, 0, 0, 100000);
 
-    const supabaseConfig = await getSupabaseConfig(accountId);
-    if (!supabaseConfig) {
-      return { success: false, error: 'Supabase not configured' };
-    }
+    // Initialize context (Supabase config, organization, user)
+    const ctx = await initializeRequestContext(req);
+    if (!ctx.success) return ctx;
 
-    // Get or create organization first (multi-tenancy)
-    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
-    if (!organization) {
-      return { success: false, error: 'Unable to get organization information' };
-    }
-
-    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+    const { config: supabaseConfig, organization, userId } = ctx;
 
     // Build query string - filter by organization_id for multi-tenancy
     let query = `analysis_results?select=*,screenshots(id,window_title,application_name,timestamp,thumbnail_url,storage_path)&user_id=eq.${userId}&organization_id=eq.${organization.id}&active_task_key=is.null&order=created_at.desc`;
@@ -59,8 +167,7 @@ export async function getUnassignedWork(req) {
     };
 
   } catch (error) {
-    console.error('Error getting unassigned work:', error);
-    return { success: false, error: error.message };
+    return handleResolverError(error, 'getting unassigned work');
   }
 }
 
@@ -71,25 +178,17 @@ export async function getUnassignedWork(req) {
  */
 export async function getUnassignedGroups(req) {
   try {
-    const { accountId, cloudId } = req.context;
     const { limit: rawLimit = 10, offset: rawOffset = 0 } = req.payload || {};
 
     // Validate pagination parameters
     const limit = toSafeInteger(rawLimit, 10, 1, 100);
     const offset = toSafeInteger(rawOffset, 0, 0, 100000);
 
-    const supabaseConfig = await getSupabaseConfig(accountId);
-    if (!supabaseConfig) {
-      return { success: false, error: 'Supabase not configured' };
-    }
+    // Initialize context (Supabase config, organization, user)
+    const ctx = await initializeRequestContext(req);
+    if (!ctx.success) return ctx;
 
-    // Get or create organization first (multi-tenancy) - these are cached
-    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
-    if (!organization) {
-      return { success: false, error: 'Unable to get organization information' };
-    }
-
-    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+    const { config: supabaseConfig, organization, userId } = ctx;
 
     // First, get total count for pagination info
     const countResult = await supabaseRequest(
@@ -152,8 +251,7 @@ export async function getUnassignedGroups(req) {
     };
 
   } catch (error) {
-    console.error('Error getting unassigned groups:', error);
-    return { success: false, error: error.message };
+    return handleResolverError(error, 'getting unassigned groups');
   }
 }
 
@@ -163,25 +261,17 @@ export async function getUnassignedGroups(req) {
  */
 export async function getGroupDetails(req) {
   try {
-    const { accountId, cloudId } = req.context;
     const { groupId } = req.payload;
 
     if (!groupId || !isValidUUID(groupId)) {
       return { success: false, error: 'Valid Group ID required' };
     }
 
-    const supabaseConfig = await getSupabaseConfig(accountId);
-    if (!supabaseConfig) {
-      return { success: false, error: 'Supabase not configured' };
-    }
+    // Initialize context (Supabase config, organization, user)
+    const ctx = await initializeRequestContext(req);
+    if (!ctx.success) return ctx;
 
-    // Get or create organization first (multi-tenancy) - cached
-    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
-    if (!organization) {
-      return { success: false, error: 'Unable to get organization information' };
-    }
-
-    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+    const { config: supabaseConfig } = ctx;
 
     console.log(`[getGroupDetails] Loading details for group: ${groupId}`);
 
@@ -224,8 +314,7 @@ export async function getGroupDetails(req) {
     };
 
   } catch (error) {
-    console.error('Error getting group details:', error);
-    return { success: false, error: error.message };
+    return handleResolverError(error, 'getting group details');
   }
 }
 
@@ -234,48 +323,38 @@ export async function getGroupDetails(req) {
  */
 export async function getGroupScreenshots(req) {
   try {
-    const { accountId, cloudId } = req.context;
     const { sessionIds } = req.payload;
 
     // Validate sessionIds as UUID array
-    const validSessionIds = sanitizeUUIDArray(sessionIds);
-    console.log(`[getGroupScreenshots] Received ${sessionIds?.length || 0} session IDs, ${validSessionIds.length} valid`);
-
-    if (validSessionIds.length === 0) {
-      return { success: false, error: 'No valid session IDs provided' };
+    const validation = validateSessionIds(sessionIds, 'getGroupScreenshots');
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
     }
+    const { validSessionIds } = validation;
 
-    const supabaseConfig = await getSupabaseConfig(accountId);
-    if (!supabaseConfig) {
-      return { success: false, error: 'Supabase not configured' };
-    }
+    // Initialize context (Supabase config, organization, user)
+    const ctx = await initializeRequestContext(req);
+    if (!ctx.success) return ctx;
 
-    // Get or create organization first (multi-tenancy)
-    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
-    if (!organization) {
-      return { success: false, error: 'Unable to get organization information' };
-    }
-
-    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+    const { config: supabaseConfig, userId } = ctx;
 
     // Get unassigned_activity records with their screenshot information
-    // IMPORTANT: Use screenshots.duration_seconds (source of truth) instead of time_spent_seconds (stale)
-    const sessionIdsParam = validSessionIds.join(',');
     console.log(`[getGroupScreenshots] Querying unassigned_activity with ${validSessionIds.length} IDs`);
-    const activities = await supabaseRequest(
+    const activitiesArray = await fetchActivitiesBySessionIds(
       supabaseConfig,
-      `unassigned_activity?id=in.(${sessionIdsParam})&user_id=eq.${userId}&select=id,analysis_result_id,window_title,application_name,timestamp,screenshot_id,screenshots(duration_seconds)`
+      validSessionIds,
+      userId,
+      'id,analysis_result_id,window_title,application_name,timestamp,screenshot_id,screenshots(duration_seconds)'
     );
 
-    console.log(`[getGroupScreenshots] Found ${activities?.length || 0} unassigned_activity records`);
+    console.log(`[getGroupScreenshots] Found ${activitiesArray.length} unassigned_activity records`);
 
-    if (!activities || activities.length === 0) {
+    if (activitiesArray.length === 0) {
       console.log('[getGroupScreenshots] No activities found');
       return { success: true, screenshots: [] };
     }
 
     // Get analysis_result_ids to fetch screenshot details
-    const activitiesArray = Array.isArray(activities) ? activities : [activities];
     const analysisResultIds = sanitizeUUIDArray(activitiesArray.map(a => a.analysis_result_id));
 
     console.log(`[getGroupScreenshots] Found ${analysisResultIds.length} analysis_result_ids`);
@@ -286,7 +365,6 @@ export async function getGroupScreenshots(req) {
     }
 
     // Fetch analysis_results with screenshot data
-    // Include duration_seconds from screenshots (source of truth)
     const analysisIdsParam = analysisResultIds.join(',');
     console.log(`[getGroupScreenshots] Querying analysis_results with ${analysisResultIds.length} IDs`);
     const analysisResults = await supabaseRequest(
@@ -298,7 +376,7 @@ export async function getGroupScreenshots(req) {
     console.log(`[getGroupScreenshots] Found ${resultsArray.length} analysis_results with screenshots`);
 
     // Generate signed URLs for screenshots in batches to avoid rate limiting
-    const BATCH_SIZE = 10; // Process 10 at a time to avoid rate limits
+    const BATCH_SIZE = 10;
     const screenshotsWithUrls = [];
 
     for (let i = 0; i < resultsArray.length; i += BATCH_SIZE) {
@@ -308,31 +386,7 @@ export async function getGroupScreenshots(req) {
           const screenshot = result.screenshots;
           if (!screenshot) return null;
 
-          // Generate signed URL for thumbnail
-          let signed_thumbnail_url = screenshot.thumbnail_url;
-          let signed_url = null;
-
-          if (screenshot.storage_path) {
-            try {
-              // Generate signed URL for full-size image
-              signed_url = await generateSignedUrl(supabaseConfig, 'screenshots', screenshot.storage_path, 3600);
-
-              // Generate signed URL for thumbnail
-              let thumbPath;
-              if (screenshot.storage_path.includes('/')) {
-                const dirPath = screenshot.storage_path.substring(0, screenshot.storage_path.lastIndexOf('/'));
-                const filename = screenshot.storage_path.substring(screenshot.storage_path.lastIndexOf('/') + 1);
-                const thumbFilename = filename.replace('screenshot_', 'thumb_').replace('.png', '.jpg');
-                thumbPath = `${dirPath}/${thumbFilename}`;
-              } else {
-                thumbPath = screenshot.storage_path.replace('screenshot_', 'thumb_').replace('.png', '.jpg');
-              }
-
-              signed_thumbnail_url = await generateSignedUrl(supabaseConfig, 'screenshots', thumbPath, 3600);
-            } catch (err) {
-              console.error('Error generating signed URL:', err);
-            }
-          }
+          const { signed_url, signed_thumbnail_url } = await generateScreenshotUrls(supabaseConfig, screenshot);
 
           return {
             id: screenshot.id,
@@ -367,8 +421,7 @@ export async function getGroupScreenshots(req) {
     };
 
   } catch (error) {
-    console.error('Error getting group screenshots:', error);
-    return { success: false, error: error.message };
+    return handleResolverError(error, 'getting group screenshots');
   }
 }
 
@@ -377,29 +430,20 @@ export async function getGroupScreenshots(req) {
  */
 export async function getGroupWorkSessions(req) {
   try {
-    const { accountId, cloudId } = req.context;
     const { sessionIds } = req.payload;
 
     // Validate sessionIds as UUID array
-    const validSessionIds = sanitizeUUIDArray(sessionIds);
-    console.log(`[getGroupWorkSessions] Received ${sessionIds?.length || 0} session IDs, ${validSessionIds.length} valid`);
-
-    if (validSessionIds.length === 0) {
-      return { success: false, error: 'No valid session IDs provided' };
+    const validation = validateSessionIds(sessionIds, 'getGroupWorkSessions');
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
     }
+    const { validSessionIds } = validation;
 
-    const supabaseConfig = await getSupabaseConfig(accountId);
-    if (!supabaseConfig) {
-      return { success: false, error: 'Supabase not configured' };
-    }
+    // Initialize context (Supabase config, organization, user)
+    const ctx = await initializeRequestContext(req);
+    if (!ctx.success) return ctx;
 
-    // Get or create organization first (multi-tenancy)
-    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
-    if (!organization) {
-      return { success: false, error: 'Unable to get organization information' };
-    }
-
-    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+    const { config: supabaseConfig, userId } = ctx;
 
     // Get unassigned_activity records with screenshot timing data
     const sessionIdsParam = validSessionIds.join(',');
@@ -434,7 +478,6 @@ export async function getGroupWorkSessions(req) {
 
       // Calculate start and end time
       // IMPORTANT: Always calculate startTime from endTime - durationSeconds for accurate display
-      // Don't rely on screenshot.start_time as it may equal timestamp (causing same start/end display)
       const endTime = new Date(screenshotTimestamp);
       const startTime = new Date(endTime.getTime() - (durationSeconds * 1000));
 
@@ -448,7 +491,6 @@ export async function getGroupWorkSessions(req) {
           lastSession.endTime = endTime.toISOString();
           lastSession.activityIds.push(activity.id);
           lastSession.screenshotIds.push(screenshot.id);
-          // Track actual duration (sum of screenshot durations, not time span)
           lastSession.durationSeconds = (lastSession.durationSeconds || 0) + durationSeconds;
           continue;
         }
@@ -461,14 +503,11 @@ export async function getGroupWorkSessions(req) {
         date: screenshot.work_date || startTime.toISOString().split('T')[0],
         activityIds: [activity.id],
         screenshotIds: [screenshot.id],
-        // Track actual duration from screenshot (not time span)
         durationSeconds: durationSeconds
       });
     }
 
     // Recalculate startTime for merged sessions so displayed time range matches duration
-    // Without this, merged sessions show a wide wall-clock span (e.g., 20 min)
-    // but a shorter actual duration (e.g., 5m 32s), which looks like a bug
     workSessions.forEach(session => {
       const end = new Date(session.endTime);
       session.startTime = new Date(end.getTime() - (session.durationSeconds * 1000)).toISOString();
@@ -489,7 +528,6 @@ export async function getGroupWorkSessions(req) {
       .sort((a, b) => new Date(b) - new Date(a)) // Most recent first
       .map(dateKey => {
         const sessions = sessionsByDate[dateKey];
-        // Use actual tracked durationSeconds (sum of screenshot durations)
         const totalSeconds = sessions.reduce((sum, s) => {
           return sum + (s.durationSeconds || 0);
         }, 0);
@@ -509,8 +547,7 @@ export async function getGroupWorkSessions(req) {
     };
 
   } catch (error) {
-    console.error('Error getting group work sessions:', error);
-    return { success: false, error: error.message };
+    return handleResolverError(error, 'getting group work sessions');
   }
 }
 
