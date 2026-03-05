@@ -936,7 +936,7 @@ describe('Process Signal Handlers', () => {
     it('should handle SIGINT and stop all services', () => {
         if (sigIntHandler) {
             sigIntHandler();
-            
+
             expect(logger.info).toHaveBeenCalledWith('SIGINT received, shutting down gracefully');
             expect(pollingService.stop).toHaveBeenCalled();
             expect(clusteringPollingService.stop).toHaveBeenCalled();
@@ -945,5 +945,68 @@ describe('Process Signal Handlers', () => {
             expect(notificationPollingService.stop).toHaveBeenCalled();
             expect(process.exit).toHaveBeenCalledWith(0);
         }
+    });
+});
+
+describe('isMainModule bootstrap', () => {
+    let originalExit;
+
+    beforeEach(() => {
+        originalExit = process.exit;
+        process.exit = jest.fn();
+        jest.clearAllMocks();
+    });
+
+    afterEach(() => {
+        process.exit = originalExit;
+        delete process.env.START_SERVER;
+    });
+
+    it('should invoke startServer IIFE when START_SERVER is true', async () => {
+        const http = require('http');
+        const originalListen = http.Server.prototype.listen;
+        // Call the listen callback immediately to let startServer() resolve
+        http.Server.prototype.listen = jest.fn(function (_port, cb) {
+            if (typeof cb === 'function') cb();
+            return this;
+        });
+
+        process.env.START_SERVER = 'true';
+        try {
+            jest.isolateModules(() => {
+                require('../src/index');
+            });
+            // Flush microtask and macrotask queues so the async IIFE completes
+            await new Promise((r) => setImmediate(r));
+            await new Promise((r) => setImmediate(r));
+        } finally {
+            http.Server.prototype.listen = originalListen;
+        }
+
+        // Success path: process.exit should NOT have been called
+        expect(process.exit).not.toHaveBeenCalled();
+    });
+
+    it('should log error and call process.exit(1) when startServer rejects', async () => {
+        const http = require('http');
+        const originalListen = http.Server.prototype.listen;
+        // Throwing synchronously inside new Promise() causes the promise to reject,
+        // which propagates out of startServer() and into the IIFE catch block.
+        http.Server.prototype.listen = jest.fn(function () {
+            throw new Error('Port in use');
+        });
+
+        process.env.START_SERVER = 'true';
+        try {
+            jest.isolateModules(() => {
+                require('../src/index');
+            });
+            await new Promise((r) => setImmediate(r));
+            await new Promise((r) => setImmediate(r));
+        } finally {
+            http.Server.prototype.listen = originalListen;
+        }
+
+        expect(process.exit).toHaveBeenCalledWith(1);
     });
 });
