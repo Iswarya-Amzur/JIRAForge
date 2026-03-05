@@ -182,11 +182,47 @@ async function markGroupAsAssigned({ groupId, issueKey, userId, supabaseConfig }
 }
 
 /**
+ * Helper: Initialize request context (supabase, organization, user)
+ * @returns {Object} { success, config, organization, userId, error }
+ */
+async function initializeRequestContext(req) {
+  const { accountId, cloudId } = req.context;
+
+  const supabaseConfig = await getSupabaseConfig(accountId);
+  if (!supabaseConfig) {
+    return { success: false, error: 'Supabase not configured' };
+  }
+
+  const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
+  if (!organization) {
+    return { success: false, error: 'Unable to get organization information' };
+  }
+
+  const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+
+  return {
+    success: true,
+    config: supabaseConfig,
+    organization,
+    userId,
+    accountId,
+    cloudId
+  };
+}
+
+/**
+ * Helper: Handle resolver errors consistently
+ */
+function handleResolverError(error, operation) {
+  console.error(`Error ${operation}:`, error);
+  return { success: false, error: error.message };
+}
+
+/**
  * Assign a group of sessions to existing Jira issue
  */
 export async function assignToExistingIssue(req) {
   try {
-    const { accountId, cloudId } = req.context;
     const { sessionIds, issueKey, groupId, totalSeconds } = req.payload;
 
     // Validate input formats
@@ -199,162 +235,49 @@ export async function assignToExistingIssue(req) {
       return { success: false, error: 'Valid issue key required (e.g., PROJ-123)' };
     }
 
-    const supabaseConfig = await getSupabaseConfig(accountId);
-    if (!supabaseConfig) {
-      return { success: false, error: 'Supabase not configured' };
-    }
+    // Initialize context
+    const ctx = await initializeRequestContext(req);
+    if (!ctx.success) return ctx;
 
-    // Get or create organization first (multi-tenancy)
-    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
-    if (!organization) {
-      return { success: false, error: 'Unable to get organization information' };
-    }
-
-    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
-
-    const sessionIdsParam = validSessionIds.join(',');
+    const { config: supabaseConfig, organization, userId, accountId, cloudId } = ctx;
 
     // Validate totalSeconds - Jira requires minimum 60 seconds for worklogs
     const timeToLog = typeof totalSeconds === 'number' && totalSeconds > 0 ? totalSeconds : 0;
     console.log(`[assignToExistingIssue] Updating ${validSessionIds.length} sessions for issue ${issueKey}, totalSeconds: ${timeToLog}`);
 
-    // SECURITY: Verify sessions belong to current user and organization before updating
-    const updatedActivities = await supabaseRequest(
+    // Update sessions and analysis results using helper
+    await updateSessionsAndAnalysis({
+      validSessionIds,
+      issueKey,
+      userId,
+      organizationId: organization.id,
       supabaseConfig,
-      `unassigned_activity?id=in.(${sessionIdsParam})&user_id=eq.${userId}&organization_id=eq.${organization.id}&select=analysis_result_id`,
-      {
-        method: 'PATCH',
-        headers: {
-          'Prefer': 'return=representation' // Return updated rows
-        },
-        body: {
-          manually_assigned: true,
-          assigned_task_key: issueKey,
-          assigned_by: userId,
-          assigned_at: new Date().toISOString()
-        }
-      }
-    );
+      groupId
+    });
 
-    // 2. Get analysis_result_ids from the updated activities
-    // Handle both array and single object responses
-    const activitiesArray = toArray(updatedActivities);
-    const analysisResultIds = activitiesArray.map(a => a?.analysis_result_id).filter(Boolean);
+    // Mark the group as assigned
+    await markGroupAsAssigned({ groupId, issueKey, userId, supabaseConfig });
 
-    console.log(`[assignToExistingIssue] Found ${analysisResultIds.length} analysis results to update`);
-
-    // 3. Update analysis_results to mark sessions as assigned
-    if (analysisResultIds.length > 0) {
-      const analysisIdsParam = sanitizeUUIDArray(analysisResultIds).join(',');
-      const updateBody = {
-        active_task_key: issueKey,
-        manually_assigned: true
-      };
-
-      if (isValidUUID(groupId)) {
-        updateBody.assignment_group_id = groupId;
-      }
-
-      await supabaseRequest(
-        supabaseConfig,
-        `analysis_results?id=in.(${analysisIdsParam})`,
-        {
-          method: 'PATCH',
-          body: updateBody
-        }
-      );
-    } else {
-      console.warn(`[assignToExistingIssue] No analysis_result_ids found for ${validSessionIds.length} sessions`);
-    }
-
-    // 4. Mark the group as assigned (only if groupId is a valid UUID)
-    if (isValidUUID(groupId)) {
-      await supabaseRequest(
-        supabaseConfig,
-        `unassigned_work_groups?id=eq.${groupId}`,
-        {
-          method: 'PATCH',
-          body: {
-            is_assigned: true,
-            assigned_to_issue_key: issueKey,
-            assigned_at: new Date().toISOString(),
-            assigned_by: userId
-          }
-        }
-      );
-    }
-
-    // 5. Create worklog in Jira (only if time >= 60 seconds and auto-sync is disabled)
-    let worklog = null;
-    let worklogSkipped = false;
-    let worklogSkippedReason = null;
-    const JIRA_MIN_WORKLOG_SECONDS = 60;
-
-    // Check if auto-sync is enabled (scheduled sync will handle worklogs)
-    let autoSyncEnabled = false;
-    try {
-      const trackingSettings = await getTrackingSettings(accountId, cloudId);
-      autoSyncEnabled = trackingSettings.jiraWorklogSyncEnabled === true;
-    } catch (e) {
-      console.warn('[assignToExistingIssue] Error checking auto-sync settings:', e.message);
-    }
-
-    if (autoSyncEnabled) {
-      worklogSkipped = true;
-      worklogSkippedReason = 'Auto-sync enabled; scheduled sync will create the worklog';
-      console.log(`[assignToExistingIssue] Skipping worklog - auto-sync is enabled`);
-    } else if (timeToLog >= JIRA_MIN_WORKLOG_SECONDS) {
-      const worklogResponse = await api.asUser().requestJira(
-        route`/rest/api/3/issue/${issueKey}/worklog?adjustEstimate=leave`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            timeSpentSeconds: timeToLog,
-            comment: {
-              type: 'doc',
-              version: 1,
-              content: [
-                {
-                  type: 'paragraph',
-                  content: [
-                    {
-                      type: 'text',
-                      text: `Time tracked from ${sessionIds.length} work session(s), grouped and assigned manually.`
-                    }
-                  ]
-                }
-              ]
-            },
-            started: formatJiraDate()
-          })
-        }
-      );
-
-      if (!worklogResponse.ok) {
-        const errorText = await worklogResponse.text();
-        throw new Error(`Failed to create worklog: ${errorText}`);
-      } else {
-        worklog = await worklogResponse.json();
-      }
-    } else {
-      worklogSkipped = true;
-      worklogSkippedReason = `Time (${timeToLog}s) is below Jira's minimum of ${JIRA_MIN_WORKLOG_SECONDS}s`;
-      console.log(`[assignToExistingIssue] Skipping worklog creation - ${worklogSkippedReason}`);
-    }
+    // Create worklog using helper
+    const autoSyncEnabled = await isAutoSyncEnabled(accountId, cloudId);
+    const worklogResult = await createWorklogIfNeeded({
+      issueKey,
+      timeToLog,
+      sessionCount: sessionIds.length,
+      autoSyncEnabled
+    });
 
     return {
       success: true,
       assigned_count: sessionIds.length,
-      worklog_id: worklog?.id || null,
-      worklog_skipped: worklogSkipped,
-      worklog_skipped_reason: worklogSkippedReason,
+      worklog_id: worklogResult.worklog?.id || null,
+      worklog_skipped: worklogResult.worklogSkipped,
+      worklog_skipped_reason: worklogResult.worklogSkippedReason,
       issue_key: issueKey
     };
 
   } catch (error) {
-    console.error('Error assigning to existing issue:', error);
-    return { success: false, error: error.message };
+    return handleResolverError(error, 'assigning to existing issue');
   }
 }
 
@@ -363,7 +286,6 @@ export async function assignToExistingIssue(req) {
  */
 export async function createIssueAndAssign(req) {
   try {
-    const { accountId, cloudId } = req.context;
     const { sessionIds, issueSummary, issueDescription, projectKey, issueType, totalSeconds, groupId, assigneeAccountId, statusName } = req.payload;
 
     // Validate input formats
@@ -376,26 +298,18 @@ export async function createIssueAndAssign(req) {
       return { success: false, error: 'Issue summary required' };
     }
 
-    // Validate totalSeconds - Jira requires minimum 60 seconds for worklogs
-    const JIRA_MIN_WORKLOG_SECONDS = 60;
-    const timeToLog = typeof totalSeconds === 'number' && totalSeconds > 0 ? totalSeconds : 0;
-
     if (!projectKey || !isValidProjectKey(projectKey)) {
       return { success: false, error: 'Valid project key required' };
     }
 
-    const supabaseConfig = await getSupabaseConfig(accountId);
-    if (!supabaseConfig) {
-      return { success: false, error: 'Supabase not configured' };
-    }
+    // Initialize context
+    const ctx = await initializeRequestContext(req);
+    if (!ctx.success) return ctx;
 
-    // Get or create organization first (multi-tenancy)
-    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
-    if (!organization) {
-      return { success: false, error: 'Unable to get organization information' };
-    }
+    const { config: supabaseConfig, organization, userId, accountId, cloudId } = ctx;
 
-    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+    // Validate totalSeconds - Jira requires minimum 60 seconds for worklogs
+    const timeToLog = typeof totalSeconds === 'number' && totalSeconds > 0 ? totalSeconds : 0;
 
     // Build issue fields
     const issueFields = {
@@ -475,132 +389,31 @@ export async function createIssueAndAssign(req) {
       }
     }
 
-    // Update unassigned_activity records and get analysis_result_ids
-    const sessionIdsParam = validSessionIds.join(',');
+    // Update sessions and analysis results using helper
     console.log(`[createIssueAndAssign] Updating ${validSessionIds.length} sessions for new issue ${newIssueKey}`);
 
-    // SECURITY: Verify sessions belong to current user and organization before updating
-    const updatedActivities = await supabaseRequest(
+    await updateSessionsAndAnalysis({
+      validSessionIds,
+      issueKey: newIssueKey,
+      userId,
+      organizationId: organization.id,
       supabaseConfig,
-      `unassigned_activity?id=in.(${sessionIdsParam})&user_id=eq.${userId}&organization_id=eq.${organization.id}&select=analysis_result_id`,
-      {
-        method: 'PATCH',
-        headers: {
-          'Prefer': 'return=representation' // Return updated rows
-        },
-        body: {
-          manually_assigned: true,
-          assigned_task_key: newIssueKey,
-          assigned_by: userId,
-          assigned_at: new Date().toISOString()
-        }
-      }
-    );
+      groupId
+    });
 
-    // Get analysis_result_ids - handle both array and single object responses
-    const activitiesArray = toArray(updatedActivities);
-    const analysisResultIds = activitiesArray.map(a => a?.analysis_result_id).filter(Boolean);
-
-    console.log(`[createIssueAndAssign] Found ${analysisResultIds.length} analysis results to update`);
-
-    // Update analysis_results to mark sessions as assigned to new issue
-    if (analysisResultIds.length > 0) {
-      const analysisIdsParam = analysisResultIds.join(',');
-      const updateBody = {
-        active_task_key: newIssueKey,
-        manually_assigned: true
-      };
-
-      if (isValidUUID(groupId)) {
-        updateBody.assignment_group_id = groupId;
-      }
-
-      await supabaseRequest(
-        supabaseConfig,
-        `analysis_results?id=in.(${sanitizeUUIDArray(analysisResultIds).join(',')})`,
-        {
-          method: 'PATCH',
-          body: updateBody
-        }
-      );
-    }
-
-    // Mark the group as assigned (only if groupId is a valid UUID)
-    // This removes the group from the "unassigned work" view
-    if (isValidUUID(groupId)) {
-      await supabaseRequest(
-        supabaseConfig,
-        `unassigned_work_groups?id=eq.${groupId}`,
-        {
-          method: 'PATCH',
-          body: {
-            is_assigned: true,
-            assigned_to_issue_key: newIssueKey,
-            assigned_at: new Date().toISOString(),
-            assigned_by: userId
-          }
-        }
-      );
+    // Mark the group as assigned
+    if (await markGroupAsAssigned({ groupId, issueKey: newIssueKey, userId, supabaseConfig })) {
       console.log(`[createIssueAndAssign] Marked group ${groupId} as assigned to ${newIssueKey}`);
     }
 
-    // Create worklog on new issue (only if time >= 60 seconds and auto-sync is disabled)
-    let worklog = null;
-    let worklogSkipped = false;
-    let worklogSkippedReason = null;
-
-    // Check if auto-sync is enabled (scheduled sync will handle worklogs)
-    let autoSyncEnabled = false;
-    try {
-      const trackingSettings = await getTrackingSettings(accountId, cloudId);
-      autoSyncEnabled = trackingSettings.jiraWorklogSyncEnabled === true;
-    } catch (e) {
-      console.warn('[createIssueAndAssign] Error checking auto-sync settings:', e.message);
-    }
-
-    if (autoSyncEnabled) {
-      worklogSkipped = true;
-      worklogSkippedReason = 'Auto-sync enabled; scheduled sync will create the worklog';
-      console.log(`[createIssueAndAssign] Skipping worklog - auto-sync is enabled`);
-    } else if (timeToLog >= JIRA_MIN_WORKLOG_SECONDS) {
-      const worklogResponse = await api.asUser().requestJira(
-        route`/rest/api/3/issue/${newIssueKey}/worklog?adjustEstimate=leave`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            timeSpentSeconds: timeToLog,
-            comment: {
-              type: 'doc',
-              version: 1,
-              content: [
-                {
-                  type: 'paragraph',
-                  content: [
-                    {
-                      type: 'text',
-                      text: `Initial time logged from ${sessionIds.length} work session(s).`
-                    }
-                  ]
-                }
-              ]
-            },
-            started: formatJiraDate()
-          })
-        }
-      );
-
-      if (!worklogResponse.ok) {
-        const errorText = await worklogResponse.text();
-        console.warn(`Created issue ${newIssueKey} but failed to add worklog: ${errorText}`);
-      } else {
-        worklog = await worklogResponse.json();
-      }
-    } else {
-      worklogSkipped = true;
-      worklogSkippedReason = `Time (${timeToLog}s) is below Jira's minimum of ${JIRA_MIN_WORKLOG_SECONDS}s`;
-      console.log(`[createIssueAndAssign] Skipping worklog - ${worklogSkippedReason}`);
-    }
+    // Create worklog using helper
+    const autoSyncEnabled = await isAutoSyncEnabled(accountId, cloudId);
+    const worklogResult = await createWorklogIfNeeded({
+      issueKey: newIssueKey,
+      timeToLog,
+      sessionCount: sessionIds.length,
+      autoSyncEnabled
+    });
 
     // Cache the new issue for future AI analysis - include organization_id for multi-tenancy
     await supabaseRequest(
@@ -648,14 +461,13 @@ export async function createIssueAndAssign(req) {
       issue_key: newIssueKey,
       issue_id: newIssue.id,
       assigned_count: sessionIds.length,
-      worklog_id: worklog?.id,
-      worklog_skipped: worklogSkipped,
-      worklog_skipped_reason: worklogSkippedReason
+      worklog_id: worklogResult.worklog?.id,
+      worklog_skipped: worklogResult.worklogSkipped,
+      worklog_skipped_reason: worklogResult.worklogSkippedReason
     };
 
   } catch (error) {
-    console.error('Error creating issue and assigning work:', error);
-    return { success: false, error: error.message };
+    return handleResolverError(error, 'creating issue and assigning work');
   }
 }
 
@@ -665,7 +477,6 @@ export async function createIssueAndAssign(req) {
  */
 export async function previewBulkReassign(req) {
   try {
-    const { accountId, cloudId } = req.context;
     const { selectedDate, startTime, endTime } = req.payload;
 
     if (!selectedDate || !isValidDate(selectedDate)) {
@@ -682,18 +493,11 @@ export async function previewBulkReassign(req) {
       return { success: false, error: 'Invalid time format (expected HH:mm)' };
     }
 
-    const supabaseConfig = await getSupabaseConfig(accountId);
-    if (!supabaseConfig) {
-      return { success: false, error: 'Supabase not configured' };
-    }
+    // Initialize context
+    const ctx = await initializeRequestContext(req);
+    if (!ctx.success) return ctx;
 
-    // Get or create organization first (multi-tenancy)
-    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
-    if (!organization) {
-      return { success: false, error: 'Unable to get organization information' };
-    }
-
-    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+    const { config: supabaseConfig, organization, userId } = ctx;
 
     // Build datetime range from selected date and times
     // Append 'Z' to explicitly treat as UTC — screenshot timestamps in DB are stored as UTC
@@ -764,8 +568,7 @@ export async function previewBulkReassign(req) {
     };
 
   } catch (error) {
-    console.error('Error previewing bulk reassign:', error);
-    return { success: false, error: error.message };
+    return handleResolverError(error, 'previewing bulk reassign');
   }
 }
 
@@ -775,7 +578,6 @@ export async function previewBulkReassign(req) {
  */
 export async function bulkReassignByTimeInterval(req) {
   try {
-    const { accountId, cloudId } = req.context;
     const { selectedDate, startTime, endTime, targetIssueKey, createWorklog = true } = req.payload;
 
     if (!selectedDate || !isValidDate(selectedDate)) {
@@ -792,18 +594,11 @@ export async function bulkReassignByTimeInterval(req) {
       return { success: false, error: 'Valid target issue key required (e.g., PROJ-123)' };
     }
 
-    const supabaseConfig = await getSupabaseConfig(accountId);
-    if (!supabaseConfig) {
-      return { success: false, error: 'Supabase not configured' };
-    }
+    // Initialize context
+    const ctx = await initializeRequestContext(req);
+    if (!ctx.success) return ctx;
 
-    // Get or create organization first (multi-tenancy)
-    const organization = await getOrCreateOrganization(cloudId, supabaseConfig);
-    if (!organization) {
-      return { success: false, error: 'Unable to get organization information' };
-    }
-
-    const userId = await getOrCreateUser(accountId, supabaseConfig, organization.id);
+    const { config: supabaseConfig, organization, userId, accountId, cloudId } = ctx;
 
     // Build datetime range
     // Append 'Z' to explicitly treat as UTC — screenshot timestamps in DB are stored as UTC
@@ -865,7 +660,7 @@ export async function bulkReassignByTimeInterval(req) {
       `unassigned_activity?analysis_result_id=in.(${analysisIdsParam})&select=id`
     );
 
-    const unassignedArray = Array.isArray(unassignedActivities) ? unassignedActivities : (unassignedActivities ? [unassignedActivities] : []);
+    const unassignedArray = toArray(unassignedActivities);
 
     if (unassignedArray.length > 0) {
       const unassignedIds = sanitizeUUIDArray(unassignedArray.map(u => u.id)).join(',');
@@ -892,7 +687,7 @@ export async function bulkReassignByTimeInterval(req) {
       `unassigned_group_members?unassigned_activity_id=in.(${sanitizeUUIDArray(unassignedArray.map(u => u.id)).join(',') || 'null'})&select=group_id`
     );
 
-    const groupMembersArray = Array.isArray(groupMembers) ? groupMembers : (groupMembers ? [groupMembers] : []);
+    const groupMembersArray = toArray(groupMembers);
     const uniqueGroupIds = sanitizeUUIDArray([...new Set(groupMembersArray.map(m => m.group_id).filter(Boolean))]);
 
     if (uniqueGroupIds.length > 0) {
@@ -919,14 +714,8 @@ export async function bulkReassignByTimeInterval(req) {
     let worklogSkippedReason = null;
     const JIRA_MIN_WORKLOG_SECONDS = 60;
 
-    // Check if auto-sync is enabled (scheduled sync will handle worklogs)
-    let autoSyncEnabled = false;
-    try {
-      const trackingSettings = await getTrackingSettings(accountId, cloudId);
-      autoSyncEnabled = trackingSettings.jiraWorklogSyncEnabled === true;
-    } catch (e) {
-      console.warn('[bulkReassignByTimeInterval] Error checking auto-sync settings:', e.message);
-    }
+    // Check if auto-sync is enabled
+    const autoSyncEnabled = await isAutoSyncEnabled(accountId, cloudId);
 
     if (autoSyncEnabled) {
       worklogSkipped = true;
@@ -994,8 +783,7 @@ export async function bulkReassignByTimeInterval(req) {
     };
 
   } catch (error) {
-    console.error('Error in bulk reassign:', error);
-    return { success: false, error: error.message };
+    return handleResolverError(error, 'bulk reassigning');
   }
 }
 
